@@ -1,0 +1,63 @@
+name: playwright-prototype
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  node:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - run: npm install
+      - run: npx playwright install --with-deps chromium firefox webkit
+      - run: npm run test:node
+      - name: Validate Node screenshots
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          import subprocess
+
+          required = {"chromium", "firefox", "webkit", "mobile-chromium", "mobile-webkit"}
+          found = {}
+          for meta in Path("test-results").rglob("evidence.json"):
+              data = json.loads(meta.read_text(encoding="utf-8"))
+              project = data.get("project")
+              png = meta.with_name("evidence.png")
+              if project in required and png.is_file():
+                  found.setdefault(project, []).append(png)
+          missing = required - found.keys()
+          if missing:
+              raise SystemExit(f"missing Node evidence for projects: {sorted(missing)}")
+          for project, pngs in found.items():
+              subprocess.run(["python3", "scripts/check_png.py", *map(str, pngs)], check=True)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: node-browser-evidence, path: test-results, if-no-files-found: error }
+  python:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: python -m pip install -r requirements-test.txt
+      - run: python -m playwright install --with-deps chromium firefox webkit
+      - run: python -m pytest tests/python -q
+      - name: Validate Python API screenshots
+        if: always()
+        run: |
+          mapfile -d '' files < <(find test-results/python -name '*.png' ! -name '*-failure.png' -print0)
+          test "${#files[@]}" -eq 6
+          python scripts/check_png.py "${files[@]}"
+      - name: Python Playwright CLI screenshot
+        run: |
+          python -m playwright screenshot --browser=chromium --device="Desktop Chrome" --full-page "file://$GITHUB_WORKSPACE/fixtures/index.html" test-results/python-cli-chromium.png
+          python -m playwright screenshot --browser=webkit --device="iPhone 13" --full-page "file://$GITHUB_WORKSPACE/fixtures/index.html" test-results/python-cli-webkit-mobile.png
+          python scripts/check_png.py test-results/python-cli-chromium.png test-results/python-cli-webkit-mobile.png
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: python-browser-evidence, path: test-results, if-no-files-found: error }

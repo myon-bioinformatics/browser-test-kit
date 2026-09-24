@@ -26,6 +26,9 @@ Screenshots are visual evidence, not a selector strategy. Prefer DOM/accessibili
 | `ONE_ENGINE_ASSUMPTION` | Chromium success is treated as cross-browser success | WebKit/Firefox-specific regressions escape | Keep explicit engine lanes |
 | `SAFARI_EQUALS_WEBKIT` | Calling Playwright WebKit “Safari” | Overstates fidelity | Say WebKit; document when macOS/Safari fidelity matters |
 | `MOBILE_VIEWPORT_ONLY` | A narrow viewport is treated as a real mobile profile | UA/touch/device scale/browser engine differences are missed | Use named device emulation where appropriate and record the profile |
+| `DEVICE_DESCRIPTOR_CROSS_ENGINE` | Reusing one named device descriptor unchanged across every browser engine | Engine-specific context options can fail at launch/context creation (for example Firefox rejects Playwright `is_mobile`) | Treat device descriptors as engine-sensitive; adapt unsupported options explicitly and regression-test the adaptation |
+| `DEAD_COMPATIBILITY_HELPER` | Adding a compatibility/helper function without routing the production/test call-site through it | Unit coverage for the helper can pass while the real browser path keeps using the old inline logic | Replace the old call-site explicitly and keep an integration/browser test that proves the helper is exercised end-to-end |
+| `HELPER_NAME_SHADOWING` | Reusing a helper function name for a local variable at its call-site | The compatibility abstraction becomes unreachable or misleading, and reviewers may believe the helper is active when the old inline value still drives execution | Give builders/helpers verb-based names (for example `build_context_args`) and use distinct local names such as `ctx_args`; cover the real integration path |
 | `SCREENSHOT_AS_SELECTOR` | Acting on pixels/screenshots when DOM/locator evidence exists | Brittle automation | Interact through locators/snapshots; screenshot for visual evidence |
 | `STALE_ELEMENT_HANDLE_WAIT` | Polling a captured node while a framework replaces it | Timeout although visible DOM is correct | Re-query locator/selector during polling |
 | `SILENT_CLEANUP_EXCEPTION` | Cleanup/diagnostic exceptions are swallowed | Original failure loses its evidence | Preserve logs and report cleanup failures without masking root cause |
@@ -43,6 +46,7 @@ Screenshots are visual evidence, not a selector strategy. Prefer DOM/accessibili
 These are intentionally generalized; copy the lesson, not necessarily the original implementation.
 
 - `mcp-toolcall-lab`: WebKit screenshot commands can produce a PNG even when shutdown reports non-zero. The workflow therefore records the exit status and validates the PNG signature before deciding whether useful evidence exists.
+- `browser-test-kit` PR #2: applying Playwright's `iPhone 13` descriptor unchanged to Firefox failed because Firefox does not support the `is_mobile` BrowserContext option. A first fix added an engine-aware compatibility helper and a unit regression test, but the real smoke-test call-site still used the old inline `dict(pw.devices[device_name])` path. CI therefore reproduced the same browser failure. The follow-up routed `browser.new_context()` through the helper. Portable lesson: testing a helper is insufficient if the integration path never calls it.
 - `flutter_navigation_basic`: browser configuration and CI/Docker installation drift was prevented with a regression test that checks Chromium, Firefox, and WebKit parity. Its Playwright config also retains trace on first retry, screenshot only on failure, and video on failure.
 - `flutter_navigation_basic`: the Python stdlib CLI wrapper has regression tests for the exact Node Playwright argv shape; this caught the CLI's project-argument parsing behavior.
 - `web-ui`: visual regression was deliberately staged: first validate deterministic candidate screenshots, then require baselines after the capture lane is trustworthy.
@@ -70,3 +74,11 @@ Portable lesson:
 ```
 
 Do not store secrets, transient tokens, or large binary artifacts in this document.
+
+
+## Additional evidence anti-patterns
+
+| ID | Anti-pattern | Failure | Guard |
+| --- | --- | --- | --- |
+| `EVIDENCE_MASKS_ROOT_FAILURE` | Evidence capture throws while handling the original test failure | Screenshot/trace failure replaces the actual assertion/navigation error | Keep failure evidence best-effort and re-raise the original exception |
+| `SUCCESS_COUNT_VS_RETRY_ARTIFACTS` | Global artifact count is assumed to equal project count | Retries create extra attempt artifacts and cause false failures | Validate exact project identity from metadata and validate every discovered artifact |
