@@ -16,11 +16,25 @@ jobs:
       - name: Validate Node screenshots
         if: always()
         run: |
-          for project in chromium firefox webkit mobile-chromium mobile-webkit; do
-            mapfile -d '' files < <(find test-results -path "*${project}*" -name 'evidence.png' -print0)
-            test "${#files[@]}" -ge 1
-            python3 scripts/check_png.py "${files[@]}"
-          done
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          import subprocess
+
+          required = {"chromium", "firefox", "webkit", "mobile-chromium", "mobile-webkit"}
+          found = {}
+          for meta in Path("test-results").rglob("evidence.json"):
+              data = json.loads(meta.read_text(encoding="utf-8"))
+              project = data.get("project")
+              png = meta.with_name("evidence.png")
+              if project in required and png.is_file():
+                  found.setdefault(project, []).append(png)
+          missing = required - found.keys()
+          if missing:
+              raise SystemExit(f"missing Node evidence for projects: {sorted(missing)}")
+          for project, pngs in found.items():
+              subprocess.run(["python3", "scripts/check_png.py", *map(str, pngs)], check=True)
+          PY
       - uses: actions/upload-artifact@v4
         if: always()
         with: { name: node-browser-evidence, path: test-results, if-no-files-found: error }
