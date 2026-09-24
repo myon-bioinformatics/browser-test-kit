@@ -9,6 +9,16 @@ RESULTS = ROOT / "test-results" / "python"
 BROWSERS = ("chromium", "firefox", "webkit")
 PROFILES = (("desktop", None), ("mobile", "iPhone 13"))
 
+def context_args(pw, browser_name: str, device_name: str | None) -> dict:
+    if not device_name:
+        return {}
+    args = dict(pw.devices[device_name])
+    # Playwright Firefox does not support BrowserContext is_mobile.
+    # Keep the same mobile viewport/touch/UA profile without claiming full mobile emulation.
+    if browser_name == "firefox":
+        args.pop("is_mobile", None)
+    return args
+
 @pytest.mark.parametrize("browser_name", BROWSERS)
 @pytest.mark.parametrize("profile,device_name", PROFILES)
 def test_shared_fixture(browser_name: str, profile: str, device_name: str | None) -> None:
