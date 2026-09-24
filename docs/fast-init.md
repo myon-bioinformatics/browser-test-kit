@@ -94,7 +94,7 @@ The repository should continue this cycle:
 
 `incident in a project -> portable lesson -> browser-test-kit -> regression example -> adoption by another project`
 
-See [anti-patterns.md](./anti-patterns.md) for the first catalogue.
+See [anti-patterns.md](./anti-patterns.md) for the stable catalogue, [sibling-browser-testing-survey.md](./sibling-browser-testing-survey.md) for research provenance, and [platform-doctrine.md](./platform-doctrine.md) for the multi-platform implementation/verification policy.
 
 ## Planned implementation sequence
 
