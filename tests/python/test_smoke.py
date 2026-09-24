@@ -21,6 +21,7 @@ def build_context_args(pw, browser_name: str, device_name: str | None) -> dict:
         return {}
     args = dict(pw.devices[device_name])
     if browser_name == "firefox":
+        # See DEVICE_DESCRIPTOR_CROSS_ENGINE in docs/anti-patterns.md.
         args.pop("is_mobile", None)
     return args
 
@@ -33,8 +34,9 @@ def test_shared_fixture(browser_name: str, profile: str, device_name: str | None
     stage = "launch"
     page = None
     with sync_playwright() as pw:
-        browser = getattr(pw, browser_name).launch()
+        browser = None
         try:
+            browser = getattr(pw, browser_name).launch()
             ctx_args = build_context_args(pw, browser_name, device_name)
             context = browser.new_context(**ctx_args)
             page = context.new_page()
@@ -53,7 +55,8 @@ def test_shared_fixture(browser_name: str, profile: str, device_name: str | None
             width, height = _check_png.dimensions(png.read_bytes())
             meta.write_text(json.dumps({"runtime":"python","browser":browser_name,"profile":profile,"emulation":"partial" if browser_name=="firefox" and profile=="mobile" else "full","stage":"complete","artifact":str(png.relative_to(ROOT)),"width":width,"height":height})+"\n", encoding="utf-8")
         except Exception as exc:
-            meta.write_text(json.dumps({"runtime":"python","browser":browser_name,"profile":profile,"stage":stage,"error":type(exc).__name__,"message":str(exc)[:500]})+"\n", encoding="utf-8")
+            emulation = "partial" if browser_name == "firefox" and profile == "mobile" else "full"
+            meta.write_text(json.dumps({"runtime":"python","browser":browser_name,"profile":profile,"emulation":emulation,"stage":stage,"error":type(exc).__name__,"message":str(exc)[:500]})+"\n", encoding="utf-8")
             if page is not None:
                 try:
                     page.screenshot(path=RESULTS / f"{browser_name}-{profile}-failure.png", full_page=True)
@@ -61,4 +64,5 @@ def test_shared_fixture(browser_name: str, profile: str, device_name: str | None
                     print(f"warning: failure screenshot unavailable: {type(evidence_exc).__name__}: {evidence_exc}", file=sys.stderr)
             raise
         finally:
-            browser.close()
+            if browser is not None:
+                browser.close()
