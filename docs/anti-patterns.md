@@ -40,6 +40,8 @@ Screenshots are visual evidence, not a selector strategy. Prefer DOM/accessibili
 | `NODE_OR_PYTHON_MONOCULTURE` | One Playwright binding is presented as the only reference | Other repos cannot reuse the pattern naturally | Maintain equivalent Node and Python examples with shared semantics |
 | `AGENT_REPLACES_DETERMINISTIC_TEST` | Stagehand/agent lane replaces deterministic Playwright checks | Model/external variability weakens regression signal | Keep Stagehand optional and separate from deterministic Playwright |
 | `MISSING_FAILURE_ARTIFACTS` | Screenshot/trace/video exists only on success or is discarded on failure | Hardest failures are least observable | Retain-on-failure screenshot/trace/video where useful |
+| `EVIDENCE_MASKS_ROOT_FAILURE` | Evidence capture throws while handling the original test failure | Screenshot/trace failure replaces the actual assertion/navigation error | Keep failure evidence best-effort and re-raise the original exception |
+| `SUCCESS_COUNT_VS_RETRY_ARTIFACTS` | Global artifact count is assumed to equal project count | Retries create extra attempt artifacts and cause false failures | Validate exact project identity from metadata and validate every discovered artifact |
 
 ## Observed source patterns in this organization
 
@@ -75,10 +77,3 @@ Portable lesson:
 
 Do not store secrets, transient tokens, or large binary artifacts in this document.
 
-
-## Additional evidence anti-patterns
-
-| ID | Anti-pattern | Failure | Guard |
-| --- | --- | --- | --- |
-| `EVIDENCE_MASKS_ROOT_FAILURE` | Evidence capture throws while handling the original test failure | Screenshot/trace failure replaces the actual assertion/navigation error | Keep failure evidence best-effort and re-raise the original exception |
-| `SUCCESS_COUNT_VS_RETRY_ARTIFACTS` | Global artifact count is assumed to equal project count | Retries create extra attempt artifacts and cause false failures | Validate exact project identity from metadata and validate every discovered artifact |
