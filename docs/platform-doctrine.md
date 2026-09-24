@@ -115,18 +115,17 @@ When physical-device evidence is added later, record OS/device/browser separatel
 
 ## Anti-patterns implied by the doctrine
 
-The central catalog should cover these concepts, reusing existing IDs where possible. IDs not already present in `anti-patterns.md` below are **candidate / not yet adopted** until explicitly promoted into that stable catalog:
+The central catalog should cover these concepts, reusing existing IDs where possible. IDs not already present in [anti-patterns.md](./anti-patterns.md) are **candidate / not yet adopted** until explicitly promoted into that stable catalog:
 
 - **LANGUAGE_AS_GOAL** — preserving a language/framework becomes more important than platform reach or ownership cost.
 - **MULTI_PLATFORM_BY_SINGLE_ENGINE** — one desktop Chromium pass is described as multi-platform support.
-- **EMULATION_EQUALS_DEVICE** — a Playwright device descriptor is reported as physical-device proof.
+- **EMULATION_EQUALS_DEVICE** — Playwright/device-emulated or deterministic Layer 1 evidence is reported as physical-device compatibility; one ID covers both descriptor-level and Layer-1-vs-real-device overclaiming.
 - **SAFARI_EQUALS_WEBKIT** — existing stable ID; keep the distinction explicit.
 - **MOBILE_VIEWPORT_ONLY** — existing stable ID; responsive viewport alone is treated as mobile-browser fidelity.
 - **DUPLICATE_PLATFORM_IMPLEMENTATION** — the same business rule is independently implemented in Dart and JS/Python without a platform reason.
 - **RUNTIME_FOR_NOVELTY** — Node/Deno/Python/Dart is introduced without reducing complexity or adding a necessary capability.
 - **NATIVE_ONLY_BY_DEFAULT** — a browser-reachable feature is made native-only without a product requirement.
 - **FULL_E2E_FOR_EVERY_CONTRACT** — every assertion boots the complete app even when static/protocol/unit evidence is sufficient.
-- **EMULATION_EQUALS_DEVICE** — deterministic/device-emulated evidence is promoted into physical-device compatibility claims. This single candidate also covers the former Layer-1-vs-real-device wording; do not create a second ID.
 
 ## Definition of success for browser-test-kit
 
@@ -140,4 +139,4 @@ The repository can credibly call itself an aggregation point when a downstream m
 6. how to decide whether functionality belongs in Flutter/Dart or a lighter browser-oriented boundary;
 7. how to carry the same contracts into desktop web, mobile web, Android-oriented browsers, and iPhone/iOS-oriented browsers.
 
-That is the standard PR #3 should move toward. Centralization means **one decision vocabulary and evidence model**, not necessarily one implementation language.
+That is the standard this repository should move toward. Centralization means **one decision vocabulary and evidence model**, not necessarily one implementation language.
