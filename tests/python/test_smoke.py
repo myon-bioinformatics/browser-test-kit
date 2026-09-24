@@ -1,5 +1,7 @@
 from pathlib import Path
+import importlib.util
 import json
+import sys
 import pytest
 from playwright.sync_api import sync_playwright
 
@@ -9,12 +11,15 @@ RESULTS = ROOT / "test-results" / "python"
 BROWSERS = ("chromium", "firefox", "webkit")
 PROFILES = (("desktop", None), ("mobile", "iPhone 13"))
 
+_spec = importlib.util.spec_from_file_location("check_png", ROOT / "scripts" / "check_png.py")
+_check_png = importlib.util.module_from_spec(_spec)
+assert _spec.loader
+_spec.loader.exec_module(_check_png)
+
 def build_context_args(pw, browser_name: str, device_name: str | None) -> dict:
     if not device_name:
         return {}
     args = dict(pw.devices[device_name])
-    # Playwright Firefox does not support BrowserContext is_mobile.
-    # Keep the same mobile viewport/touch/UA profile without claiming full mobile emulation.
     if browser_name == "firefox":
         args.pop("is_mobile", None)
     return args
@@ -26,6 +31,7 @@ def test_shared_fixture(browser_name: str, profile: str, device_name: str | None
     png = RESULTS / f"{browser_name}-{profile}.png"
     meta = RESULTS / f"{browser_name}-{profile}.json"
     stage = "launch"
+    page = None
     with sync_playwright() as pw:
         browser = getattr(pw, browser_name).launch()
         try:
@@ -44,12 +50,15 @@ def test_shared_fixture(browser_name: str, profile: str, device_name: str | None
             stage = "screenshot"
             page.screenshot(path=png, full_page=True)
             stage = "artifact"
-            from scripts.check_png import dimensions
-            width, height = dimensions(png.read_bytes())
-            meta.write_text(json.dumps({"runtime":"python","browser":browser_name,"profile":profile,"stage":"complete","artifact":str(png.relative_to(ROOT)),"width":width,"height":height})+"\n", encoding="utf-8")
-        except Exception:
-            if 'page' in locals():
-                page.screenshot(path=RESULTS / f"{browser_name}-{profile}-failure.png", full_page=True)
+            width, height = _check_png.dimensions(png.read_bytes())
+            meta.write_text(json.dumps({"runtime":"python","browser":browser_name,"profile":profile,"emulation":"partial" if browser_name=="firefox" and profile=="mobile" else "full","stage":"complete","artifact":str(png.relative_to(ROOT)),"width":width,"height":height})+"\n", encoding="utf-8")
+        except Exception as exc:
+            meta.write_text(json.dumps({"runtime":"python","browser":browser_name,"profile":profile,"stage":stage,"error":type(exc).__name__,"message":str(exc)[:500]})+"\n", encoding="utf-8")
+            if page is not None:
+                try:
+                    page.screenshot(path=RESULTS / f"{browser_name}-{profile}-failure.png", full_page=True)
+                except Exception as evidence_exc:
+                    print(f"warning: failure screenshot unavailable: {type(evidence_exc).__name__}: {evidence_exc}", file=sys.stderr)
             raise
         finally:
             browser.close()
