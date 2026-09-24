@@ -16,9 +16,11 @@ jobs:
       - name: Validate Node screenshots
         if: always()
         run: |
-          mapfile -d '' files < <(find test-results -name 'evidence.png' -print0)
-          test "${#files[@]}" -eq 5
-          python3 scripts/check_png.py "${files[@]}"
+          for project in chromium firefox webkit mobile-chromium mobile-webkit; do
+            mapfile -d '' files < <(find test-results -path "*${project}*" -name 'evidence.png' -print0)
+            test "${#files[@]}" -ge 1
+            python3 scripts/check_png.py "${files[@]}"
+          done
       - uses: actions/upload-artifact@v4
         if: always()
         with: { name: node-browser-evidence, path: test-results, if-no-files-found: error }
@@ -40,7 +42,8 @@ jobs:
       - name: Python Playwright CLI screenshot
         run: |
           python -m playwright screenshot --browser=chromium --device="Desktop Chrome" --full-page "file://$GITHUB_WORKSPACE/fixtures/index.html" test-results/python-cli-chromium.png
-          python scripts/check_png.py test-results/python-cli-chromium.png
+          python -m playwright screenshot --browser=webkit --device="iPhone 13" --full-page "file://$GITHUB_WORKSPACE/fixtures/index.html" test-results/python-cli-webkit-mobile.png
+          python scripts/check_png.py test-results/python-cli-chromium.png test-results/python-cli-webkit-mobile.png
       - uses: actions/upload-artifact@v4
         if: always()
         with: { name: python-browser-evidence, path: test-results, if-no-files-found: error }
