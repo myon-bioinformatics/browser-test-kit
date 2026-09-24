@@ -11,10 +11,10 @@ class FakePW:
     devices = {"iPhone 13": {"is_mobile": True, "has_touch": True, "viewport": {"width": 390, "height": 844}}}
 
 def test_firefox_drops_unsupported_is_mobile_only() -> None:
-    args = smoke.context_args(FakePW(), "firefox", "iPhone 13")
+    args = smoke.build_context_args(FakePW(), "firefox", "iPhone 13")
     assert "is_mobile" not in args
     assert args["has_touch"] is True
     assert args["viewport"] == {"width": 390, "height": 844}
 
 def test_webkit_keeps_is_mobile() -> None:
-    assert smoke.context_args(FakePW(), "webkit", "iPhone 13")["is_mobile"] is True
+    assert smoke.build_context_args(FakePW(), "webkit", "iPhone 13")["is_mobile"] is True
