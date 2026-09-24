@@ -74,3 +74,11 @@ Portable lesson:
 ```
 
 Do not store secrets, transient tokens, or large binary artifacts in this document.
+
+
+## Additional evidence anti-patterns
+
+| ID | Anti-pattern | Failure | Guard |
+| --- | --- | --- | --- |
+| `EVIDENCE_MASKS_ROOT_FAILURE` | Evidence capture throws while handling the original test failure | Screenshot/trace failure replaces the actual assertion/navigation error | Keep failure evidence best-effort and re-raise the original exception |
+| `SUCCESS_COUNT_VS_RETRY_ARTIFACTS` | Global artifact count is assumed to equal project count | Retries create extra attempt artifacts and cause false failures | Validate exact project identity from metadata and validate every discovered artifact |
