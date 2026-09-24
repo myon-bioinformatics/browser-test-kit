@@ -7,9 +7,15 @@ import sys
 PNG = b"\x89PNG\r\n\x1a\n"
 
 def dimensions(data: bytes) -> tuple[int, int]:
-    if len(data) < 24 or data[:8] != PNG or data[12:16] != b"IHDR":
+    if len(data) < 33 or data[:8] != PNG:
         raise ValueError("not a valid PNG header")
-    return struct.unpack(">II", data[16:24])
+    length = struct.unpack(">I", data[8:12])[0]
+    if length != 13 or data[12:16] != b"IHDR":
+        raise ValueError("not a valid PNG IHDR")
+    width, height = struct.unpack(">II", data[16:24])
+    if b"IEND" not in data[-16:]:
+        raise ValueError("PNG has no terminal IEND")
+    return width, height
 
 def main() -> int:
     if len(sys.argv) < 2:
