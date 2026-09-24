@@ -9,7 +9,7 @@ RESULTS = ROOT / "test-results" / "python"
 BROWSERS = ("chromium", "firefox", "webkit")
 PROFILES = (("desktop", None), ("mobile", "iPhone 13"))
 
-def context_args(pw, browser_name: str, device_name: str | None) -> dict:
+def build_context_args(pw, browser_name: str, device_name: str | None) -> dict:
     if not device_name:
         return {}
     args = dict(pw.devices[device_name])
@@ -29,8 +29,8 @@ def test_shared_fixture(browser_name: str, profile: str, device_name: str | None
     with sync_playwright() as pw:
         browser = getattr(pw, browser_name).launch()
         try:
-            context_args = dict(pw.devices[device_name]) if device_name else {}
-            context = browser.new_context(**context_args)
+            ctx_args = build_context_args(pw, browser_name, device_name)
+            context = browser.new_context(**ctx_args)
             page = context.new_page()
             stage = "navigate"
             page.goto(FIXTURE)
