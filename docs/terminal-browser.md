@@ -18,36 +18,56 @@ the interactive renderer.
 
 ## Install and run
 
-Install using the upstream-supported installer on macOS/Linux:
+Install using an upstream-supported installation method, then verify discovery:
 
 ```sh
-curl -fsSL https://terminal-browser.sh/install | bash
 python scripts/terminal_browser.py --check
-terminal-browser open http://127.0.0.1:8000
-terminal-browser action
 ```
 
-For a repository under test, start its local server first and use
-`terminal-browser open <url>` for the quick exploratory pass. Keep Playwright
-for deterministic assertions and the cross-browser matrix.
+For interactive use, run through the wrapper so the child inherits the real
+terminal stdin/stdout/stderr:
 
-The wrapper accepts terminal-browser arguments verbatim and records structured
-UTC lifecycle events:
+```sh
+python scripts/terminal_browser.py open http://127.0.0.1:8000
+```
+
+Start the repository's local server first. Keep Playwright for deterministic
+assertions and the cross-browser matrix.
+
+Structured lifecycle events are JSONL on **stderr**, separate from the child
+process's normal stdout. Each event includes `source: "terminal-browser"`,
+UTC `time`, and `event`.
+
+`--log` switches the child to capture mode and writes combined child
+stdout/stderr to a file. It is intended for **non-interactive commands** such as
+`action --help`; do not use capture mode as proof of TUI rendering:
 
 ```sh
 python scripts/terminal_browser.py --log test-results/terminal-browser/action.log action --help
 ```
 
-A missing executable exits 127 with `TERMINAL_BROWSER_UNAVAILABLE`, keeping
-environment/setup failure separate from launch, navigation, interaction, and
-application failures.
+When a terminal-browser top-level argument starts with `-`, use the explicit
+wrapper delimiter so argparse cannot consume it:
+
+```sh
+python scripts/terminal_browser.py -- --version
+```
+
+A missing executable exits 127 and emits `TERMINAL_BROWSER_UNAVAILABLE`.
+Exit code 127 alone is not sufficient attribution because a discovered
+terminal-browser process could itself return 127; use the event to identify the
+wrapper's missing-tool case.
 
 ## Portable incident: flutter_navigation_basic #95
 
-PR #95 is recorded as motivation, not as a retroactive proof. A quick
-real-Chromium exploratory CLI lane could plausibly have exposed the observed UI
-problem before the full Playwright path, so future incidents should explicitly
-record whether terminal-browser reproduces them. Do not claim that this lane
-would have caught an incident until it has been replayed.
+PR #95 is motivation, not retroactive proof. terminal-browser may be useful for
+**visible, product-side Chromium symptoms**, for example checking whether an
+image accepted by an upload flow renders as expected. It does not prove
+parser/regex behavior such as `rejected:un` or `64x32Arm`, Firefox/WebKit or
+mobile-chromium differences, or whether a Playwright/Flutter semantics action
+represents physical pointer interaction.
+
+For future incidents, record whether a visible product-side symptom was actually
+reproduced through this lane before promoting a portable detection claim.
 
 Suggested incident runtime value: `terminal-browser/Chromium`.
