@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "browser-test-kit-tools"
+version = "0.1.0"
+description = "browser-test-kit's stdlib-only scripts, installed as top-level modules for `python -m <script>`"
+requires-python = ">=3.9"
+
+[tool.setuptools]
+# Every scripts/*.py becomes a top-level module (src-layout discovery), so
+# `python -m check_png ...` works from any directory after installation.
+package-dir = { "" = "scripts" }
