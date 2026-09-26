@@ -53,10 +53,23 @@ wrapper delimiter so argparse cannot consume it:
 python scripts/terminal_browser.py -- --version
 ```
 
-A missing executable exits 127 and emits `TERMINAL_BROWSER_UNAVAILABLE`.
-Exit code 127 alone is not sufficient attribution because a discovered
-terminal-browser process could itself return 127; use the event to identify the
-wrapper's missing-tool case.
+## Exit and event contract
+
+- A missing executable exits 127 and emits `TERMINAL_BROWSER_UNAVAILABLE`.
+  Exit code 127 alone is not sufficient attribution because a discovered child
+  process could itself return 127; use the event to identify the wrapper's
+  missing-tool case.
+- Ctrl-C exits 130 and emits `terminal_browser_exit` with
+  `interrupted: true`.
+- A child terminated by a signal is normalized to `128 + signal`; for example,
+  SIGTERM (signal 15) exits 143. The `terminal_browser_exit` event records the
+  signal number in `signal`.
+- `--check` cannot be combined with `--log` or child arguments.
+- Child arguments beginning with `-` must be passed after `--`, for example
+  `-- --version`.
+- Wrapper lifecycle events are JSONL on stderr with
+  `source: "terminal-browser"`; child output remains on stdout in the default
+  inherited-stdio mode.
 
 ## Portable incident: flutter_navigation_basic #95
 
