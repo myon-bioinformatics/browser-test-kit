@@ -492,3 +492,24 @@ def test_comments_file_runs_offline_without_a_token(tmp_path):
                            "--last", "1"], capture_output=True, text=True, encoding="utf-8", env=env)
     assert done.returncode == 0, done.stderr
     assert done.stdout.splitlines()[1].startswith("[1] 2026-09-20T14:01:00Z myon 5 chars: ")
+
+
+# --- pr-for-branch -----------------------------------------------------------------
+
+def test_pr_for_branch_lists_matches_with_an_owner_qualified_head(capsys):
+    pulls = [{"number": 61, "state": "closed", "merged_at": "2026-09-26T17:00:00Z", "draft": False,
+              "head": {"sha": "f534c03af3d5aaaa"}, "base": {"ref": "main"}, "title": "feat: P7",
+              "html_url": "https://github.com/octo/demo/pull/61"}]
+    client, stub = client_for({("GET", "/repos/octo/demo/pulls"): reply(pulls)})
+    assert gh_ops.main(["pr-for-branch", REPO, "claude/x"], client=client) == 0
+    assert capsys.readouterr().out.strip() == (
+        '#61 merged head=f534c03af3d5 -> main "feat: P7" https://github.com/octo/demo/pull/61')
+    assert stub.calls[0]["query"]["head"] == ["octo:claude/x"]
+    assert stub.calls[0]["query"]["state"] == ["all"]
+
+
+def test_pr_for_branch_without_a_pr_is_exit_1(capsys):
+    client, stub = client_for({("GET", "/repos/octo/demo/pulls"): reply([])})
+    assert gh_ops.main(["pr-for-branch", REPO, "fork:feature", "--state", "open"], client=client) == 1
+    assert capsys.readouterr().out.strip() == "no open PR with head fork:feature"
+    assert stub.calls[0]["query"]["head"] == ["fork:feature"]

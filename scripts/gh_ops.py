@@ -322,6 +322,29 @@ def _summarize_checks(runs: list, min_checks: int) -> dict:
     }
 
 
+def pr_for_branch(repo: str, branch: str, *, state: str = "all", client: Client | None = None) -> dict:
+    """PRs whose head is ``branch``: number, state, merged, head SHA, base, and URL.
+
+    ``branch`` may be ``owner:branch`` for a fork; a bare name means the
+    repository owner. ``ok`` is False when there is none, so "is there already
+    a PR for this branch, and was it merged?" is answered before creating one.
+    """
+    owner = _repo(repo).split("/")[0]
+    head = branch if ":" in branch else f"{owner}:{branch}"
+    pulls = _client(client).paginate(f"/repos/{_repo(repo)}/pulls", params={"head": head, "state": state})
+    rows = [{
+        "number": pr.get("number"),
+        "state": pr.get("state"),
+        "merged": bool(pr.get("merged_at")),
+        "draft": bool(pr.get("draft")),
+        "head_sha": (pr.get("head") or {}).get("sha"),
+        "base": (pr.get("base") or {}).get("ref"),
+        "title": pr.get("title"),
+        "url": pr.get("html_url"),
+    } for pr in pulls]
+    return {"ok": bool(rows), "repo": repo, "head": head, "state": state, "pulls": rows}
+
+
 def checks_wait(repo: str, sha: str, *, min_checks: int = 1, timeout: float = 600.0, interval: float = 15.0,
                 client: Client | None = None, sleep: Callable[[float], None] = time.sleep,
                 clock: Callable[[], float] = time.monotonic) -> dict:
@@ -559,6 +582,14 @@ def _render(command: str, result: dict) -> str:
         if result.get("saved_to"):
             lines.append(f"full JSON saved to {result['saved_to']}")
         return "\n".join(lines)
+    if command == "pr-for-branch":
+        if not result["pulls"]:
+            scope = "" if result["state"] == "all" else f"{result['state']} "
+            return f"no {scope}PR with head {result['head']}"
+        return "\n".join(
+            f"#{pr['number']} {'merged' if pr['merged'] else pr['state']}{' draft' if pr['draft'] else ''} "
+            f"head={str(pr['head_sha'])[:12]} -> {pr['base']} \"{pr['title']}\" {pr['url']}"
+            for pr in result["pulls"])
     if command == "pr-status":
         r = result
         return (f"#{r['number']} {r['state']} draft={r['draft']} merged={r['merged']} mergeable={r['mergeable']} "
@@ -612,6 +643,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--preview", type=int, default=110, help="preview length in characters (default 110)")
     p.add_argument("--show", default="", help="comma-separated comment indexes to print in full")
 
+    p = sub.add_parser("pr-for-branch", help="PRs whose head is BRANCH (none -> exit 1)")
+    p.add_argument("repo"); p.add_argument("branch", help="branch name, or owner:branch for a fork")
+    p.add_argument("--state", choices=("open", "closed", "all"), default="all")
+
     p = sub.add_parser("pr-status", help="one-line PR state")
     p.add_argument("repo"); p.add_argument("number", type=int)
 
@@ -664,6 +699,8 @@ def run_command(args: argparse.Namespace, client: Client | None = None) -> dict:
         show = tuple(int(part) for part in args.show.split(",") if part.strip()) if args.show else ()
         return issue_comments(args.repo, args.number, since=args.since, last=args.last, author=args.author,
                               preview=args.preview, show=show, save=args.save, client=client)
+    if command == "pr-for-branch":
+        return pr_for_branch(args.repo, args.branch, state=args.state, client=client)
     if command == "pr-status":
         return pr_status(args.repo, args.number, client=client)
     if command == "checks-wait":
