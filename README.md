@@ -43,17 +43,6 @@ Notable portable lessons include WebKit producing a PNG before a non-zero shutdo
 
 When a new repository teaches a reusable lesson, record: repository/PR, runtime (Node/Python/Stagehand/Replay), browser, device/profile, failure stage, observed symptom, root cause, fix, regression guard, and portable lesson.
 
-### Planned sequence
-
-1. Documentation/evidence contract.
-2. Shared local deterministic fixture and artifact validators.
-3. Playwright Node matrix.
-4. Playwright Python API + CLI matrix.
-5. Cross-runtime/browser parity guards.
-6. Stagehand v4 Python optional lane.
-7. Replay optional lane.
-8. Reusable workflow/template examples.
-
 ### Page text without a browser (`scripts/page_text.py`)
 
 Stdlib-only static extraction (runs under `python -S`) in the shape of a browser `get_page_text`: `Title:`, `URL:` (after redirects), `Source element:`, then the text.
@@ -71,3 +60,14 @@ python scripts/page_text.py <URL> --find "status page"
 - `--json` adds `truncated`, `total_chars`, `bytes`, `status`, and `fetched_at`. `--max-chars`, `--max-bytes`, and `--timeout` bound the work.
 - Exit codes: 0 OK; 1 no `--find` match, or an HTTP error status (the page is still printed; a 404 adds a `LOGIN_WALL_AS_404` hint); 2 usage, input, or network error.
 - JavaScript is not run and CSS is not evaluated, so an empty result on a single-page app is `PAGE_TEXT_AS_RENDERED_TEXT`, not an empty page. Core tests use only local fixtures and a local HTTP server.
+
+### Planned sequence
+
+1. Documentation/evidence contract.
+2. Shared local deterministic fixture and artifact validators.
+3. Playwright Node matrix.
+4. Playwright Python API + CLI matrix.
+5. Cross-runtime/browser parity guards.
+6. Stagehand v4 Python optional lane.
+7. Replay optional lane.
+8. Reusable workflow/template examples.
