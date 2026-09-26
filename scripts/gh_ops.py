@@ -13,6 +13,10 @@ is a thin adapter over them::
     python -S scripts/gh_ops.py comments-file saved-tool-result.txt --last 5   # offline
     python -S scripts/gh_ops.py pr-merge OWNER/REPO 11 --sha ecfd0ba --min-checks 5 --write
     python -c "from gh_ops import pr_merge; print(pr_merge('OWNER/REPO', 11, sha='ecfd0ba'))"
+    python -S scripts/gh_ops.py pr-body-set OWNER/REPO 11 --file body.md --write
+    python -S scripts/gh_ops.py pr-edit OWNER/REPO 11 --base develop --write
+    python -S scripts/gh_ops.py file-put OWNER/REPO docs/x.md --from x.md --branch docs --message "add x" --write
+    python -S scripts/gh_ops.py url compare OWNER/REPO main feature   # no network; prints web + api URLs
 
 Exit codes: 0 = OK, 1 = a checked condition was not met, 2 = input or
 communication error.
@@ -20,6 +24,8 @@ communication error.
 from __future__ import annotations
 
 import argparse
+import base64
+import difflib
 import json
 import os
 import re
@@ -153,6 +159,11 @@ def _sha(sha: str) -> str:
     if not _SHA_RE.match(sha or ""):
         raise GhOpsError(f"SHA must be 4-40 hex characters, got {sha!r}")
     return sha.lower()
+
+
+def _quote(segment: str) -> str:
+    """Quote one URL path segment, keeping ``/`` (branch names and file paths may contain it)."""
+    return urllib.parse.quote(str(segment), safe="/")
 
 
 def _client(client: Client | None) -> Client:
@@ -491,6 +502,73 @@ def pr_body_replace(repo: str, number: int, *, old: str, new: str, write: bool =
             "reason": "" if verified else "PR body does not contain the new text after the update"}
 
 
+def _lines_differ(old: str, new: str) -> int:
+    """Count how many lines differ between ``old`` and ``new`` (a changed line counts once)."""
+    matcher = difflib.SequenceMatcher(None, old.splitlines(), new.splitlines())
+    return sum(max(i2 - i1, j2 - j1) for tag, i1, i2, j1, j2 in matcher.get_opcodes() if tag != "equal")
+
+
+def pr_body_set(repo: str, number: int, *, new: str, write: bool = False, client: Client | None = None) -> dict:
+    """Replace a PR's entire body with ``new`` (whole-file overwrite).
+
+    Unlike :func:`pr_body_replace`, this does not require an anchor: it
+    always overwrites the full body. A dry run reports the old/new size in
+    characters and how many lines differ; when the text is already
+    identical, this returns ``ok: True`` with no HTTP write at all
+    (``reason: "unchanged"``). With ``write=True``, it PATCHes the body and
+    re-reads the PR to verify the body now equals ``new`` exactly.
+    """
+    client = _client(client)
+    path = f"/repos/{_repo(repo)}/pulls/{int(number)}"
+    old = client.get(path).get("body") or ""
+    if old == new:
+        return {"ok": True, "changed": False, "old_chars": len(old), "new_chars": len(new),
+                "lines_differ": 0, "reason": "unchanged"}
+    lines_differ = _lines_differ(old, new)
+    if not write:
+        return {"ok": True, "dry_run": True, "changed": False, "old_chars": len(old), "new_chars": len(new),
+                "lines_differ": lines_differ}
+    client.request("PATCH", path, {"body": new})
+    verified = (client.get(path).get("body") or "") == new
+    return {"ok": verified, "dry_run": False, "changed": True, "old_chars": len(old), "new_chars": len(new),
+            "lines_differ": lines_differ, "verified": verified,
+            "reason": "" if verified else "PR body does not match the file after the update"}
+
+
+_PR_EDIT_STATES = ("open", "closed")
+
+
+def pr_edit(repo: str, number: int, *, title: str | None = None, base: str | None = None,
+            state: str | None = None, write: bool = False, client: Client | None = None) -> dict:
+    """REST PATCH of a PR's ``title``, ``base`` branch, and/or open/closed ``state``.
+
+    At least one of ``title``, ``base``, ``state`` is required (else
+    ``GhOpsError``, CLI exit 2). Changing draft <-> ready for review is a
+    GraphQL-only operation (``markPullRequestReadyForReview`` /
+    ``convertPullRequestToDraft``) and is out of scope here. A dry run
+    reports current -> new for each requested field; with ``write=True``,
+    it PATCHes only those fields, then re-reads the PR to verify.
+    """
+    fields = {key: value for key, value in (("title", title), ("base", base), ("state", state)) if value is not None}
+    if not fields:
+        raise GhOpsError("pass at least one of --title, --base, --state")
+    if state is not None and state not in _PR_EDIT_STATES:
+        raise GhOpsError(f"--state must be one of {', '.join(_PR_EDIT_STATES)}")
+    client = _client(client)
+    path = f"/repos/{_repo(repo)}/pulls/{int(number)}"
+    pr = client.get(path)
+    current = {"title": pr.get("title"), "base": (pr.get("base") or {}).get("ref"), "state": pr.get("state")}
+    report = {key: {"from": current[key], "to": value} for key, value in fields.items()}
+    if not write:
+        return {"ok": True, "dry_run": True, "changed": False, "fields": report}
+    client.request("PATCH", path, fields)
+    updated = client.get(path)
+    now = {"title": updated.get("title"), "base": (updated.get("base") or {}).get("ref"), "state": updated.get("state")}
+    verified = all(now[key] == value for key, value in fields.items())
+    return {"ok": verified, "dry_run": False, "changed": True, "fields": report, "verified": verified,
+            "reason": "" if verified else "PR fields do not match the requested values after the update"}
+
+
 def pr_merge(repo: str, number: int, *, sha: str, min_checks: int = 1, method: str = "squash",
              message: str | None = None, title: str | None = None, write: bool = False,
              client: Client | None = None) -> dict:
@@ -557,6 +635,46 @@ def pr_merge(repo: str, number: int, *, sha: str, min_checks: int = 1, method: s
     return result
 
 
+def file_put(repo: str, path: str, *, content: bytes, branch: str, message: str, write: bool = False,
+             allow_default_branch: bool = False, client: Client | None = None) -> dict:
+    """Create or update one file through the contents API.
+
+    Refuses to write to the repository's default branch unless
+    ``allow_default_branch=True`` (checked first, before anything else, and
+    regardless of ``write``). A dry run reports create-vs-update, the local
+    size, and the current blob SHA; identical content short-circuits to
+    ``ok: True`` with no HTTP write at all (``reason: "unchanged"``). With
+    ``write=True``, it PUTs the base64-encoded content and returns the new
+    commit SHA.
+    """
+    client, repo = _client(client), _repo(repo)
+    default_branch = client.get(f"/repos/{repo}")["default_branch"]
+    if branch == default_branch and not allow_default_branch:
+        return {"ok": False, "dry_run": not write, "reason":
+                f"refusing to write to the default branch {default_branch!r} without --allow-default-branch"}
+    contents_path = f"/repos/{repo}/contents/{_quote(path)}"
+    response = client.request("GET", contents_path, params={"ref": branch}, expect=(200, 404))
+    current = response.data if response.status == 200 and isinstance(response.data, dict) else {}
+    sha = current.get("sha")
+    exists = sha is not None
+    action = "update" if exists else "create"
+    existing = base64.b64decode(current["content"]) if current.get("content") is not None else None
+    if exists and existing == content:
+        return {"ok": True, "changed": False, "action": action, "path": path, "branch": branch,
+                "local_size": len(content), "sha": sha, "reason": "unchanged"}
+    if not write:
+        return {"ok": True, "dry_run": True, "changed": False, "action": action, "path": path, "branch": branch,
+                "local_size": len(content), "sha": sha}
+    body: dict = {"message": message, "content": base64.b64encode(content).decode("ascii"), "branch": branch}
+    if sha:
+        body["sha"] = sha
+    data = client.request("PUT", contents_path, body, expect=(200, 201)).data
+    commit_sha = (data.get("commit") or {}).get("sha")
+    return {"ok": bool(commit_sha), "dry_run": False, "changed": True, "action": action, "path": path,
+            "branch": branch, "local_size": len(content), "sha": (data.get("content") or {}).get("sha"),
+            "commit_sha": commit_sha}
+
+
 def sync_main(*, base: str = "main", remote: str = "origin", write: bool = False, push: bool = False,
               cwd: str = ".", run: Callable[..., Any] = subprocess.run) -> dict:
     """Merge ``remote/base`` into the checked-out PR branch (git, no REST).
@@ -598,6 +716,103 @@ def sync_main(*, base: str = "main", remote: str = "origin", write: bool = False
         git("push", remote, f"HEAD:{branch}")
         pushed = True
     return {"ok": True, "branch": branch, "behind": behind, "merged": True, "head": new_head, "pushed": pushed}
+
+
+# --- URL building (pure string building; no network) -----------------------------
+
+_SEARCH_ENDPOINTS = {
+    "code": "code", "issues": "issues", "pullrequests": "issues",
+    "repositories": "repositories", "commits": "commits",
+}
+
+
+def url_pr(repo: str, number: int, *, tab: str | None = None) -> dict:
+    """Web URL for a PR, or one of its ``checks``/``files``/``commits`` tabs.
+
+    ``files`` and ``commits`` also have a matching REST API URL; ``checks``
+    does not (check runs are looked up by commit SHA, not PR number).
+    """
+    if tab is not None and tab not in ("checks", "files", "commits"):
+        raise GhOpsError("--tab must be one of checks, files, commits")
+    repo, number = _repo(repo), int(number)
+    web = f"https://github.com/{repo}/pull/{number}"
+    api: str | None = f"{API_ROOT}/repos/{repo}/pulls/{number}"
+    if tab == "checks":
+        web, api = web + "/checks", None
+    elif tab in ("files", "commits"):
+        web, api = f"{web}/{tab}", f"{api}/{tab}"
+    return {"ok": True, "web": web, "api": api}
+
+
+def url_compare(repo: str, base: str, head: str) -> dict:
+    """Web and REST API URL comparing ``base...head``."""
+    repo = _repo(repo)
+    spec = f"{_quote(base)}...{_quote(head)}"
+    return {"ok": True, "web": f"https://github.com/{repo}/compare/{spec}",
+            "api": f"{API_ROOT}/repos/{repo}/compare/{spec}"}
+
+
+def url_blame(repo: str, ref: str, path: str, *, line: int | None = None) -> dict:
+    """Web blame URL for ``path`` at ``ref``; GitHub has no REST blame endpoint."""
+    web = f"https://github.com/{_repo(repo)}/blame/{_quote(ref)}/{_quote(path)}"
+    if line is not None:
+        web += f"#L{int(line)}"
+    return {"ok": True, "web": web, "api": None}
+
+
+def url_history(repo: str, ref: str, path: str) -> dict:
+    """Web commit-history URL for ``path`` at ``ref``, and the equivalent REST commits query."""
+    repo = _repo(repo)
+    web = f"https://github.com/{repo}/commits/{_quote(ref)}/{_quote(path)}"
+    api = f"{API_ROOT}/repos/{repo}/commits?" + urllib.parse.urlencode({"sha": ref, "path": path})
+    return {"ok": True, "web": web, "api": api}
+
+
+def url_runs(repo: str, *, workflow: str | None = None, branch: str | None = None,
+             event: str | None = None, status: str | None = None) -> dict:
+    """Web and REST API URL listing workflow runs, optionally filtered.
+
+    ``branch``/``event``/``status`` map to the REST list-runs query
+    parameters of the same names; the web URL folds them into GitHub's
+    ``branch:``/``event:``/``is:`` search syntax instead.
+    """
+    repo = _repo(repo)
+    web, api = f"https://github.com/{repo}/actions", f"{API_ROOT}/repos/{repo}/actions/runs"
+    if workflow is not None:
+        quoted = _quote(workflow)
+        web += f"/workflows/{quoted}"
+        api = f"{API_ROOT}/repos/{repo}/actions/workflows/{quoted}/runs"
+    filters = " ".join(part for part in (
+        f"branch:{branch}" if branch else "", f"event:{event}" if event else "",
+        f"is:{status}" if status else "") if part)
+    if filters:
+        web += "?" + urllib.parse.urlencode({"query": filters})
+    query = {key: value for key, value in (("branch", branch), ("event", event), ("status", status)) if value}
+    if query:
+        api += "?" + urllib.parse.urlencode(query)
+    return {"ok": True, "web": web, "api": api}
+
+
+def url_search(query: str, *, kind: str = "code") -> dict:
+    """Web and REST API search URL. ``issues``/``pullrequests`` add an ``is:`` qualifier to ``query``."""
+    if kind not in _SEARCH_ENDPOINTS:
+        raise GhOpsError(f"--type must be one of {', '.join(_SEARCH_ENDPOINTS)}")
+    endpoint = _SEARCH_ENDPOINTS[kind]
+    if kind == "pullrequests":
+        query = f"is:pr {query}"
+    elif kind == "issues":
+        query = f"is:issue {query}"
+    web = "https://github.com/search?" + urllib.parse.urlencode({"q": query, "type": endpoint})
+    api = f"{API_ROOT}/search/{endpoint}?" + urllib.parse.urlencode({"q": query})
+    return {"ok": True, "web": web, "api": api}
+
+
+def url_raw(repo: str, ref: str, path: str) -> dict:
+    """Direct raw-content URL for ``path`` at ``ref``, and the equivalent REST contents URL."""
+    repo = _repo(repo)
+    web = f"https://raw.githubusercontent.com/{repo}/{_quote(ref)}/{_quote(path)}"
+    api = f"{API_ROOT}/repos/{repo}/contents/{_quote(path)}?" + urllib.parse.urlencode({"ref": ref})
+    return {"ok": True, "web": web, "api": api}
 
 
 # --- CLI adapter ----------------------------------------------------------------
@@ -652,6 +867,11 @@ def _render(command: str, result: dict) -> str:
             for run in result["runs"]])
     if command == "workflow-state":
         return f"{result['workflow']}: {result['state']}"
+    if command == "url":
+        lines = [result["web"]]
+        if result.get("api"):
+            lines.append(f"api: {result['api']}")
+        return "\n".join(lines)
     reason = result.get("reason") or "; ".join(result.get("failures", []))
     status = "OK" if result["ok"] else "NG"
     mode = "dry run" if result.get("dry_run") else "applied"
@@ -734,6 +954,55 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("sync-main", help="merge origin/main into the checked-out PR branch (needs --write)")
     p.add_argument("--base", default="main"); p.add_argument("--remote", default="origin")
     p.add_argument("--push", action="store_true"); p.add_argument("--write", action="store_true")
+
+    p = sub.add_parser("pr-body-set", help="replace the whole PR body with a file's text (needs --write)")
+    p.add_argument("repo"); p.add_argument("number", type=int)
+    p.add_argument("--file", required=True, help="file with the full replacement body (one trailing newline ignored)")
+    p.add_argument("--write", action="store_true")
+
+    p = sub.add_parser("pr-edit", help="PATCH a PR's title/base/state (needs --write); draft/ready-for-review needs GraphQL, out of scope here")
+    p.add_argument("repo"); p.add_argument("number", type=int)
+    p.add_argument("--title"); p.add_argument("--base")
+    p.add_argument("--state", choices=_PR_EDIT_STATES)
+    p.add_argument("--write", action="store_true")
+
+    p = sub.add_parser("file-put", help="create or update one file via the contents API (needs --write)")
+    p.add_argument("repo"); p.add_argument("path", help="path of the file inside the repository")
+    p.add_argument("--from", dest="from_path", required=True, help="local file to read the new content from")
+    p.add_argument("--branch", required=True)
+    p.add_argument("--message", required=True, help="commit message")
+    p.add_argument("--allow-default-branch", action="store_true",
+                   help="permit writing directly to the repository's default branch")
+    p.add_argument("--write", action="store_true")
+
+    p = sub.add_parser("url", help="build a github.com / api.github.com URL for something; no network access")
+    url_sub = p.add_subparsers(dest="url_kind", required=True)
+
+    up = url_sub.add_parser("pr", help="a pull request, or one of its checks/files/commits tabs")
+    up.add_argument("repo"); up.add_argument("number", type=int)
+    up.add_argument("--tab", choices=("checks", "files", "commits"))
+
+    up = url_sub.add_parser("compare", help="compare BASE...HEAD")
+    up.add_argument("repo"); up.add_argument("base"); up.add_argument("head")
+
+    up = url_sub.add_parser("blame", help="blame view of PATH at REF")
+    up.add_argument("repo"); up.add_argument("ref"); up.add_argument("path")
+    up.add_argument("--line", type=int)
+
+    up = url_sub.add_parser("history", help="commit history of PATH at REF")
+    up.add_argument("repo"); up.add_argument("ref"); up.add_argument("path")
+
+    up = url_sub.add_parser("runs", help="workflow run list, optionally filtered by branch/event/status")
+    up.add_argument("repo")
+    up.add_argument("--workflow", help="workflow file name, e.g. ci.yml")
+    up.add_argument("--branch"); up.add_argument("--event"); up.add_argument("--status")
+
+    up = url_sub.add_parser("search", help="search results (pullrequests searches issues with is:pr added)")
+    up.add_argument("query")
+    up.add_argument("--type", choices=tuple(_SEARCH_ENDPOINTS), default="code")
+
+    up = url_sub.add_parser("raw", help="raw file content of PATH at REF")
+    up.add_argument("repo"); up.add_argument("ref"); up.add_argument("path")
     return parser
 
 
@@ -769,7 +1038,31 @@ def run_command(args: argparse.Namespace, client: Client | None = None) -> dict:
         message = _read_text(args.message_file) if args.message_file else None
         return pr_merge(args.repo, args.number, sha=args.sha, min_checks=args.min_checks, method=args.method,
                         title=args.title, message=message, write=args.write, client=client)
-    return sync_main(base=args.base, remote=args.remote, write=args.write, push=args.push)
+    if command == "sync-main":
+        return sync_main(base=args.base, remote=args.remote, write=args.write, push=args.push)
+    if command == "pr-body-set":
+        return pr_body_set(args.repo, args.number, new=_read_text(args.file), write=args.write, client=client)
+    if command == "pr-edit":
+        return pr_edit(args.repo, args.number, title=args.title, base=args.base, state=args.state,
+                       write=args.write, client=client)
+    if command == "file-put":
+        return file_put(args.repo, args.path, content=Path(args.from_path).read_bytes(), branch=args.branch,
+                        message=args.message, write=args.write, allow_default_branch=args.allow_default_branch,
+                        client=client)
+    kind = args.url_kind
+    if kind == "pr":
+        return url_pr(args.repo, args.number, tab=args.tab)
+    if kind == "compare":
+        return url_compare(args.repo, args.base, args.head)
+    if kind == "blame":
+        return url_blame(args.repo, args.ref, args.path, line=args.line)
+    if kind == "history":
+        return url_history(args.repo, args.ref, args.path)
+    if kind == "runs":
+        return url_runs(args.repo, workflow=args.workflow, branch=args.branch, event=args.event, status=args.status)
+    if kind == "search":
+        return url_search(args.query, kind=args.type)
+    return url_raw(args.repo, args.ref, args.path)
 
 
 def main(argv: list[str] | None = None, *, client: Client | None = None) -> int:

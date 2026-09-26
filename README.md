@@ -45,6 +45,10 @@ python -S scripts/gh_ops.py pr-for-branch OWNER/REPO my-branch                  
 python -S scripts/gh_ops.py open-prs OWNER [--org] [--repos a,b]               # open PRs across repositories, newest first
 python -S scripts/gh_ops.py checks-wait OWNER/REPO <sha> --min 5
 python -S scripts/gh_ops.py pr-merge OWNER/REPO 11 --sha ecfd0ba --min-checks 5 --method squash --write
+python -S scripts/gh_ops.py pr-body-set OWNER/REPO 11 --file body.md --write     # replace the whole PR body
+python -S scripts/gh_ops.py pr-edit OWNER/REPO 11 --title "New title" --write    # PATCH title/base/state (draft/ready needs GraphQL)
+python -S scripts/gh_ops.py file-put OWNER/REPO path/to/file --from local.txt --branch my-branch --message "msg" --write
+python -S scripts/gh_ops.py url pr OWNER/REPO 11 --tab checks                    # build a github.com/api URL; no network
 ```
 
 Also: `pr-status`, `runs`, `workflow-state`, `workflow-dispatch`, `pr-body-replace`, `sync-main`. Every subcommand is a function (`from gh_ops import pr_merge`) returning a dict; the CLI is a thin adapter.

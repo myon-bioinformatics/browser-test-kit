@@ -1,3 +1,4 @@
+import base64
 import importlib.util
 import io
 import json
@@ -551,3 +552,271 @@ def test_open_prs_repos_use_repository_scoped_endpoints(capsys):
     assert capsys.readouterr().out.splitlines() == [
         "2 open PR(s) for octo", 'octo/demo#9 draft 2026-09-26 b "new" u9', 'octo/web#1 2026-09-20 a "old" u1']
     assert [call["query"]["state"] for call in stub.calls] == [["open"], ["open"]]
+
+
+# --- pr-body-set ------------------------------------------------------------------
+
+def test_pr_body_set_unchanged_is_ok_without_any_write():
+    client, stub = client_for({("GET", "/repos/octo/demo/pulls/11"): reply({"body": "same text"})})
+    result = gh_ops.pr_body_set(REPO, 11, new="same text", write=True, client=client)
+    assert result == {"ok": True, "changed": False, "old_chars": 9, "new_chars": 9,
+                      "lines_differ": 0, "reason": "unchanged"}
+    assert stub.methods == ["GET"]
+
+
+def test_pr_body_set_dry_run_reports_sizes_and_line_diff_without_writing():
+    client, stub = client_for({("GET", "/repos/octo/demo/pulls/11"): reply({"body": "a\nb\nc"})})
+    result = gh_ops.pr_body_set(REPO, 11, new="a\nx\nc", client=client)
+    assert result == {"ok": True, "dry_run": True, "changed": False, "old_chars": 5, "new_chars": 5,
+                      "lines_differ": 1}
+    assert stub.methods == ["GET"]
+
+
+def test_pr_body_set_write_then_verify():
+    client, stub = client_for(body_routes("a\nb\nc", after="a\nx\nc"))
+    result = gh_ops.pr_body_set(REPO, 11, new="a\nx\nc", write=True, client=client)
+    assert result["ok"] is True and result["verified"] is True and result["lines_differ"] == 1
+    assert stub.methods == ["GET", "PATCH", "GET"]
+    assert stub.calls[1] == {**stub.calls[1], "method": "PATCH", "body": {"body": "a\nx\nc"}}
+
+
+def test_pr_body_set_write_reports_unverified_when_body_does_not_match():
+    client, stub = client_for(body_routes("old", after="something else"))
+    result = gh_ops.pr_body_set(REPO, 11, new="new", write=True, client=client)
+    assert result["ok"] is False and result["verified"] is False
+    assert "does not match" in result["reason"]
+
+
+def test_pr_body_set_cli_file_flag_ignores_one_trailing_newline(tmp_path, capsys):
+    body_file = tmp_path / "body.md"
+    body_file.write_text("hello\n", encoding="utf-8")
+    client, stub = client_for({("GET", "/repos/octo/demo/pulls/11"): reply({"body": "hello"})})
+    code = gh_ops.main(["pr-body-set", REPO, "11", "--file", str(body_file)], client=client)
+    assert code == 0 and stub.methods == ["GET"]
+    assert capsys.readouterr().out.strip() == "OK pr-body-set (applied): unchanged"
+
+
+# --- pr-edit --------------------------------------------------------------------
+
+def edit_routes(before, after=None):
+    gets = [reply(before)] + ([reply(after)] if after is not None else [])
+    return {
+        ("GET", "/repos/octo/demo/pulls/11"): gets,
+        ("PATCH", "/repos/octo/demo/pulls/11"): reply(after or {}),
+    }
+
+
+def test_pr_edit_requires_at_least_one_field():
+    client, _ = client_for(edit_routes(pr_payload()))
+    with pytest.raises(gh_ops.GhOpsError, match="at least one"):
+        gh_ops.pr_edit(REPO, 11, client=client)
+
+
+def test_pr_edit_rejects_an_invalid_state():
+    client, _ = client_for(edit_routes(pr_payload()))
+    with pytest.raises(gh_ops.GhOpsError, match="--state"):
+        gh_ops.pr_edit(REPO, 11, state="merged", client=client)
+
+
+def test_pr_edit_cli_missing_fields_is_exit_2(capsys):
+    client, stub = client_for(edit_routes(pr_payload()))
+    code = gh_ops.main(["pr-edit", REPO, "11"], client=client)
+    assert code == 2 and stub.methods == []
+    assert "at least one" in capsys.readouterr().err
+
+
+def test_pr_edit_dry_run_reports_current_to_new_and_never_writes():
+    client, stub = client_for(edit_routes(pr_payload(title="Old title")))
+    result = gh_ops.pr_edit(REPO, 11, title="New title", base="develop", client=client)
+    assert result == {"ok": True, "dry_run": True, "changed": False,
+                      "fields": {"title": {"from": "Old title", "to": "New title"},
+                                 "base": {"from": "main", "to": "develop"}}}
+    assert stub.methods == ["GET"]
+
+
+def test_pr_edit_write_patches_only_given_fields_and_verifies():
+    client, stub = client_for(edit_routes(pr_payload(title="Old"), after=pr_payload(title="New")))
+    result = gh_ops.pr_edit(REPO, 11, title="New", write=True, client=client)
+    assert result["ok"] is True and result["verified"] is True
+    assert result["fields"] == {"title": {"from": "Old", "to": "New"}}
+    assert stub.methods == ["GET", "PATCH", "GET"]
+    assert stub.calls[1]["body"] == {"title": "New"}
+
+
+def test_pr_edit_write_reports_unverified_on_mismatch():
+    client, stub = client_for(edit_routes(pr_payload(state="open"), after=pr_payload(state="open")))
+    result = gh_ops.pr_edit(REPO, 11, state="closed", write=True, client=client)
+    assert result["ok"] is False and result["verified"] is False
+    assert "do not match" in result["reason"]
+
+
+# --- file-put -------------------------------------------------------------------
+
+def contents_routes(existing=None, default_branch="main", commit_sha="c0mm1t"):
+    routes = {("GET", "/repos/octo/demo"): reply({"default_branch": default_branch})}
+    if existing is None:
+        routes[("GET", "/repos/octo/demo/contents/docs/x.md")] = reply({"message": "Not Found"}, status=404)
+    else:
+        encoded = base64.b64encode(existing).decode("ascii")
+        routes[("GET", "/repos/octo/demo/contents/docs/x.md")] = reply({"sha": "abc123", "content": encoded})
+    routes[("PUT", "/repos/octo/demo/contents/docs/x.md")] = reply(
+        {"content": {"sha": "newblob"}, "commit": {"sha": commit_sha}}, status=201)
+    return routes
+
+
+def test_file_put_refuses_default_branch_without_override():
+    client, stub = client_for(contents_routes(existing=b"old"))
+    result = gh_ops.file_put(REPO, "docs/x.md", content=b"new", branch="main", message="m",
+                             write=True, client=client)
+    assert result["ok"] is False and "default branch" in result["reason"]
+    assert stub.methods == ["GET"]
+
+
+def test_file_put_allows_default_branch_with_override():
+    client, stub = client_for(contents_routes(existing=b"old"))
+    result = gh_ops.file_put(REPO, "docs/x.md", content=b"new", branch="main", message="m",
+                             allow_default_branch=True, client=client)
+    assert result["ok"] is True and result["dry_run"] is True and result["action"] == "update"
+    assert set(stub.methods) == {"GET"} and "PUT" not in stub.methods
+
+
+def test_file_put_unchanged_content_is_ok_without_any_write():
+    client, stub = client_for(contents_routes(existing=b"same bytes"))
+    result = gh_ops.file_put(REPO, "docs/x.md", content=b"same bytes", branch="feature", message="m",
+                             write=True, client=client)
+    assert result == {"ok": True, "changed": False, "action": "update", "path": "docs/x.md",
+                      "branch": "feature", "local_size": 10, "sha": "abc123", "reason": "unchanged"}
+    assert set(stub.methods) == {"GET"}
+
+
+def test_file_put_dry_run_reports_create_when_absent_and_never_writes():
+    client, stub = client_for(contents_routes(existing=None))
+    result = gh_ops.file_put(REPO, "docs/x.md", content=b"new file", branch="feature", message="m", client=client)
+    assert result == {"ok": True, "dry_run": True, "changed": False, "action": "create", "path": "docs/x.md",
+                      "branch": "feature", "local_size": 8, "sha": None}
+    assert "PUT" not in stub.methods
+
+
+def test_file_put_write_sends_base64_and_returns_commit_sha():
+    client, stub = client_for(contents_routes(existing=b"old bytes"))
+    result = gh_ops.file_put(REPO, "docs/x.md", content=b"new bytes", branch="feature", message="update x",
+                             write=True, client=client)
+    assert result["ok"] is True and result["commit_sha"] == "c0mm1t" and result["action"] == "update"
+    put = [call for call in stub.calls if call["method"] == "PUT"][0]
+    assert put["body"] == {"message": "update x", "content": base64.b64encode(b"new bytes").decode("ascii"),
+                           "branch": "feature", "sha": "abc123"}
+
+
+def test_file_put_create_omits_sha_from_the_put_body():
+    client, stub = client_for(contents_routes(existing=None))
+    result = gh_ops.file_put(REPO, "docs/x.md", content=b"x", branch="feature", message="m",
+                             write=True, client=client)
+    assert result["ok"] is True and result["action"] == "create"
+    put = [call for call in stub.calls if call["method"] == "PUT"][0]
+    assert "sha" not in put["body"]
+
+
+def test_file_put_cli_reads_local_file_via_from_flag(tmp_path):
+    local = tmp_path / "local.md"
+    local.write_bytes(b"hello world")
+    client, stub = client_for(contents_routes(existing=None))
+    code = gh_ops.main(["file-put", REPO, "docs/x.md", "--from", str(local), "--branch", "feature",
+                        "--message", "add x"], client=client)
+    assert code == 0 and "PUT" not in stub.methods
+
+
+# --- url (pure string building; no network) -----------------------------------------
+
+def test_url_pr_default_and_tabs():
+    assert gh_ops.url_pr(REPO, 11) == {"ok": True, "web": "https://github.com/octo/demo/pull/11",
+                                       "api": "https://api.github.com/repos/octo/demo/pulls/11"}
+    assert gh_ops.url_pr(REPO, 11, tab="files") == {
+        "ok": True, "web": "https://github.com/octo/demo/pull/11/files",
+        "api": "https://api.github.com/repos/octo/demo/pulls/11/files"}
+    assert gh_ops.url_pr(REPO, 11, tab="commits") == {
+        "ok": True, "web": "https://github.com/octo/demo/pull/11/commits",
+        "api": "https://api.github.com/repos/octo/demo/pulls/11/commits"}
+    assert gh_ops.url_pr(REPO, 11, tab="checks") == {
+        "ok": True, "web": "https://github.com/octo/demo/pull/11/checks", "api": None}
+
+
+def test_url_pr_rejects_an_unknown_tab():
+    with pytest.raises(gh_ops.GhOpsError, match="--tab"):
+        gh_ops.url_pr(REPO, 11, tab="conversation")
+
+
+def test_url_compare_quotes_slashes_and_spaces_but_keeps_them_in_path():
+    assert gh_ops.url_compare(REPO, "main", "feature/my branch") == {
+        "ok": True, "web": "https://github.com/octo/demo/compare/main...feature/my%20branch",
+        "api": "https://api.github.com/repos/octo/demo/compare/main...feature/my%20branch"}
+
+
+def test_url_blame_quotes_unicode_path_and_adds_line_anchor():
+    result = gh_ops.url_blame(REPO, "main", "docs/café notes.md", line=42)
+    assert result == {"ok": True, "api": None,
+                      "web": "https://github.com/octo/demo/blame/main/docs/caf%C3%A9%20notes.md#L42"}
+
+
+def test_url_blame_without_line_has_no_anchor():
+    assert gh_ops.url_blame(REPO, "main", "a.py") == {
+        "ok": True, "web": "https://github.com/octo/demo/blame/main/a.py", "api": None}
+
+
+def test_url_history_web_path_and_api_query_string():
+    result = gh_ops.url_history(REPO, "v1.0", "src/a b.py")
+    assert result == {"ok": True, "web": "https://github.com/octo/demo/commits/v1.0/src/a%20b.py",
+                      "api": "https://api.github.com/repos/octo/demo/commits?sha=v1.0&path=src%2Fa+b.py"}
+
+
+def test_url_runs_plain_and_filtered():
+    assert gh_ops.url_runs(REPO) == {"ok": True, "web": "https://github.com/octo/demo/actions",
+                                     "api": "https://api.github.com/repos/octo/demo/actions/runs"}
+    result = gh_ops.url_runs(REPO, workflow="ci.yml", branch="main", event="push", status="success")
+    assert result == {
+        "ok": True,
+        "web": "https://github.com/octo/demo/actions/workflows/ci.yml?query=branch%3Amain+event%3Apush+is%3Asuccess",
+        "api": "https://api.github.com/repos/octo/demo/actions/workflows/ci.yml/runs"
+               "?branch=main&event=push&status=success",
+    }
+
+
+def test_url_search_types_and_unicode_query():
+    assert gh_ops.url_search("café config", kind="code") == {
+        "ok": True, "web": "https://github.com/search?q=caf%C3%A9+config&type=code",
+        "api": "https://api.github.com/search/code?q=caf%C3%A9+config"}
+    prs = gh_ops.url_search("is:open", kind="pullrequests")
+    assert prs == {"ok": True, "web": "https://github.com/search?q=is%3Apr+is%3Aopen&type=issues",
+                   "api": "https://api.github.com/search/issues?q=is%3Apr+is%3Aopen"}
+    issues = gh_ops.url_search("bug", kind="issues")
+    assert issues == {"ok": True, "web": "https://github.com/search?q=is%3Aissue+bug&type=issues",
+                      "api": "https://api.github.com/search/issues?q=is%3Aissue+bug"}
+
+
+def test_url_search_rejects_an_unknown_type():
+    with pytest.raises(gh_ops.GhOpsError, match="--type"):
+        gh_ops.url_search("x", kind="wat")
+
+
+def test_url_raw_quotes_unicode_and_keeps_slashes():
+    assert gh_ops.url_raw(REPO, "main", "docs/café/a b.md") == {
+        "ok": True, "web": "https://raw.githubusercontent.com/octo/demo/main/docs/caf%C3%A9/a%20b.md",
+        "api": "https://api.github.com/repos/octo/demo/contents/docs/caf%C3%A9/a%20b.md?ref=main"}
+
+
+def test_url_cli_prints_web_then_api_line(capsys):
+    assert gh_ops.main(["url", "pr", REPO, "11", "--tab", "files"]) == 0
+    assert capsys.readouterr().out.splitlines() == [
+        "https://github.com/octo/demo/pull/11/files",
+        "api: https://api.github.com/repos/octo/demo/pulls/11/files",
+    ]
+
+
+def test_url_cli_omits_api_line_when_none_exists(capsys):
+    assert gh_ops.main(["url", "blame", REPO, "main", "a.py"]) == 0
+    assert capsys.readouterr().out.strip() == "https://github.com/octo/demo/blame/main/a.py"
+
+
+def test_url_cli_needs_no_client_or_token(monkeypatch):
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    assert gh_ops.main(["url", "raw", REPO, "main", "a.py"]) == 0
