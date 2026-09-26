@@ -28,17 +28,18 @@ Screenshots are visual evidence, not a selector strategy. Prefer DOM/accessibili
 | `MOBILE_VIEWPORT_ONLY` | A narrow viewport is treated as a real mobile profile | UA/touch/device scale/browser engine differences are missed | Use named device emulation where appropriate and record the profile |
 | `DEVICE_DESCRIPTOR_CROSS_ENGINE` | Reusing one named device descriptor unchanged across every browser engine | Engine-specific context options can fail at launch/context creation (for example Firefox rejects Playwright `is_mobile`) | Treat device descriptors as engine-sensitive; adapt unsupported options explicitly and regression-test the adaptation |
 | `DEAD_COMPATIBILITY_HELPER` | Adding a compatibility/helper function without routing the production/test call-site through it | Unit coverage for the helper can pass while the real browser path keeps using the old inline logic | Replace the old call-site explicitly and keep an integration/browser test that proves the helper is exercised end-to-end |
-| `HELPER_NAME_SHADOWING` | Reusing a helper function name for a local variable at its call-site | The compatibility abstraction becomes unreachable or misleading, and reviewers may believe the helper is active when the old inline value still drives execution | Give builders/helpers verb-based names (for example `build_context_args`) and use distinct local names such as `ctx_args`; cover the real integration path |
+| `HELPER_NAME_SHADOWING` | Reusing a helper function name for a local variable at its call-site | The compatibility abstraction becomes unreachable or misleading | Give builders/helpers verb-based names and distinct local names; cover the real integration path |
 | `SCREENSHOT_AS_SELECTOR` | Acting on pixels/screenshots when DOM/locator evidence exists | Brittle automation | Interact through locators/snapshots; screenshot for visual evidence |
 | `STALE_ELEMENT_HANDLE_WAIT` | Polling a captured node while a framework replaces it | Timeout although visible DOM is correct | Re-query locator/selector during polling |
 | `SILENT_CLEANUP_EXCEPTION` | Cleanup/diagnostic exceptions are swallowed | Original failure loses its evidence | Preserve logs and report cleanup failures without masking root cause |
-| `CLI_ARG_GREEDINESS` | Wrapper constructs ambiguous Playwright CLI argv | Project/file args are consumed incorrectly | Unit-test exact argv construction; prefer explicit `--project=...` forms |
+| `CLI_ARG_GREEDINESS` | Wrapper constructs ambiguous Playwright/child CLI argv | Project/file/top-level args are consumed incorrectly | Unit-test exact argv construction; support an explicit `--` delimiter for child top-level flags |
 | `BROWSER_BINARY_MISMATCH` | Python/Node package revision and installed browser binary drift | Launch failure in CI/sandbox | Install browsers from the same Playwright version; expose intentional executable override only when needed |
 | `EXTERNAL_SITE_AS_CORE_FIXTURE` | CI depends on a third-party page | 403/429/network failures masquerade as product regressions | Core tests use local deterministic fixture; external evidence is a separate lane |
 | `FAILURE_LAYER_FLATTENING` | Browser, network, app and artifact failures all become generic failure | Diagnosis becomes slow | Emit stage/browser/runtime/URL/artifact metadata |
 | `VISUAL_DIFF_TOO_EARLY` | Pixel baseline is made blocking before deterministic capture is stable | Noisy CI | First validate candidate screenshots; promote stable baselines later |
 | `NODE_OR_PYTHON_MONOCULTURE` | One Playwright binding is presented as the only reference | Other repos cannot reuse the pattern naturally | Maintain equivalent Node and Python examples with shared semantics |
 | `AGENT_REPLACES_DETERMINISTIC_TEST` | Stagehand/agent lane replaces deterministic Playwright checks | Model/external variability weakens regression signal | Keep Stagehand optional and separate from deterministic Playwright |
+| `TERMINAL_BROWSER_AS_MATRIX` | A terminal-browser Chromium exploratory pass is treated as cross-browser evidence | Firefox/WebKit/mobile-specific regressions escape while the exploratory lane looks green | Keep terminal-browser optional/non-blocking and retain the deterministic Playwright matrix as authoritative |
 | `MISSING_FAILURE_ARTIFACTS` | Screenshot/trace/video exists only on success or is discarded on failure | Hardest failures are least observable | Retain-on-failure screenshot/trace/video where useful |
 | `EVIDENCE_MASKS_ROOT_FAILURE` | Evidence capture throws while handling the original test failure | Screenshot/trace failure replaces the actual assertion/navigation error | Keep failure evidence best-effort and re-raise the original exception |
 | `SUCCESS_COUNT_VS_RETRY_ARTIFACTS` | Global artifact count is assumed to equal project count | Retries create extra attempt artifacts and cause false failures | Validate exact project identity from metadata and validate every discovered artifact |
@@ -49,6 +50,7 @@ These are intentionally generalized; copy the lesson, not necessarily the origin
 
 - `mcp-toolcall-lab`: WebKit screenshot commands can produce a PNG even when shutdown reports non-zero. The workflow therefore records the exit status and validates the PNG signature before deciding whether useful evidence exists.
 - `browser-test-kit` PR #2: applying Playwright's `iPhone 13` descriptor unchanged to Firefox failed because Firefox does not support the `is_mobile` BrowserContext option. A first fix added an engine-aware compatibility helper and a unit regression test, but the real smoke-test call-site still used the old inline `dict(pw.devices[device_name])` path. CI therefore reproduced the same browser failure. The follow-up routed `browser.new_context()` through the helper. Portable lesson: testing a helper is insufficient if the integration path never calls it.
+- `browser-test-kit` PR #4: terminal-browser's interactive lane must inherit terminal stdio. Capturing stdout by default made CI-friendly non-interactive commands look healthy while destroying the TUI proof layer. Structured wrapper events therefore use stderr, and capture is opt-in for non-interactive logging.
 - `flutter_navigation_basic`: browser configuration and CI/Docker installation drift was prevented with a regression test that checks Chromium, Firefox, and WebKit parity. Its Playwright config also retains trace on first retry, screenshot only on failure, and video on failure.
 - `flutter_navigation_basic`: the Python stdlib CLI wrapper has regression tests for the exact Node Playwright argv shape; this caught the CLI's project-argument parsing behavior.
 - `web-ui`: visual regression was deliberately staged: first validate deterministic candidate screenshots, then require baselines after the capture lane is trustworthy.
@@ -64,7 +66,7 @@ When a new incident teaches something reusable, append a short record:
 ```text
 ID:
 Repository / PR:
-Runtime: node | python | stagehand | replay
+Runtime: node | python | stagehand | replay | terminal-browser
 Browser: chromium | firefox | webkit | replay-chromium | other
 Device/profile:
 Stage: install | launch | navigate | interact | assert | screenshot | artifact | cleanup
@@ -76,4 +78,3 @@ Portable lesson:
 ```
 
 Do not store secrets, transient tokens, or large binary artifacts in this document.
-

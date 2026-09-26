@@ -3,13 +3,14 @@ Cross-browser testing reference kit for Playwright Node/Python, Stagehand, Repla
 
 ## Fast Init
 
-This repository is documentation-first before browser implementation. The first PR records the cross-repository evidence, failure taxonomy, screenshot validation rules, and Node/Python policy that later implementation must follow.
+Implementation is staged by evidence layer. Deterministic Node/Python Playwright lanes are already implemented; optional agent/exploratory lanes remain separate and must not be described as proven until their own contracts are measured.
 
 Initial implementation target:
 - Playwright Node/TypeScript and Playwright Python API/CLI as equal reference lanes.
 - Chromium, Firefox, and WebKit, with explicit desktop/mobile profiles.
 - Screenshot evidence validated by command result, file existence/size, PNG signature, and human-inspectable CI artifacts.
 - Stagehand v4 Python as an optional agent-oriented lane, not a replacement for deterministic Playwright.
+- terminal-browser as an optional real-Chromium CLI/TUI exploratory lane for fast local/agent feedback before the deterministic matrix.
 - Replay as an optional recorded-execution/debug lane.
 - Core CI uses a local deterministic fixture; external network failures remain a separate failure layer.
 
@@ -31,6 +32,7 @@ The implementation must guard against lessons already observed in sibling reposi
 - **VISUAL_DIFF_TOO_EARLY:** validate deterministic screenshot candidates before making pixel baselines blocking.
 - **NODE_OR_PYTHON_MONOCULTURE:** show equivalent Node and Python patterns rather than selecting one as canonical for every repository.
 - **AGENT_REPLACES_DETERMINISTIC_TEST:** Stagehand remains an additional lane.
+- **TERMINAL_BROWSER_AS_MATRIX:** terminal-browser is a fast Chromium exploratory lane, not evidence of Firefox/WebKit parity.
 - **MISSING_FAILURE_ARTIFACTS:** retain screenshot/trace/video/logs on failure where useful.
 
 ### Provenance
@@ -51,5 +53,15 @@ When a new repository teaches a reusable lesson, record: repository/PR, runtime 
 4. Playwright Python API + CLI matrix.
 5. Cross-runtime/browser parity guards.
 6. Stagehand v4 Python optional lane.
-7. Replay optional lane.
-8. Reusable workflow/template examples.
+7. terminal-browser optional CLI/TUI lane.
+8. Replay optional lane.
+9. Reusable workflow/template examples.
+
+### terminal-browser quick lane
+
+See [`docs/terminal-browser.md`](docs/terminal-browser.md). The dependency-free wrapper keeps missing-tool failures explicit and passes upstream CLI arguments through unchanged:
+
+```sh
+python scripts/terminal_browser.py --check
+python scripts/terminal_browser.py action --help
+```
