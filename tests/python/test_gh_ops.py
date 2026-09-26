@@ -513,3 +513,41 @@ def test_pr_for_branch_without_a_pr_is_exit_1(capsys):
     assert gh_ops.main(["pr-for-branch", REPO, "fork:feature", "--state", "open"], client=client) == 1
     assert capsys.readouterr().out.strip() == "no open PR with head fork:feature"
     assert stub.calls[0]["query"]["head"] == ["fork:feature"]
+
+
+# --- open-prs (cross-repository) ----------------------------------------------------
+
+def test_open_prs_lists_across_repositories(capsys):
+    items = [{"repository_url": "https://api.github.com/repos/octo/web", "number": 7, "draft": True,
+              "updated_at": "2026-09-26T16:00:00Z", "user": {"login": "octo"}, "title": "feat: a",
+              "html_url": "https://github.com/octo/web/pull/7"},
+             {"repository_url": "https://api.github.com/repos/octo/demo", "number": 3,
+              "updated_at": "2026-09-25T10:00:00Z", "user": {"login": "bot"}, "title": "fix: b",
+              "html_url": "https://github.com/octo/demo/pull/3"}]
+    client, stub = client_for({("GET", "/search/issues"): reply({"total_count": 5, "items": items})})
+    assert gh_ops.main(["open-prs", "octo", "--limit", "2"], client=client) == 0
+    assert capsys.readouterr().out.splitlines() == [
+        "5 open PR(s) for octo (showing 2)",
+        'octo/web#7 draft 2026-09-26 octo "feat: a" https://github.com/octo/web/pull/7',
+        'octo/demo#3 2026-09-25 bot "fix: b" https://github.com/octo/demo/pull/3',
+    ]
+    assert stub.calls[0]["query"]["q"] == ["is:pr is:open archived:false user:octo"]
+
+
+def test_open_prs_org_qualifier_and_none_is_exit_1(capsys):
+    client, stub = client_for({("GET", "/search/issues"): reply({"total_count": 0, "items": []})})
+    assert gh_ops.main(["open-prs", "acme", "--org"], client=client) == 1
+    assert stub.calls[0]["query"]["q"] == ["is:pr is:open archived:false org:acme"]
+
+
+def test_open_prs_repos_use_repository_scoped_endpoints(capsys):
+    client, stub = client_for({
+        ("GET", "/repos/octo/web/pulls"): reply([{"number": 1, "updated_at": "2026-09-20T00:00:00Z",
+                                                  "user": {"login": "a"}, "title": "old", "html_url": "u1"}]),
+        ("GET", "/repos/octo/demo/pulls"): reply([{"number": 9, "updated_at": "2026-09-26T00:00:00Z", "draft": True,
+                                                   "user": {"login": "b"}, "title": "new", "html_url": "u9"}]),
+    })
+    assert gh_ops.main(["open-prs", "octo", "--repos", "web,demo"], client=client) == 0
+    assert capsys.readouterr().out.splitlines() == [
+        "2 open PR(s) for octo", 'octo/demo#9 draft 2026-09-26 b "new" u9', 'octo/web#1 2026-09-20 a "old" u1']
+    assert [call["query"]["state"] for call in stub.calls] == [["open"], ["open"]]

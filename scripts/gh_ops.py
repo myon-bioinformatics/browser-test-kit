@@ -345,6 +345,42 @@ def pr_for_branch(repo: str, branch: str, *, state: str = "all", client: Client 
     return {"ok": bool(rows), "repo": repo, "head": head, "state": state, "pulls": rows}
 
 
+def open_prs(owner: str, *, org: bool = False, repos: tuple[str, ...] = (), limit: int = 50,
+             client: Client | None = None) -> dict:
+    """Open PRs across every repository of ``owner`` in one search call, most recently updated first.
+
+    ``org=True`` searches ``org:OWNER`` instead of ``user:OWNER``. With
+    ``repos``, each named repository is read through its own
+    ``/repos/OWNER/NAME/pulls`` endpoint instead, for tokens or proxies
+    that allow repository-scoped calls but not search. ``ok`` is False when
+    nothing is open.
+    """
+    client = _client(client)
+    if repos:
+        rows = []
+        for name in repos:
+            for pr in client.paginate(f"/repos/{_repo(owner + '/' + name)}/pulls", params={"state": "open"}):
+                rows.append({"repo": f"{owner}/{name}", "number": pr.get("number"), "draft": bool(pr.get("draft")),
+                             "updated_at": pr.get("updated_at"), "author": (pr.get("user") or {}).get("login", ""),
+                             "title": pr.get("title"), "url": pr.get("html_url")})
+        rows.sort(key=lambda row: str(row["updated_at"]), reverse=True)
+        return {"ok": bool(rows), "owner": owner, "total": len(rows), "pulls": rows[:limit]}
+    qualifier = "org" if org else "user"
+    data = client.get("/search/issues", params={
+        "q": f"is:pr is:open archived:false {qualifier}:{owner}", "sort": "updated", "order": "desc",
+        "per_page": max(1, min(int(limit), 100))}) or {}
+    rows = [{
+        "repo": str(item.get("repository_url", "")).rsplit("/repos/", 1)[-1],
+        "number": item.get("number"),
+        "draft": bool(item.get("draft")),
+        "updated_at": item.get("updated_at"),
+        "author": (item.get("user") or {}).get("login", ""),
+        "title": item.get("title"),
+        "url": item.get("html_url"),
+    } for item in data.get("items", [])[:limit]]
+    return {"ok": bool(rows), "owner": owner, "total": data.get("total_count", len(rows)), "pulls": rows}
+
+
 def checks_wait(repo: str, sha: str, *, min_checks: int = 1, timeout: float = 600.0, interval: float = 15.0,
                 client: Client | None = None, sleep: Callable[[float], None] = time.sleep,
                 clock: Callable[[], float] = time.monotonic) -> dict:
@@ -582,6 +618,12 @@ def _render(command: str, result: dict) -> str:
         if result.get("saved_to"):
             lines.append(f"full JSON saved to {result['saved_to']}")
         return "\n".join(lines)
+    if command == "open-prs":
+        lines = [f"{result['total']} open PR(s) for {result['owner']}"
+                 + (f" (showing {len(result['pulls'])})" if result["total"] > len(result["pulls"]) else "")]
+        lines += [f"{pr['repo']}#{pr['number']}{' draft' if pr['draft'] else ''} {str(pr['updated_at'])[:10]} "
+                  f"{pr['author']} \"{pr['title']}\" {pr['url']}" for pr in result["pulls"]]
+        return "\n".join(lines)
     if command == "pr-for-branch":
         if not result["pulls"]:
             scope = "" if result["state"] == "all" else f"{result['state']} "
@@ -643,6 +685,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--preview", type=int, default=110, help="preview length in characters (default 110)")
     p.add_argument("--show", default="", help="comma-separated comment indexes to print in full")
 
+    p = sub.add_parser("open-prs", help="open PRs across all repositories of OWNER (none -> exit 1)")
+    p.add_argument("owner"); p.add_argument("--org", action="store_true", help="OWNER is an organization")
+    p.add_argument("--limit", type=int, default=50, help="rows to show (max 100)")
+    p.add_argument("--repos", default="", help="comma-separated repository names: read each via /repos/OWNER/NAME/pulls instead of search")
+
     p = sub.add_parser("pr-for-branch", help="PRs whose head is BRANCH (none -> exit 1)")
     p.add_argument("repo"); p.add_argument("branch", help="branch name, or owner:branch for a fork")
     p.add_argument("--state", choices=("open", "closed", "all"), default="all")
@@ -699,6 +746,9 @@ def run_command(args: argparse.Namespace, client: Client | None = None) -> dict:
         show = tuple(int(part) for part in args.show.split(",") if part.strip()) if args.show else ()
         return issue_comments(args.repo, args.number, since=args.since, last=args.last, author=args.author,
                               preview=args.preview, show=show, save=args.save, client=client)
+    if command == "open-prs":
+        repos = tuple(name.strip() for name in args.repos.split(",") if name.strip())
+        return open_prs(args.owner, org=args.org, repos=repos, limit=args.limit, client=client)
     if command == "pr-for-branch":
         return pr_for_branch(args.repo, args.branch, state=args.state, client=client)
     if command == "pr-status":
