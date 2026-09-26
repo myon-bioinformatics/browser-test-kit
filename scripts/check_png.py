@@ -21,6 +21,9 @@ def main() -> int:
     if len(sys.argv) < 2:
         print("usage: check_png.py FILE [...]", file=sys.stderr)
         return 2
+    if sys.argv[1] in {"-h", "--help"}:
+        print("usage: check_png.py FILE [...]\nValidate PNG signature, IHDR, and IEND; print dimensions.")
+        return 0
     for raw in sys.argv[1:]:
         path = Path(raw)
         data = path.read_bytes()
