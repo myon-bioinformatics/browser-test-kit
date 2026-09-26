@@ -42,6 +42,8 @@ Screenshots are visual evidence, not a selector strategy. Prefer DOM/accessibili
 | `MISSING_FAILURE_ARTIFACTS` | Screenshot/trace/video exists only on success or is discarded on failure | Hardest failures are least observable | Retain-on-failure screenshot/trace/video where useful |
 | `EVIDENCE_MASKS_ROOT_FAILURE` | Evidence capture throws while handling the original test failure | Screenshot/trace failure replaces the actual assertion/navigation error | Keep failure evidence best-effort and re-raise the original exception |
 | `SUCCESS_COUNT_VS_RETRY_ARTIFACTS` | Global artifact count is assumed to equal project count | Retries create extra attempt artifacts and cause false failures | Validate exact project identity from metadata and validate every discovered artifact |
+| `PAGE_TEXT_AS_RENDERED_TEXT` | Text extracted from static HTML is treated as the text a browser shows after rendering | An SPA shell yields an empty or partial body, and CSS-hidden text is counted as visible | Keep static extraction (`scripts/page_text.py`) and the Playwright lane's `inner_text()` as separate evidence; compare them when rendering matters |
+| `LOGIN_WALL_AS_404` | "Page not found" is treated as proof that a page does not exist | Sites such as GitHub answer 404 to clients without access, so an existing settings page looks missing to a signed-out browser or an unauthenticated fetch | Check the login/permission state first; report a 404 as "not found or not visible to this identity" |
 
 ## Observed source patterns in this organization
 
@@ -56,6 +58,7 @@ These are intentionally generalized; copy the lesson, not necessarily the origin
 - `markdown`: simple HTML rendering uses `python -m playwright screenshot` rather than writing a custom browser program when the CLI is sufficient. More interactive UI tests use the Python API.
 - `markdown`: existing anti-pattern documentation records stale element handles and swallowed cleanup exceptions as browser-debugging hazards.
 - `Ironmate`: a small screenshot lane shows the value of parameterizing Playwright version/browser rather than burying them in commands.
+- `browser-test-kit` #8: while repository Code security settings were being checked (2026-09-27), a built-in browser that was not signed in to GitHub showed the settings page as "Page not found". A 404 from a permission-checked site is not evidence that the page is absent (`LOGIN_WALL_AS_404`).
 
 ## Failure record template
 
