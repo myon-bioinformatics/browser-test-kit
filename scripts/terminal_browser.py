@@ -25,6 +25,13 @@ def emit(event: str, **fields: object) -> None:
     print(json.dumps(payload, ensure_ascii=False), file=sys.stderr, flush=True)
 
 
+def _normalized_returncode(returncode: int) -> tuple[int, int | None]:
+    if returncode >= 0:
+        return returncode, None
+    signal_number = -returncode
+    return 128 + signal_number, signal_number
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run terminal-browser with structured diagnostics")
     parser.add_argument("--check", action="store_true", help="only verify that terminal-browser is installed")
@@ -35,6 +42,9 @@ def main() -> int:
     )
     parser.add_argument("args", nargs=argparse.REMAINDER, help="arguments passed to terminal-browser")
     ns = parser.parse_args()
+
+    if ns.check and (ns.log is not None or ns.args):
+        parser.error("--check cannot be combined with --log or terminal-browser arguments")
 
     executable = shutil.which("terminal-browser")
     if executable is None:
@@ -49,25 +59,33 @@ def main() -> int:
     argv = [executable, *child_args]
     emit("terminal_browser_start", argv=argv)
 
-    if ns.log is None:
-        # Preserve the child's terminal. Interactive commands such as `open`
-        # must see the real stdin/stdout/stderr instead of pipes.
-        proc = subprocess.run(argv)
-    else:
-        proc = subprocess.run(
-            argv,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-        )
-        output = proc.stdout or ""
-        if output:
-            print(output, end="" if output.endswith("\n") else "\n")
-        ns.log.parent.mkdir(parents=True, exist_ok=True)
-        ns.log.write_text(output, encoding="utf-8")
+    try:
+        if ns.log is None:
+            # Preserve the child's terminal. Interactive commands such as `open`
+            # must see the real stdin/stdout/stderr instead of pipes.
+            proc = subprocess.run(argv)
+        else:
+            proc = subprocess.run(
+                argv,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+            )
+            output = proc.stdout or ""
+            if output:
+                print(output, end="" if output.endswith("\n") else "\n")
+            ns.log.parent.mkdir(parents=True, exist_ok=True)
+            ns.log.write_text(output, encoding="utf-8")
+    except KeyboardInterrupt:
+        emit("terminal_browser_exit", returncode=130, interrupted=True)
+        return 130
 
-    emit("terminal_browser_exit", returncode=proc.returncode)
-    return proc.returncode
+    returncode, signal_number = _normalized_returncode(proc.returncode)
+    exit_fields: dict[str, object] = {"returncode": returncode}
+    if signal_number is not None:
+        exit_fields["signal"] = signal_number
+    emit("terminal_browser_exit", **exit_fields)
+    return returncode
 
 
 if __name__ == "__main__":
