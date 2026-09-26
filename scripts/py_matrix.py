@@ -25,6 +25,8 @@ import subprocess
 import sys
 from typing import Callable
 
+DEFAULT_VERSION = "3.13"
+
 
 def command(version: str, packages: list[str], pytest_args: list[str]) -> list[str]:
     argv = ["uv", "run", "--no-project", "--quiet", "--python", version]
@@ -56,8 +58,8 @@ def main(argv: list[str] | None = None, *, which: Callable[[str], str | None] = 
         split = argv.index("--")
         argv, pytest_args = argv[:split], argv[split + 1:]
     parser = argparse.ArgumentParser(description="Run pytest under several Python versions via uv.",
-                                     usage="%(prog)s VERSION [VERSION ...] [options] [-- PYTEST_ARGS]")
-    parser.add_argument("versions", nargs="+", help="Python versions, e.g. 3.9 3.13")
+                                     usage="%(prog)s [VERSION ...] [options] [-- PYTEST_ARGS]")
+    parser.add_argument("versions", nargs="*", default=[DEFAULT_VERSION], help=f"Python versions, e.g. 3.9 3.13 (default: {DEFAULT_VERSION})")
     parser.add_argument("--with", dest="packages", action="append", help="package for uv --with (default: pytest)")
     parser.add_argument("--timeout", type=float, default=300.0, help="seconds per version (default: 300)")
     parser.add_argument("--tail", type=int, default=15, help="output lines shown for a failing version")

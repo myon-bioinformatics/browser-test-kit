@@ -57,3 +57,9 @@ def test_failure_and_timeout_are_reported_and_exit_1(capsys) -> None:
 def test_missing_uv_is_exit_2(capsys) -> None:
     assert py_matrix.main(["3.9"], which=lambda name: None, run=FakeRun({})) == 2
     assert "uv not found" in capsys.readouterr().err
+
+
+def test_default_version_is_3_13(capsys) -> None:
+    run = FakeRun({"3.13": (0, "1 passed\n")})
+    assert py_matrix.main(["--", "tests/x.py"], which=lambda name: "/usr/bin/uv", run=run) == 0
+    assert capsys.readouterr().out == "py3.13: 1 passed\n"
