@@ -94,3 +94,48 @@ def test_default_mode_does_not_capture_child_stdio(tmp_path, monkeypatch):
     assert seen["argv"] == ["/fake/terminal-browser", "open", "http://127.0.0.1:8000"]
     assert "stdout" not in seen["kwargs"]
     assert "stderr" not in seen["kwargs"]
+
+
+def test_keyboard_interrupt_is_recorded_as_130(monkeypatch, capsys):
+    importlib_spec = importlib.util.spec_from_file_location("terminal_browser_interrupt", WRAPPER)
+    assert importlib_spec is not None
+    module = importlib.util.module_from_spec(importlib_spec)
+    assert importlib_spec.loader is not None
+    importlib_spec.loader.exec_module(module)
+
+    monkeypatch.setattr(module.shutil, "which", lambda _: "/fake/terminal-browser")
+    monkeypatch.setattr(module.subprocess, "run", lambda *args, **kwargs: (_ for _ in ()).throw(KeyboardInterrupt()))
+    monkeypatch.setattr(sys, "argv", [str(WRAPPER), "open", "http://127.0.0.1:8000"])
+
+    assert module.main() == 130
+    events = _events(capsys.readouterr().err)
+    assert events[-1]["event"] == "terminal_browser_exit"
+    assert events[-1]["returncode"] == 130
+    assert events[-1]["interrupted"] is True
+
+
+def test_signal_exit_is_normalized(tmp_path):
+    env = _fake_terminal_browser(tmp_path, "kill -TERM $$\n")
+    result = subprocess.run(
+        [sys.executable, str(WRAPPER), "action"],
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 143
+    events = _events(result.stderr)
+    assert events[-1]["event"] == "terminal_browser_exit"
+    assert events[-1]["returncode"] == 143
+    assert events[-1]["signal"] == 15
+
+
+def test_check_rejects_child_arguments(tmp_path):
+    env = _fake_terminal_browser(tmp_path, "exit 0\n")
+    result = subprocess.run(
+        [sys.executable, str(WRAPPER), "--check", "action"],
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 2
+    assert "--check cannot be combined" in result.stderr
