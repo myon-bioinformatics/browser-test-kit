@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>  Sample &amp; Page — テスト  </title>
+  <base href="https://example.test/docs/">
+  <style>.hidden { display: none } /* style text must not appear */</style>
+  <script>var inHead = "head script text must not appear";</script>
+</head>
+<body>
+  <nav><a href="/">Home</a> <a href="guide/intro.html">Guide</a></nav>
+  <main>
+    <h1>Main   heading</h1>
+    <p>First paragraph with <b>bold</b>
+       and a line break<br>after it &lt;tag&gt; &amp; &quot;quotes&quot; &#x1F9EA;</p>
+
+
+    <p>Second paragraph.</p>
+    <div>Block one</div>
+    <div><div>Nested block</div></div>
+    <p>全角　スペース and non&nbsp;breaking</p>
+    <ul><li>one</li><li>two <a href="status.html" title="Status page">status page</a></li></ul>
+    <table>
+      <tr><th>Key</th><th>Value</th></tr>
+      <tr><td>a</td><td>1</td></tr>
+    </table>
+    <pre>
+def f():
+    return 1</pre>
+    <p>Lines<br><br><br><br>after breaks</p>
+    <noscript>Enable JavaScript</noscript>
+    <template><p>template text</p></template>
+    <svg viewBox="0 0 10 10"><title>svg title</title><text>svg text</text><circle r="1"/></svg>
+    <iframe src="about:blank">iframe fallback</iframe>
+    <script>document.write("<a href='x'>script link</a>");</script>
+    <button aria-label="Close dialog">×</button>
+    <div role="button" title="Refresh data"><span>↻</span> <div>Refresh</div></div>
+  </main>
+  <footer>Footer text</footer>
+</body>
+</html>
