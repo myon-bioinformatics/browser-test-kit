@@ -24,7 +24,9 @@ When an MCP result exceeds the limit ("result (92,458 characters) exceeds maximu
 - The same check name appears once per workflow run. Judge each name by its newest run, and treat zero checks as not green (`ZERO_CHECKS_AS_GREEN`).
 
 ## 5. JSONL events and LLM/MCP test transcripts
-- `jsonl_digest.py run.jsonl` prints the record count, counts per `event`/`type`/`kind`, the time range, error-like records, and the last N records as one compact line each. `--show N` prints one record in full. It turned a 16 MB, 3,853-record session transcript into 7 lines.
+- `jsonl_digest.py run.jsonl` prints the record count, counts per `event`/`type`/`kind`/`method`, the time range, error-like records (including a JSON-RPC `error` object or an MCP `result.isError`), and the last N records as one compact line each. `--show N` prints one record in full. It turned a 16 MB, 3,853-record session transcript into 7 lines.
+- For raw MCP/JSON-RPC traffic (including inspector/proxy logs that nest the message under `message`/`payload`/`data`/`msg`), `jsonl_digest.py mcp.jsonl --pairs` matches each request to its response by `id` and prints one line per call (name, args, ok/ERROR, elapsed) plus a `calls: N (errors, unanswered), notifications: ...` summary.
+- For structured test/judgment traces (for example mcp-toolcall-lab's `MCP_TOOLCALL_LOG`), filter and summarize fields instead of scanning rows by eye: `jsonl_digest.py trace.jsonl --where event=jev/backend_answer --count prob_source --count kind --num duration_ms --num answer.noul`.
 - Make runs classifiable from one line: emit a machine-readable terminal event (for example `terminal_browser_exit` with `returncode`/`interrupted`) rather than relying on prose in the transcript.
 - To summarize an LLM/MCP test run, give pass/fail counts, the first failure with its stage, and the exact IDs (run, job, test). Do not paste the transcript.
 
