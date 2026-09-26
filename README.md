@@ -33,6 +33,26 @@ The implementation must guard against lessons already observed in sibling reposi
 - **AGENT_REPLACES_DETERMINISTIC_TEST:** Stagehand remains an additional lane.
 - **MISSING_FAILURE_ARTIFACTS:** retain screenshot/trace/video/logs on failure where useful.
 
+### GitHub operations without `gh` (`scripts/gh_ops.py`)
+
+Stdlib-only (`python -S`) REST helpers for PR/CI work where the `gh` CLI is unavailable. Read-only by default; writes need `--write` and re-check their preconditions first. Token: `GITHUB_TOKEN` (fallback `GH_TOKEN`), never printed. Exit codes: 0 OK, 1 condition not met, 2 input/communication error.
+
+```sh
+python -S scripts/gh_ops.py issue-comments OWNER/REPO 24 --save comments.json   # one line per comment
+python -S scripts/gh_ops.py issue-comments OWNER/REPO 24 --show 6,18            # full text of selected comments
+python -S scripts/gh_ops.py comments-file saved-tool-result.txt --last 5        # same digest from a saved JSON dump, offline
+python -S scripts/gh_ops.py pr-for-branch OWNER/REPO my-branch                    # existing PR for a branch? merged? (none -> exit 1)
+python -S scripts/gh_ops.py open-prs OWNER [--org] [--repos a,b]               # open PRs across repositories, newest first
+python -S scripts/gh_ops.py checks-wait OWNER/REPO <sha> --min 5
+python -S scripts/gh_ops.py pr-merge OWNER/REPO 11 --sha ecfd0ba --min-checks 5 --method squash --write
+python -S scripts/gh_ops.py pr-body-set OWNER/REPO 11 --file body.md --write     # replace the whole PR body
+python -S scripts/gh_ops.py pr-edit OWNER/REPO 11 --title "New title" --write    # PATCH title/base/state (draft/ready needs GraphQL)
+python -S scripts/gh_ops.py file-put OWNER/REPO path/to/file --from local.txt --branch my-branch --message "msg" --write
+python -S scripts/gh_ops.py url pr OWNER/REPO 11 --tab checks                    # build a github.com/api URL; no network
+```
+
+Also: `pr-status`, `runs`, `workflow-state`, `workflow-dispatch`, `pr-body-replace`, `sync-main`. Every subcommand is a function (`from gh_ops import pr_merge`) returning a dict; the CLI is a thin adapter.
+
 ### Provenance
 
 The initial rules were distilled from working patterns and incidents in `mcp-toolcall-lab`, `flutter_navigation_basic`, `web-ui`, `markdown`, and `Ironmate`.
