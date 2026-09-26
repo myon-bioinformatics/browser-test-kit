@@ -1,4 +1,5 @@
 import importlib.util
+import io
 import json
 import os
 import subprocess
@@ -444,3 +445,50 @@ def test_sync_main_refuses_diverged_local_or_dirty_tree(repos):
     assert gh_ops.sync_main(cwd=str(work), write=True)["reason"] == "working tree has uncommitted changes"
     git(work, "commit", "-am", "local only")
     assert "differs from origin/feature" in gh_ops.sync_main(cwd=str(work), write=True)["reason"]
+
+
+# --- comments-file (offline digest of a saved JSON dump) ----------------------------
+
+def _saved_comments(count=43, size=2000):
+    return [{"id": n, "created_at": f"2026-09-20T14:{n:02d}:00Z",
+             "user": {"login": "claude[bot]" if n == 0 else "myon"}, "body": ("本文 " * size)[:size],
+             "html_url": f"https://github.com/o/r/issues/24#issuecomment-{n}"} for n in range(count)]
+
+
+def test_comments_file_digests_an_oversized_saved_tool_result(tmp_path, capsys):
+    path = tmp_path / "mcp-github-issue_read.txt"
+    path.write_text(json.dumps(_saved_comments(), ensure_ascii=False), encoding="utf-8")  # ~90k chars, 1 line
+    assert gh_ops.main(["comments-file", str(path), "--preview", "40"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0] == f"{path} -- 43 comment(s)"
+    assert len(lines) == 44 and max(len(line) for line in lines[1:]) < 120
+    assert lines[1].startswith("[0] 2026-09-20T14:00:00Z claude[bot] 2000 chars: 本文")
+
+
+def test_comments_file_reads_save_output_from_stdin_and_filters(monkeypatch):
+    saved = {"issue": {"title": "Roadmap", "state": "open"}, "comments": _saved_comments(3, 10)}
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(saved)))
+    result = gh_ops.comments_file("-", author="myon", last=1, show=(0,))
+    assert (result["title"], result["total_comments"]) == ("Roadmap", 3)
+    assert [row["index"] for row in result["comments"]] == [2]
+    assert result["shown"] == {0: saved["comments"][0]["body"]}
+
+
+def test_comments_file_rejects_non_comment_json(tmp_path):
+    path = tmp_path / "x.json"
+    path.write_text('{"not": "comments"}', encoding="utf-8")
+    assert gh_ops.main(["comments-file", str(path)]) == 2
+    path.write_text("not json", encoding="utf-8")
+    with pytest.raises(gh_ops.GhOpsError, match="not JSON"):
+        gh_ops.comments_file(str(path))
+
+
+def test_comments_file_runs_offline_without_a_token(tmp_path):
+    path = tmp_path / "c.json"
+    path.write_text(json.dumps(_saved_comments(2, 5)), encoding="utf-8")
+    env = {k: v for k, v in os.environ.items() if k not in {"GITHUB_TOKEN", "GH_TOKEN"}}
+    env.update(PYTHONIOENCODING="utf-8", HTTPS_PROXY="http://127.0.0.1:9", HTTP_PROXY="http://127.0.0.1:9")
+    done = subprocess.run([sys.executable, "-S", str(SCRIPTS / "gh_ops.py"), "comments-file", str(path),
+                           "--last", "1"], capture_output=True, text=True, encoding="utf-8", env=env)
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.splitlines()[1].startswith("[1] 2026-09-20T14:01:00Z myon 5 chars: ")

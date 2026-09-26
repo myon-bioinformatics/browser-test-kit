@@ -40,6 +40,7 @@ Stdlib-only (`python -S`) REST helpers for PR/CI work where the `gh` CLI is unav
 ```sh
 python -S scripts/gh_ops.py issue-comments OWNER/REPO 24 --save comments.json   # one line per comment
 python -S scripts/gh_ops.py issue-comments OWNER/REPO 24 --show 6,18            # full text of selected comments
+python -S scripts/gh_ops.py comments-file saved-tool-result.txt --last 5        # same digest from a saved JSON dump, offline
 python -S scripts/gh_ops.py checks-wait OWNER/REPO <sha> --min 5
 python -S scripts/gh_ops.py pr-merge OWNER/REPO 11 --sha ecfd0ba --min-checks 5 --method squash --write
 ```

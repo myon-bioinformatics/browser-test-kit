@@ -10,6 +10,7 @@ Every operation is a plain function returning a dict with ``ok``; the CLI
 is a thin adapter over them::
 
     python -S scripts/gh_ops.py issue-comments OWNER/REPO 24 --save comments.json
+    python -S scripts/gh_ops.py comments-file saved-tool-result.txt --last 5   # offline
     python -S scripts/gh_ops.py pr-merge OWNER/REPO 11 --sha ecfd0ba --min-checks 5 --write
     python -c "from gh_ops import pr_merge; print(pr_merge('OWNER/REPO', 11, sha='ecfd0ba'))"
 
@@ -163,7 +164,66 @@ def _preview(text: str, limit: int) -> str:
     return flat if len(flat) <= limit else flat[: max(limit - 1, 0)] + "…"
 
 
+def _login(comment: dict) -> str:
+    for key in ("user", "author"):
+        value = comment.get(key)
+        if isinstance(value, dict):
+            return value.get("login") or ""
+        if isinstance(value, str):
+            return value
+    return ""
+
+
+def _digest(comments: list, *, last: int | None, author: str | None, preview: int,
+            show: tuple[int, ...]) -> tuple[list, dict]:
+    """Rows (index, id, created_at, author, chars, preview, url) plus full bodies for ``show``."""
+    rows = []
+    for index, comment in enumerate(comments):
+        body = comment.get("body") or ""
+        rows.append({
+            "index": index,
+            "id": comment.get("id"),
+            "created_at": comment.get("created_at"),
+            "author": _login(comment),
+            "chars": len(body),
+            "preview": _preview(body, preview),
+            "url": comment.get("html_url"),
+        })
+    if author:
+        rows = [row for row in rows if row["author"] == author]
+    if last:
+        rows = rows[-last:]
+    shown = {}
+    for index in show:
+        if not 0 <= index < len(comments):
+            raise GhOpsError(f"no comment with index {index} (0..{len(comments) - 1})")
+        shown[index] = comments[index].get("body") or ""
+    return rows, shown
+
+
 # --- read operations -----------------------------------------------------------
+
+def comments_file(path: str, *, last: int | None = None, author: str | None = None, preview: int = 110,
+                  show: tuple[int, ...] = ()) -> dict:
+    """Digest comments already saved to a file (``-`` for stdin), offline: no token, no network.
+
+    Accepts a JSON array of comments (for example a tool result that was too
+    large to display and was saved to disk) or an object with ``comments``
+    (and optionally ``issue``), as written by ``issue-comments --save``.
+    """
+    raw = sys.stdin.read() if path == "-" else Path(path).read_text(encoding="utf-8")
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as error:
+        raise GhOpsError(f"{path}: not JSON ({error})") from None
+    issue = data.get("issue") if isinstance(data, dict) and isinstance(data.get("issue"), dict) else {}
+    comments = data.get("comments") if isinstance(data, dict) else data
+    if not isinstance(comments, list) or not all(isinstance(item, dict) for item in comments):
+        raise GhOpsError(f"{path}: expected a JSON array of comments or an object with \"comments\"")
+    rows, shown = _digest(comments, last=last, author=author, preview=preview, show=show)
+    return {"ok": True, "source": path, "title": issue.get("title"), "state": issue.get("state"),
+            "total_comments": len(comments), "comments": rows, "shown": shown}
+
 
 def issue_comments(repo: str, number: int, *, since: str | None = None, last: int | None = None,
                    author: str | None = None, preview: int = 110, show: tuple[int, ...] = (),
@@ -179,27 +239,7 @@ def issue_comments(repo: str, number: int, *, since: str | None = None, last: in
     base = f"/repos/{_repo(repo)}/issues/{int(number)}"
     issue = client.get(base)
     comments = client.paginate(base + "/comments", params={"since": since} if since else None)
-    rows = []
-    for index, comment in enumerate(comments):
-        body = comment.get("body") or ""
-        rows.append({
-            "index": index,
-            "id": comment.get("id"),
-            "created_at": comment.get("created_at"),
-            "author": (comment.get("user") or {}).get("login", ""),
-            "chars": len(body),
-            "preview": _preview(body, preview),
-            "url": comment.get("html_url"),
-        })
-    if author:
-        rows = [row for row in rows if row["author"] == author]
-    if last:
-        rows = rows[-last:]
-    shown = {}
-    for index in show:
-        if not 0 <= index < len(comments):
-            raise GhOpsError(f"no comment with index {index} (0..{len(comments) - 1})")
-        shown[index] = comments[index].get("body") or ""
+    rows, shown = _digest(comments, last=last, author=author, preview=preview, show=show)
     saved_to = None
     if save:
         path = Path(save)
@@ -504,15 +544,19 @@ def sync_main(*, base: str = "main", remote: str = "origin", write: bool = False
 # --- CLI adapter ----------------------------------------------------------------
 
 def _render(command: str, result: dict) -> str:
-    if command == "issue-comments":
-        kind = "PR" if result["is_pull_request"] else "issue"
-        lines = [f"{kind} #{result['number']} {result['state']} \"{result['title']}\" -- "
-                 f"{result['total_comments']} comment(s), body {result['body_chars']} chars"]
+    if command in {"issue-comments", "comments-file"}:
+        if command == "comments-file":
+            title = f" \"{result['title']}\"" if result["title"] else ""
+            lines = [f"{result['source']}{title} -- {result['total_comments']} comment(s)"]
+        else:
+            kind = "PR" if result["is_pull_request"] else "issue"
+            lines = [f"{kind} #{result['number']} {result['state']} \"{result['title']}\" -- "
+                     f"{result['total_comments']} comment(s), body {result['body_chars']} chars"]
         lines += [f"[{row['index']}] {row['created_at']} {row['author']} {row['chars']} chars: {row['preview']}"
                   for row in result["comments"]]
         for index, body in result["shown"].items():
             lines += [f"--- [{index}] ---", body]
-        if result["saved_to"]:
+        if result.get("saved_to"):
             lines.append(f"full JSON saved to {result['saved_to']}")
         return "\n".join(lines)
     if command == "pr-status":
@@ -561,6 +605,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--show", default="", help="comma-separated comment indexes to print in full")
     p.add_argument("--save", help="write the complete issue + comments JSON to this file")
 
+    p = sub.add_parser("comments-file", help="the same digest for comments already saved to a JSON file (offline)")
+    p.add_argument("path", help="JSON array of comments, or {\"comments\": [...]} from --save; - for stdin")
+    p.add_argument("--last", type=int, help="keep only the last N rows")
+    p.add_argument("--author", help="keep only comments by this login")
+    p.add_argument("--preview", type=int, default=110, help="preview length in characters (default 110)")
+    p.add_argument("--show", default="", help="comma-separated comment indexes to print in full")
+
     p = sub.add_parser("pr-status", help="one-line PR state")
     p.add_argument("repo"); p.add_argument("number", type=int)
 
@@ -606,6 +657,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 def run_command(args: argparse.Namespace, client: Client | None = None) -> dict:
     command = args.command
+    if command == "comments-file":
+        show = tuple(int(part) for part in args.show.split(",") if part.strip()) if args.show else ()
+        return comments_file(args.path, last=args.last, author=args.author, preview=args.preview, show=show)
     if command == "issue-comments":
         show = tuple(int(part) for part in args.show.split(",") if part.strip()) if args.show else ()
         return issue_comments(args.repo, args.number, since=args.since, last=args.last, author=args.author,
