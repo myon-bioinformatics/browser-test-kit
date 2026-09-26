@@ -1,0 +1,647 @@
+#!/usr/bin/env python3
+"""GitHub REST operations for PR/CI work without the ``gh`` CLI (#9).
+
+Stdlib only, so it runs under ``python -S``. Read-only by default: every
+write operation takes ``write=True`` / ``--write`` and checks its
+preconditions first, so a dry run never issues an HTTP write. The token
+comes from ``GITHUB_TOKEN`` (fallback ``GH_TOKEN``) and is never printed.
+
+Every operation is a plain function returning a dict with ``ok``; the CLI
+is a thin adapter over them::
+
+    python -S scripts/gh_ops.py issue-comments OWNER/REPO 24 --save comments.json
+    python -S scripts/gh_ops.py pr-merge OWNER/REPO 11 --sha ecfd0ba --min-checks 5 --write
+    python -c "from gh_ops import pr_merge; print(pr_merge('OWNER/REPO', 11, sha='ecfd0ba'))"
+
+Exit codes: 0 = OK, 1 = a checked condition was not met, 2 = input or
+communication error.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Callable, Optional
+
+API_ROOT = "https://api.github.com"
+PASSING_CONCLUSIONS = frozenset({"success", "neutral", "skipped"})
+MERGE_METHODS = ("merge", "squash", "rebase")
+_REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+_SHA_RE = re.compile(r"^[0-9a-fA-F]{4,40}$")
+_NEXT_LINK_RE = re.compile(r'<([^>]+)>;\s*rel="next"')
+_HTTP_HINTS = {
+    401: "authentication failed; check GITHUB_TOKEN / GH_TOKEN",
+    403: "forbidden: missing token permission or rate limited -- not evidence that the feature is unconfigured",
+    404: "not found, or not visible to this token",
+}
+
+
+class GhOpsError(Exception):
+    """Input or communication error (exit code 2)."""
+
+
+@dataclass
+class Response:
+    status: int
+    data: Any
+    headers: dict = field(default_factory=dict)
+
+
+Transport = Callable[[str, str, Optional[dict], dict], Response]
+
+
+def _secrets() -> list[str]:
+    return [value for value in (os.environ.get("GITHUB_TOKEN"), os.environ.get("GH_TOKEN")) if value]
+
+
+def scrub(text: str, extra: tuple[str, ...] = ()) -> str:
+    """Replace any token value that leaked into ``text`` with ``***``."""
+    for secret in (*_secrets(), *extra):
+        if secret:
+            text = text.replace(secret, "***")
+    return text
+
+
+def urllib_transport(method: str, url: str, body: dict | None, headers: dict, *, timeout: float = 30.0) -> Response:
+    data = None
+    if body is not None:
+        data = json.dumps(body).encode("utf-8")
+        headers = {**headers, "Content-Type": "application/json"}
+    request = urllib.request.Request(url, data=data, method=method, headers=headers)
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as reply:
+            status, raw, reply_headers = reply.status, reply.read(), dict(reply.headers)
+    except urllib.error.HTTPError as error:
+        status, raw, reply_headers = error.code, error.read(), dict(error.headers or {})
+    except (urllib.error.URLError, OSError) as error:
+        reason = getattr(error, "reason", error)
+        raise GhOpsError(f"{method} {url} failed: {type(error).__name__}: {reason}") from None
+    try:
+        payload: Any = json.loads(raw) if raw else None
+    except ValueError:
+        payload = raw.decode("utf-8", "replace")
+    return Response(status, payload, {key.lower(): value for key, value in reply_headers.items()})
+
+
+class Client:
+    """Minimal GitHub REST client with an injectable transport (for tests)."""
+
+    def __init__(self, token: str | None = None, transport: Transport | None = None, api_root: str = API_ROOT):
+        if token is None:
+            token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or ""
+        self._token = token
+        self._transport = transport or urllib_transport
+        self.api_root = api_root.rstrip("/")
+        self.calls: list[tuple[str, str]] = []
+
+    def request(self, method: str, path: str, body: dict | None = None, *, params: dict | None = None,
+                expect: tuple[int, ...] = (200,)) -> Response:
+        url = path if path.startswith("http") else self.api_root + path
+        if params:
+            url += ("&" if "?" in url else "?") + urllib.parse.urlencode(params)
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "browser-test-kit-gh-ops",
+        }
+        if self._token:
+            headers["Authorization"] = f"Bearer {self._token}"
+        self.calls.append((method, url))
+        response = self._transport(method, url, body, headers)
+        if response.status not in expect:
+            message = response.data.get("message", "") if isinstance(response.data, dict) else ""
+            hint = _HTTP_HINTS.get(response.status, "")
+            text = f"{method} {urllib.parse.urlsplit(url).path} -> HTTP {response.status}"
+            text += f": {message}" if message else ""
+            text += f" [{hint}]" if hint else ""
+            raise GhOpsError(scrub(text, (self._token,)))
+        return response
+
+    def get(self, path: str, *, params: dict | None = None) -> Any:
+        return self.request("GET", path, params=params).data
+
+    def paginate(self, path: str, *, params: dict | None = None, key: str | None = None, max_pages: int = 50) -> list:
+        items: list = []
+        url, query = path, {"per_page": 100, **(params or {})}
+        for _ in range(max_pages):
+            response = self.request("GET", url, params=query)
+            items.extend(response.data[key] if key else response.data)
+            match = _NEXT_LINK_RE.search(response.headers.get("link", ""))
+            if not match:
+                break
+            url, query = match.group(1), None
+        return items
+
+
+def _repo(repo: str) -> str:
+    if not _REPO_RE.match(repo or ""):
+        raise GhOpsError(f"repository must look like OWNER/REPO, got {repo!r}")
+    return repo
+
+
+def _sha(sha: str) -> str:
+    if not _SHA_RE.match(sha or ""):
+        raise GhOpsError(f"SHA must be 4-40 hex characters, got {sha!r}")
+    return sha.lower()
+
+
+def _client(client: Client | None) -> Client:
+    return client if client is not None else Client()
+
+
+def _preview(text: str, limit: int) -> str:
+    flat = " ".join(text.split())
+    return flat if len(flat) <= limit else flat[: max(limit - 1, 0)] + "…"
+
+
+# --- read operations -----------------------------------------------------------
+
+def issue_comments(repo: str, number: int, *, since: str | None = None, last: int | None = None,
+                   author: str | None = None, preview: int = 110, show: tuple[int, ...] = (),
+                   save: str | None = None, client: Client | None = None) -> dict:
+    """Digest an issue/PR conversation: one line per comment, never the whole dump.
+
+    Rows carry index, created_at, author, character count, and a whitespace-
+    collapsed preview. Full bodies are only returned for the indexes in
+    ``show``; ``save`` writes the complete issue + comments JSON to a file so
+    huge threads can be read selectively instead of flooding a log/context.
+    """
+    client = _client(client)
+    base = f"/repos/{_repo(repo)}/issues/{int(number)}"
+    issue = client.get(base)
+    comments = client.paginate(base + "/comments", params={"since": since} if since else None)
+    rows = []
+    for index, comment in enumerate(comments):
+        body = comment.get("body") or ""
+        rows.append({
+            "index": index,
+            "id": comment.get("id"),
+            "created_at": comment.get("created_at"),
+            "author": (comment.get("user") or {}).get("login", ""),
+            "chars": len(body),
+            "preview": _preview(body, preview),
+            "url": comment.get("html_url"),
+        })
+    if author:
+        rows = [row for row in rows if row["author"] == author]
+    if last:
+        rows = rows[-last:]
+    shown = {}
+    for index in show:
+        if not 0 <= index < len(comments):
+            raise GhOpsError(f"no comment with index {index} (0..{len(comments) - 1})")
+        shown[index] = comments[index].get("body") or ""
+    saved_to = None
+    if save:
+        path = Path(save)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"issue": issue, "comments": comments}, ensure_ascii=False, indent=2), encoding="utf-8")
+        saved_to = str(path)
+    return {
+        "ok": True,
+        "repo": repo,
+        "number": int(number),
+        "title": issue.get("title"),
+        "state": issue.get("state"),
+        "is_pull_request": "pull_request" in issue,
+        "body_chars": len(issue.get("body") or ""),
+        "total_comments": len(comments),
+        "comments": rows,
+        "shown": shown,
+        "saved_to": saved_to,
+    }
+
+
+def pr_status(repo: str, number: int, *, client: Client | None = None) -> dict:
+    """One-line PR state: mergeability, head, size, and merged flag."""
+    pr = _client(client).get(f"/repos/{_repo(repo)}/pulls/{int(number)}")
+    return {
+        "ok": True,
+        "number": int(number),
+        "state": pr.get("state"),
+        "draft": bool(pr.get("draft")),
+        "merged": bool(pr.get("merged")),
+        "mergeable": pr.get("mergeable"),
+        "mergeable_state": pr.get("mergeable_state"),
+        "head_sha": (pr.get("head") or {}).get("sha"),
+        "head_ref": (pr.get("head") or {}).get("ref"),
+        "base_ref": (pr.get("base") or {}).get("ref"),
+        "commits": pr.get("commits"),
+        "changed_files": pr.get("changed_files"),
+        "additions": pr.get("additions"),
+        "deletions": pr.get("deletions"),
+        "url": pr.get("html_url"),
+    }
+
+
+def _check_runs(client: Client, repo: str, sha: str) -> list:
+    return client.paginate(f"/repos/{repo}/commits/{sha}/check-runs", key="check_runs")
+
+
+def _summarize_checks(runs: list, min_checks: int) -> dict:
+    pending = [run for run in runs if run.get("status") != "completed"]
+    failed = [run for run in runs if run.get("status") == "completed" and run.get("conclusion") not in PASSING_CONCLUSIONS]
+    succeeded = [run for run in runs if run.get("conclusion") == "success"]
+    if len(runs) < min_checks:
+        reason = f"only {len(runs)} check run(s), expected at least {min_checks}"
+    elif pending:
+        reason = f"{len(pending)} check run(s) still pending"
+    elif failed:
+        reason = f"{len(failed)} check run(s) failed: " + ", ".join(sorted(run.get("name", "?") for run in failed))
+    elif not succeeded:
+        reason = "no check run concluded success (all skipped/neutral)"
+    else:
+        reason = ""
+    return {
+        "ok": not reason,
+        "reason": reason,
+        "total": len(runs),
+        "pending": len(pending),
+        "failed": len(failed),
+        "succeeded": len(succeeded),
+        "runs": [
+            {
+                "id": run.get("id"),
+                "name": run.get("name"),
+                "status": run.get("status"),
+                "conclusion": run.get("conclusion"),
+                "head_sha": run.get("head_sha"),
+                "annotations_count": (run.get("output") or {}).get("annotations_count", 0),
+            }
+            for run in runs
+        ],
+    }
+
+
+def checks_wait(repo: str, sha: str, *, min_checks: int = 1, timeout: float = 600.0, interval: float = 15.0,
+                client: Client | None = None, sleep: Callable[[float], None] = time.sleep,
+                clock: Callable[[], float] = time.monotonic) -> dict:
+    """Wait until at least ``min_checks`` check runs exist and all completed.
+
+    Zero check runs never count as green: timing out with fewer than
+    ``min_checks`` runs, or with runs still pending, returns ``ok: False``.
+    Annotations (title/message) of runs that have any are attached.
+    """
+    if min_checks < 1:
+        raise GhOpsError("--min must be at least 1; zero check runs never counts as green")
+    client, repo, sha = _client(client), _repo(repo), _sha(sha)
+    deadline = clock() + timeout
+    while True:
+        runs = _check_runs(client, repo, sha)
+        summary = _summarize_checks(runs, min_checks)
+        if summary["total"] >= min_checks and not summary["pending"]:
+            break
+        if clock() >= deadline:
+            summary.update(ok=False, reason="timeout: " + summary["reason"])
+            return {"sha": sha, "timed_out": True, **summary}
+        sleep(interval)
+    for run in summary["runs"]:
+        if run["annotations_count"]:
+            annotations = client.paginate(f"/repos/{repo}/check-runs/{run['id']}/annotations")
+            run["annotations"] = [
+                {"level": item.get("annotation_level"), "title": item.get("title"), "message": item.get("message")}
+                for item in annotations
+            ]
+    return {"sha": sha, "timed_out": False, **summary}
+
+
+def runs(repo: str, *, sha: str | None = None, workflow: str | None = None, limit: int = 30,
+         client: Client | None = None) -> dict:
+    """List workflow runs for a head SHA or for one workflow file."""
+    if (sha is None) == (workflow is None):
+        raise GhOpsError("pass exactly one of --sha or --workflow")
+    repo = _repo(repo)
+    if workflow is not None:
+        path = f"/repos/{repo}/actions/workflows/{urllib.parse.quote(workflow, safe='')}/runs"
+        params = {"per_page": limit}
+    else:
+        path, params = f"/repos/{repo}/actions/runs", {"head_sha": _sha(sha or ""), "per_page": limit}
+    data = _client(client).get(path, params=params)
+    rows = [
+        {
+            "id": run.get("id"),
+            "name": run.get("name"),
+            "event": run.get("event"),
+            "head_sha": run.get("head_sha"),
+            "status": run.get("status"),
+            "conclusion": run.get("conclusion"),
+            "url": run.get("html_url"),
+        }
+        for run in (data or {}).get("workflow_runs", [])
+    ]
+    return {"ok": True, "total_count": (data or {}).get("total_count", len(rows)), "runs": rows}
+
+
+def workflow_state(repo: str, workflow: str, *, client: Client | None = None) -> dict:
+    """Report a workflow's state; ``ok`` only when it is ``active``."""
+    path = f"/repos/{_repo(repo)}/actions/workflows/{urllib.parse.quote(workflow, safe='')}"
+    data = _client(client).get(path)
+    return {"ok": data.get("state") == "active", "workflow": workflow, "state": data.get("state"),
+            "id": data.get("id"), "path": data.get("path")}
+
+
+# --- write operations (dry run unless write=True) ---------------------------------
+
+def workflow_dispatch(repo: str, workflow: str, *, ref: str, inputs: dict | None = None, write: bool = False,
+                      client: Client | None = None) -> dict:
+    """Trigger ``workflow_dispatch`` after confirming the workflow is active."""
+    client = _client(client)
+    state = workflow_state(repo, workflow, client=client)
+    if not state["ok"]:
+        return {"ok": False, "dry_run": not write, "dispatched": False,
+                "reason": f"workflow state is {state['state']!r}, not 'active'"}
+    body: dict = {"ref": ref}
+    if inputs:
+        body["inputs"] = inputs
+    path = f"/repos/{repo}/actions/workflows/{urllib.parse.quote(workflow, safe='')}/dispatches"
+    if not write:
+        return {"ok": True, "dry_run": True, "dispatched": False, "would_post": {"path": path, "body": body}}
+    client.request("POST", path, body, expect=(204,))
+    return {"ok": True, "dry_run": False, "dispatched": True}
+
+
+def pr_body_replace(repo: str, number: int, *, old: str, new: str, write: bool = False,
+                    client: Client | None = None) -> dict:
+    """Replace one anchor in a PR body, only when it occurs exactly once."""
+    if not old:
+        raise GhOpsError("--old must not be empty")
+    client = _client(client)
+    path = f"/repos/{_repo(repo)}/pulls/{int(number)}"
+    body = client.get(path).get("body") or ""
+    count = body.count(old)
+    if count != 1:
+        reason = f"anchor must occur exactly once in the PR body, found {count}"
+        if count == 0 and "\r\n" in body and "\r\n" not in old:
+            reason += " (the body uses CRLF line endings)"
+        return {"ok": False, "dry_run": not write, "updated": False, "anchor_count": count, "reason": reason}
+    updated = body.replace(old, new, 1)
+    if not write:
+        return {"ok": True, "dry_run": True, "updated": False, "anchor_count": 1, "new_length": len(updated)}
+    client.request("PATCH", path, {"body": updated})
+    verified = new in (client.get(path).get("body") or "")
+    return {"ok": verified, "dry_run": False, "updated": True, "anchor_count": 1, "verified": verified,
+            "reason": "" if verified else "PR body does not contain the new text after the update"}
+
+
+def pr_merge(repo: str, number: int, *, sha: str, min_checks: int = 1, method: str = "squash",
+             message: str | None = None, title: str | None = None, write: bool = False,
+             client: Client | None = None) -> dict:
+    """Verify, then (only with ``write=True``) merge a PR in one call.
+
+    Preconditions: open, ``mergeable_state == "clean"``, head matches
+    ``sha`` (an abbreviated SHA must match exactly one PR commit), and the
+    head has at least ``min_checks`` check runs, all completed and passing.
+    Any failed precondition returns ``ok: False`` without an HTTP write.
+    The merge request always pins ``sha`` to the verified head.
+    """
+    if method not in MERGE_METHODS:
+        raise GhOpsError(f"--method must be one of {', '.join(MERGE_METHODS)}")
+    if min_checks < 1:
+        raise GhOpsError("--min-checks must be at least 1; zero check runs never counts as green")
+    client, repo, prefix = _client(client), _repo(repo), _sha(sha)
+    path = f"/repos/{repo}/pulls/{int(number)}"
+    pr = client.get(path)
+    head = ((pr.get("head") or {}).get("sha") or "").lower()
+    matching = [commit["sha"] for commit in client.paginate(path + "/commits") if commit["sha"].lower().startswith(prefix)]
+    pre_merge = {
+        "state": pr.get("state"),
+        "merged": bool(pr.get("merged")),
+        "mergeable_state": pr.get("mergeable_state"),
+        "head_sha": head,
+        "sha_matches_head": head.startswith(prefix),
+        "sha_prefix_matches": len(matching),
+    }
+    failures = []
+    if pr.get("state") != "open" or pre_merge["merged"]:
+        failures.append("PR is not open")
+    if pr.get("mergeable_state") != "clean":
+        failures.append(f"mergeable_state is {pr.get('mergeable_state')!r}, not 'clean'")
+    if not pre_merge["sha_matches_head"]:
+        failures.append(f"head {head[:12]} does not match --sha {sha}")
+    elif len(matching) > 1:
+        failures.append(f"--sha {sha} matches {len(matching)} commits in this PR; pass a longer SHA")
+    elif not matching:
+        failures.append("the PR commit list does not contain the head commit; refusing to merge")
+    if pre_merge["sha_matches_head"] and len(matching) == 1:
+        checks = _summarize_checks(_check_runs(client, repo, head), min_checks)
+        if not checks["ok"]:
+            failures.append(checks["reason"])
+    else:
+        checks = {"ok": False, "reason": "not evaluated: --sha does not identify the PR head", "runs": []}
+    result = {"ok": False, "dry_run": not write, "pre_merge": pre_merge, "checks": checks,
+              "merged": False, "merge_sha": None, "failures": failures}
+    if failures:
+        return result
+    body: dict = {"sha": head, "merge_method": method}
+    if title is not None:
+        body["commit_title"] = title
+    if message is not None:
+        body["commit_message"] = message
+    if not write:
+        result.update(ok=True, would_merge=body)
+        return result
+    response = client.request("PUT", path + "/merge", body, expect=(200, 405, 409))
+    data = response.data if isinstance(response.data, dict) else {}
+    merged = response.status == 200 and bool(data.get("merged"))
+    result.update(ok=merged, merged=merged, merge_sha=data.get("sha") if merged else None)
+    if not merged:
+        result["failures"] = [f"merge rejected: HTTP {response.status} {data.get('message', '')}".strip()]
+    return result
+
+
+def sync_main(*, base: str = "main", remote: str = "origin", write: bool = False, push: bool = False,
+              cwd: str = ".", run: Callable[..., Any] = subprocess.run) -> dict:
+    """Merge ``remote/base`` into the checked-out PR branch (git, no REST).
+
+    Refuses when the tree is dirty or local HEAD differs from the remote
+    branch; aborts the merge on conflict. ``push`` pushes only after a clean
+    merge and only with ``write``.
+    """
+    def git(*args: str, check: bool = True) -> Any:
+        completed = run(["git", *args], cwd=cwd, capture_output=True, text=True)
+        if check and completed.returncode != 0:
+            raise GhOpsError(f"git {' '.join(args)} failed: {completed.stderr.strip()}")
+        return completed
+
+    branch = git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+    if branch in {"HEAD", base}:
+        raise GhOpsError(f"check out the PR branch first (current: {branch})")
+    if git("status", "--porcelain").stdout.strip():
+        return {"ok": False, "branch": branch, "reason": "working tree has uncommitted changes"}
+    git("fetch", remote, branch, base)
+    local = git("rev-parse", "HEAD").stdout.strip()
+    remote_head = git("rev-parse", f"{remote}/{branch}").stdout.strip()
+    if local != remote_head:
+        return {"ok": False, "branch": branch, "reason": f"local HEAD {local[:12]} differs from {remote}/{branch} {remote_head[:12]}"}
+    behind = int(git("rev-list", "--count", f"HEAD..{remote}/{base}").stdout.strip() or 0)
+    if behind == 0:
+        return {"ok": True, "branch": branch, "behind": 0, "merged": False, "reason": "already up to date"}
+    if not write:
+        return {"ok": True, "branch": branch, "behind": behind, "merged": False, "dry_run": True}
+    merge = git("merge", "--no-edit", f"{remote}/{base}", check=False)
+    if merge.returncode != 0:
+        conflicts = git("diff", "--name-only", "--diff-filter=U", check=False).stdout.split()
+        git("merge", "--abort", check=False)
+        return {"ok": False, "branch": branch, "behind": behind, "merged": False, "conflicts": conflicts,
+                "reason": "merge conflict; merge aborted"}
+    new_head = git("rev-parse", "HEAD").stdout.strip()
+    pushed = False
+    if push:
+        git("push", remote, f"HEAD:{branch}")
+        pushed = True
+    return {"ok": True, "branch": branch, "behind": behind, "merged": True, "head": new_head, "pushed": pushed}
+
+
+# --- CLI adapter ----------------------------------------------------------------
+
+def _render(command: str, result: dict) -> str:
+    if command == "issue-comments":
+        kind = "PR" if result["is_pull_request"] else "issue"
+        lines = [f"{kind} #{result['number']} {result['state']} \"{result['title']}\" -- "
+                 f"{result['total_comments']} comment(s), body {result['body_chars']} chars"]
+        lines += [f"[{row['index']}] {row['created_at']} {row['author']} {row['chars']} chars: {row['preview']}"
+                  for row in result["comments"]]
+        for index, body in result["shown"].items():
+            lines += [f"--- [{index}] ---", body]
+        if result["saved_to"]:
+            lines.append(f"full JSON saved to {result['saved_to']}")
+        return "\n".join(lines)
+    if command == "pr-status":
+        r = result
+        return (f"#{r['number']} {r['state']} draft={r['draft']} merged={r['merged']} mergeable={r['mergeable']} "
+                f"({r['mergeable_state']}) head={str(r['head_sha'])[:12]} {r['head_ref']} -> {r['base_ref']} "
+                f"commits={r['commits']} files={r['changed_files']} +{r['additions']}/-{r['deletions']}")
+    if command == "checks-wait":
+        lines = [f"{'OK' if result['ok'] else 'NG'} {result['sha'][:12]}: {result['succeeded']} success, "
+                 f"{result['failed']} failed, {result['pending']} pending of {result['total']}"
+                 + (f" -- {result['reason']}" if result["reason"] else "")]
+        for run in result["runs"]:
+            lines.append(f"  {run['name']}: {run['conclusion'] or run['status']} (head {str(run['head_sha'])[:12]})")
+            for note in run.get("annotations", []):
+                lines.append(f"    [{note['level']}] {note['title'] or ''}: {note['message']}")
+        return "\n".join(lines)
+    if command == "runs":
+        return "\n".join([f"{result['total_count']} run(s)"] + [
+            f"  {run['id']} {run['event']} {str(run['head_sha'])[:12]} {run['conclusion'] or run['status']} {run['url']}"
+            for run in result["runs"]])
+    if command == "workflow-state":
+        return f"{result['workflow']}: {result['state']}"
+    reason = result.get("reason") or "; ".join(result.get("failures", []))
+    status = "OK" if result["ok"] else "NG"
+    mode = "dry run" if result.get("dry_run") else "applied"
+    extra = f" merge_sha={result['merge_sha']}" if result.get("merge_sha") else ""
+    return f"{status} {command} ({mode}){extra}" + (f": {reason}" if reason else "")
+
+
+def _read_text(path: str) -> str:
+    text = Path(path).read_text(encoding="utf-8")
+    return text[:-1] if text.endswith("\n") else text
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="gh_ops.py", description=__doc__.split("\n\n")[0])
+    parser.add_argument("--json", action="store_true", help="print the full result as JSON")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p = sub.add_parser("issue-comments", help="digest an issue/PR conversation (index, time, author, size, preview)")
+    p.add_argument("repo"); p.add_argument("number", type=int)
+    p.add_argument("--since", help="ISO 8601; only comments updated at or after this time")
+    p.add_argument("--last", type=int, help="keep only the last N rows")
+    p.add_argument("--author", help="keep only comments by this login")
+    p.add_argument("--preview", type=int, default=110, help="preview length in characters (default 110)")
+    p.add_argument("--show", default="", help="comma-separated comment indexes to print in full")
+    p.add_argument("--save", help="write the complete issue + comments JSON to this file")
+
+    p = sub.add_parser("pr-status", help="one-line PR state")
+    p.add_argument("repo"); p.add_argument("number", type=int)
+
+    p = sub.add_parser("checks-wait", help="wait for check runs on a SHA and report conclusions/annotations")
+    p.add_argument("repo"); p.add_argument("sha")
+    p.add_argument("--min", type=int, default=1, dest="min_checks")
+    p.add_argument("--timeout", type=float, default=600.0)
+    p.add_argument("--interval", type=float, default=15.0)
+
+    p = sub.add_parser("runs", help="list workflow runs by head SHA or workflow file")
+    p.add_argument("repo")
+    group = p.add_mutually_exclusive_group(required=True)
+    group.add_argument("--sha"); group.add_argument("--workflow")
+
+    p = sub.add_parser("workflow-state", help="show a workflow's state (active, disabled_inactivity, ...)")
+    p.add_argument("repo"); p.add_argument("workflow")
+
+    p = sub.add_parser("workflow-dispatch", help="trigger workflow_dispatch (needs --write)")
+    p.add_argument("repo"); p.add_argument("workflow")
+    p.add_argument("--ref", required=True)
+    p.add_argument("--write", action="store_true")
+
+    p = sub.add_parser("pr-body-replace", help="replace an anchor that occurs exactly once (needs --write)")
+    p.add_argument("repo"); p.add_argument("number", type=int)
+    p.add_argument("--old", required=True, help="file with the exact anchor text (one trailing newline ignored)")
+    p.add_argument("--new", required=True, help="file with the replacement text (one trailing newline ignored)")
+    p.add_argument("--write", action="store_true")
+
+    p = sub.add_parser("pr-merge", help="verify head/mergeability/checks, then merge (needs --write)")
+    p.add_argument("repo"); p.add_argument("number", type=int)
+    p.add_argument("--sha", required=True)
+    p.add_argument("--min-checks", type=int, default=1)
+    p.add_argument("--method", choices=MERGE_METHODS, default="squash")
+    p.add_argument("--title")
+    p.add_argument("--message-file")
+    p.add_argument("--write", action="store_true")
+
+    p = sub.add_parser("sync-main", help="merge origin/main into the checked-out PR branch (needs --write)")
+    p.add_argument("--base", default="main"); p.add_argument("--remote", default="origin")
+    p.add_argument("--push", action="store_true"); p.add_argument("--write", action="store_true")
+    return parser
+
+
+def run_command(args: argparse.Namespace, client: Client | None = None) -> dict:
+    command = args.command
+    if command == "issue-comments":
+        show = tuple(int(part) for part in args.show.split(",") if part.strip()) if args.show else ()
+        return issue_comments(args.repo, args.number, since=args.since, last=args.last, author=args.author,
+                              preview=args.preview, show=show, save=args.save, client=client)
+    if command == "pr-status":
+        return pr_status(args.repo, args.number, client=client)
+    if command == "checks-wait":
+        return checks_wait(args.repo, args.sha, min_checks=args.min_checks, timeout=args.timeout,
+                           interval=args.interval, client=client)
+    if command == "runs":
+        return runs(args.repo, sha=args.sha, workflow=args.workflow, client=client)
+    if command == "workflow-state":
+        return workflow_state(args.repo, args.workflow, client=client)
+    if command == "workflow-dispatch":
+        return workflow_dispatch(args.repo, args.workflow, ref=args.ref, write=args.write, client=client)
+    if command == "pr-body-replace":
+        return pr_body_replace(args.repo, args.number, old=_read_text(args.old), new=_read_text(args.new),
+                               write=args.write, client=client)
+    if command == "pr-merge":
+        message = _read_text(args.message_file) if args.message_file else None
+        return pr_merge(args.repo, args.number, sha=args.sha, min_checks=args.min_checks, method=args.method,
+                        title=args.title, message=message, write=args.write, client=client)
+    return sync_main(base=args.base, remote=args.remote, write=args.write, push=args.push)
+
+
+def main(argv: list[str] | None = None, *, client: Client | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        result = run_command(args, client)
+    except (GhOpsError, OSError, ValueError) as error:
+        print(scrub(f"error: {error}"), file=sys.stderr)
+        return 2
+    text = json.dumps(result, ensure_ascii=False, indent=2) if args.json else _render(args.command, result)
+    print(scrub(text))
+    return 0 if result.get("ok") else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

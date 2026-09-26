@@ -43,6 +43,18 @@ Screenshots are visual evidence, not a selector strategy. Prefer DOM/accessibili
 | `EVIDENCE_MASKS_ROOT_FAILURE` | Evidence capture throws while handling the original test failure | Screenshot/trace failure replaces the actual assertion/navigation error | Keep failure evidence best-effort and re-raise the original exception |
 | `SUCCESS_COUNT_VS_RETRY_ARTIFACTS` | Global artifact count is assumed to equal project count | Retries create extra attempt artifacts and cause false failures | Validate exact project identity from metadata and validate every discovered artifact |
 
+## GitHub / CI operation anti-patterns
+
+These come from PR/CI operation (`scripts/gh_ops.py`, #9) rather than from browser runs, but they fail the same way: a green-looking signal that proves nothing.
+
+| ID | Anti-pattern | Failure mode | Preferred pattern |
+| --- | --- | --- | --- |
+| `ZERO_CHECKS_AS_GREEN` | Treating "no check runs" (or only skipped ones) as success | A PR merges before CI ever started | Require a minimum number of check runs, all completed; zero runs is "not finished", never green (`checks-wait --min`, `pr-merge --min-checks`) |
+| `FORBIDDEN_AS_UNCONFIGURED` | Reading HTTP 403 as "that feature is not set up" | A permission gap is reported as a missing feature | Report 403 and 404 separately and point at token permissions |
+| `MERGE_SHA_AS_HEAD` | Treating `GITHUB_SHA` of a `pull_request` run as the PR head | The tested merge commit is confused with the reviewed head | Show `github.event.pull_request.head.sha` and the tested commit side by side |
+| `UNGUARDED_REMOTE_WRITE` | Merging or editing a PR body without re-checking preconditions | A moved head, a duplicated anchor, or a non-clean state gets written anyway | Verify head SHA, anchor uniqueness, and `mergeable_state` first; pin `sha` in the merge request; dry run unless `--write` |
+| `UNBOUNDED_TOOL_OUTPUT` | Dumping a whole API response (e.g. every comment of a 43-comment issue, ~92k characters) into a log or an agent context | The tool result is truncated or rejected, and the part that mattered is lost | Print a digest first (index, time, author, size, preview), save the full JSON to a file, and show selected items on demand (`issue-comments --save/--show`) |
+
 ## Observed source patterns in this organization
 
 These are intentionally generalized; copy the lesson, not necessarily the original implementation.
