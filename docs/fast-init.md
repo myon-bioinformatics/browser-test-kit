@@ -6,17 +6,19 @@
 
 It is not a wrapper around one product and it does not choose Node over Python. The goal is to collect working patterns and failure lessons that other repositories can adopt selectively.
 
-## Initial lanes
+## Lanes
 
-| Lane | Purpose | Initial status |
+| Lane | Purpose | Status |
 | --- | --- | --- |
-| Playwright Node/TypeScript | Deterministic Node reference | planned |
-| Playwright Python API | Deterministic Python reference | planned |
-| Playwright Python CLI | Minimal screenshot/browser command reference | planned |
-| Stagehand v4 Python | Agent-oriented observe/act/extract experiments | planned, optional |
-| Replay | Recorded execution/debug evidence | planned, optional |
+| Playwright Node/TypeScript | Deterministic Node reference | implemented (PR #2): `tests/node/smoke.spec.ts`, projects chromium / firefox / webkit / mobile-chromium / mobile-webkit |
+| Playwright Python API | Deterministic Python reference | implemented (PR #2): `tests/python/test_smoke.py`, chromium / firefox / webkit × desktop / mobile |
+| Playwright Python CLI | Minimal screenshot/browser command reference | implemented (PR #2): `python -m playwright screenshot` step in CI |
+| Stagehand v4 Python | Agent-oriented observe/act/extract experiments | planned, optional; not implemented |
+| Replay | Recorded execution/debug evidence | planned, optional; not implemented |
 
 The deterministic Playwright lanes remain the baseline. Agent/cloud/external-service lanes must not make the core matrix unreliable.
+
+Keep this table honest: a lane is `implemented` only when code and CI for it exist on `main`. The PR that adds or changes a lane updates its row.
 
 ## Browser/device coverage
 
@@ -50,6 +52,8 @@ Machine checks:
 - image signature;
 - dimensions when relevant;
 - expected DOM/URL state independently of the screenshot.
+
+In this repository, each successful attempt writes a metadata JSON file (`runtime`, `project`, `stage`, and `artifact`, a file name relative to the metadata file) next to its PNG. `scripts/check_evidence.py` then requires every expected project, by exact name, to have a `complete` record with a valid PNG, and it validates every record it finds, retries included. CI names the expected projects, and a parity test keeps that list equal to the Playwright config and the Python test matrix. A file count such as `-eq 6` is not evidence (`SUCCESS_COUNT_VS_RETRY_ARTIFACTS`).
 
 Human checks:
 - upload screenshots to GitHub Actions artifacts;
@@ -108,3 +112,5 @@ See [anti-patterns.md](./anti-patterns.md) for the stable catalogue, [sibling-br
 8. Reusable workflow/template examples after the behavior is stable.
 
 This order keeps the repository useful as documentation before it becomes another source of CI complexity.
+
+Status: steps 1–4 are on `main`. Step 5 so far has the browser config/install parity test and the evidence-expectation parity test (`tests/python/test_browser_parity.py`). Steps 6–8 have not started.
