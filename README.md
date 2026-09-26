@@ -3,7 +3,7 @@ Cross-browser testing reference kit for Playwright Node/Python, Stagehand, Repla
 
 ## Fast Init
 
-This repository is documentation-first before browser implementation. The first PR records the cross-repository evidence, failure taxonomy, screenshot validation rules, and Node/Python policy that later implementation must follow.
+Implementation is staged by evidence layer. Deterministic Node/Python Playwright lanes are already implemented; optional agent/exploratory lanes remain separate and must not be described as proven until their own contracts are measured.
 
 Initial implementation target:
 - Playwright Node/TypeScript and Playwright Python API/CLI as equal reference lanes.
