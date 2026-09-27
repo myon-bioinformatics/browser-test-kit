@@ -5,7 +5,10 @@ See ``docs/evidence-events.md`` for the full contract. In short, one JSON
 object per line with required fields ``schema`` (``"btk-event/1"``),
 ``source``, ``time`` (UTC ISO 8601), and ``event``; an optional ``status``
 restricted to a fixed vocabulary (``passed``/``failed``/``error``/
-``interrupted``/``blocked``/``unavailable``/``skipped``); and several other
+``interrupted``/``blocked``/``unavailable``/``skipped``); an optional
+``stage`` restricted to :data:`STAGES` (the ``FAILURE_LAYER_FLATTENING``
+pipeline layers); an optional, unconstrained ``phase`` (a producer-defined
+sub-step, e.g. pytest's ``setup``/``call``/``teardown``); and several other
 optional fields consumers must tolerate even when unrecognized.
 
 This module is a library, not a CLI: it is imported by
@@ -55,6 +58,9 @@ def validate(fields: dict) -> None:
     status = fields.get("status")
     if status is not None and status not in STATUSES:
         raise EventError(f"btk-event/1: unknown status {status!r}; expected one of {sorted(STATUSES)}")
+    stage = fields.get("stage")
+    if stage is not None and stage not in STAGES:
+        raise EventError(f"btk-event/1: unknown stage {stage!r}; expected one of {sorted(STAGES)}")
 
 
 def emit(stream: TextIO, **fields: Any) -> dict:

@@ -21,12 +21,28 @@ Per test, this writes one ``event: "test_result"`` btk-event/1 record (see
   never got to run, or cleanup broke -- maps to ``error``, not ``failed``;
 - a skip evaluated during ``setup`` (a ``@pytest.mark.skip``/``skipif``
   marker, or a fixture that calls ``pytest.skip()``) maps to ``skipped`` with
-  ``stage: "setup"``; the ``call``/``teardown`` phases never happen after
+  ``phase: "setup"``; the ``call``/``teardown`` phases never happen after
   that, so no duplicate event follows.
+
+Each ``test_result`` event records pytest's own report phase (``setup``,
+``call``, or ``teardown``) in the optional ``phase`` field, not ``stage``:
+``stage`` is reserved for the ``FAILURE_LAYER_FLATTENING`` pipeline layers in
+``btk_events.STAGES`` (``install``, ``launch``, ...), which pytest's
+setup/call/teardown phases are not part of.
 
 A closing ``event: "session_summary"`` record is always written, with
 ``status: "interrupted"`` if a ``KeyboardInterrupt`` reached pytest during the
-run, else ``"passed"``/``"failed"`` from the session exit status.
+run, else ``"passed"``/``"failed"`` from the session exit status. When pytest
+collects no tests at all (exit code 5), the session still finishes normally
+(no ``KeyboardInterrupt``) with a non-zero exit status, so
+``session_summary`` reports ``status: "failed"``. An ``xfail`` test (not
+``xfail(strict=True)``) is reported by pytest itself with ``outcome ==
+"skipped"`` at the ``call`` phase, so it maps to ``status: "skipped"`` here
+like any other skip.
+
+``--btk-events PATH`` truncates PATH at session start by default, so each run's
+file holds only that run's events; pass ``--btk-events-append`` to append to
+an existing file instead.
 
 Stdlib only; runs under ``python -S``. This module never imports ``pytest``
 itself -- pytest discovers plugins by the hook names below, so the plugin
@@ -80,6 +96,17 @@ def pytest_addoption(parser: Any) -> None:
             "(default: $GITHUB_RUN_ID if set, else omitted)"
         ),
     )
+    group.addoption(
+        "--btk-events-append",
+        dest="btk_events_append",
+        action="store_true",
+        default=False,
+        help=(
+            "append to an existing --btk-events PATH instead of truncating it "
+            "at session start (default: truncate, so each run's file holds "
+            "only that run's events)"
+        ),
+    )
 
 
 def pytest_configure(config: Any) -> None:
@@ -90,6 +117,7 @@ def pytest_configure(config: Any) -> None:
         path=Path(path),
         project=config.getoption("btk_events_project", default=None),
         run_id=config.getoption("btk_events_run_id", default=None) or os.environ.get("GITHUB_RUN_ID"),
+        append=config.getoption("btk_events_append", default=False),
     )
     config._btk_events_recorder = recorder  # keep it alive/reachable for pytest_unconfigure
     config.pluginmanager.register(recorder, "btk-events-recorder")
@@ -135,10 +163,17 @@ def _short_message(report: Any) -> Union[str, None]:
 class _Recorder:
     """Registered as a pytest plugin object only when ``--btk-events`` is set."""
 
-    def __init__(self, path: Path, project: Union[str, None], run_id: Union[str, None]) -> None:
+    def __init__(
+        self,
+        path: Path,
+        project: Union[str, None],
+        run_id: Union[str, None],
+        append: bool = False,
+    ) -> None:
         self.path = path
         self.project = project
         self.run_id = run_id
+        self.append = append
         self._handle = None
         self._counts: dict = {}
         self._interrupted = False
@@ -146,7 +181,11 @@ class _Recorder:
     def _stream(self):
         if self._handle is None:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            self._handle = self.path.open("a", encoding="utf-8")
+            # Truncate by default so each run's file holds only that run's
+            # events; --btk-events-append keeps the historical append
+            # behavior for a caller that wants to accumulate across runs.
+            mode = "a" if self.append else "w"
+            self._handle = self.path.open(mode, encoding="utf-8")
         return self._handle
 
     def _record(self, event: str, **fields: Any) -> None:
@@ -178,7 +217,7 @@ class _Recorder:
         self._record(
             "test_result",
             test_id=report.nodeid,
-            stage=report.when,
+            phase=report.when,
             status=status,
             message=_short_message(report) if status in ("failed", "error") else None,
         )

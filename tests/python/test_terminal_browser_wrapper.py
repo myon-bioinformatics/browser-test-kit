@@ -1,4 +1,5 @@
 import importlib.util
+import io
 import json
 import os
 import signal
@@ -218,6 +219,40 @@ def test_signal_exit_is_normalized(tmp_path):
     assert events[-1]["returncode"] == 143
     assert events[-1]["signal"] == 15
     assert events[-1]["status"] == "error"
+
+
+def test_fallback_without_btk_events(monkeypatch):
+    """scripts/terminal_browser.py must stay usable copied alone, without
+    scripts/btk_events.py alongside it (its module docstring's "dependency-
+    free" promise). Simulate that by making `import btk_events` fail inside
+    a fresh load of the module, then check its inline classify/emit fallback
+    still produces the same btk-event/1-shaped JSONL."""
+    monkeypatch.setitem(sys.modules, "btk_events", None)  # forces ImportError on `import btk_events`
+    spec = importlib.util.spec_from_file_location("terminal_browser_no_btk_events", WRAPPER)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+
+    assert module.btk_events is None
+    assert module.classify_terminal_browser({"event": "terminal_browser_exit", "returncode": 0}) == "passed"
+    assert module.classify_terminal_browser({"event": "terminal_browser_exit", "returncode": 1}) == "failed"
+    assert module.classify_terminal_browser({"event": "TERMINAL_BROWSER_UNAVAILABLE"}) == "unavailable"
+    assert (
+        module.classify_terminal_browser(
+            {"event": "terminal_browser_exit", "returncode": 130, "signal": 2, "interrupted": True}
+        )
+        == "interrupted"
+    )
+
+    stderr = io.StringIO()
+    monkeypatch.setattr(module.sys, "stderr", stderr)
+    module.emit("terminal_browser_found", executable="/x")
+    payload = json.loads(stderr.getvalue().strip())
+    assert payload["schema"] == "btk-event/1"
+    assert payload["source"] == "terminal-browser"
+    assert payload["event"] == "terminal_browser_found"
+    assert payload["executable"] == "/x"
+    assert "T" in payload["time"]
 
 
 def test_check_rejects_child_arguments(tmp_path):

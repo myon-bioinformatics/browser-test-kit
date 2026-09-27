@@ -151,6 +151,101 @@ def test_cli_step_summary_appends_to_env_file(tmp_path):
     assert "# Evidence board" in text
 
 
+def test_session_summary_is_reported_separately_not_double_counted(tmp_path):
+    path = tmp_path / "events.jsonl"
+    _write_jsonl(
+        path,
+        [
+            _event(event="test_result", test_id="t1", phase="call", status="passed", source="pytest-btk-events"),
+            _event(
+                event="session_summary", status="passed", source="pytest-btk-events",
+                returncode=0, run_id="run-1",
+            ),
+        ],
+    )
+    stats = evidence_board.aggregate([path], allow=set())
+    # The session's own rollup status must not add a second "passed" on top
+    # of the one already counted for t1's test_result.
+    assert stats["counts_by_status"] == {"passed": 1}
+    assert len(stats["session_summaries"]) == 1
+    assert stats["session_summaries"][0]["status"] == "passed"
+    assert stats["session_summaries"][0]["run_id"] == "run-1"
+
+
+def test_call_failure_then_teardown_error_counts_as_one_failed_test(tmp_path):
+    """3 passed + 1 failed (whose teardown also errors) + 1 xfail (skipped)
+    must show failed 1 / passed 3 / skipped 1 -- not failed 1 + error 1."""
+    path = tmp_path / "events.jsonl"
+    events = [
+        _event(event="test_result", test_id="t_pass_1", phase="call", status="passed"),
+        _event(event="test_result", test_id="t_pass_2", phase="call", status="passed"),
+        _event(event="test_result", test_id="t_pass_3", phase="call", status="passed"),
+        _event(event="test_result", test_id="t_xfail", phase="call", status="skipped"),
+        _event(event="test_result", test_id="t_broken", phase="call", status="failed", message="assert 1 == 2"),
+        _event(
+            event="test_result", test_id="t_broken", phase="teardown", status="error",
+            message="fixture teardown boom",
+        ),
+        _event(event="session_summary", status="failed", returncode=1),
+    ]
+    _write_jsonl(path, events)
+
+    stats = evidence_board.aggregate([path], allow=set())
+    assert stats["counts_by_status"] == {"passed": 3, "failed": 1, "skipped": 1}
+    assert "t_broken" in stats["test_failures"]
+    assert stats["test_failures"]["t_broken"]["status"] == "failed"
+    assert stats["test_failures"]["t_broken"]["teardown_message"] == "fixture teardown boom"
+    assert stats["exit_code"] == 1  # failed blocks the board
+
+    markdown = evidence_board.render_markdown(stats, [path])
+    assert "| failed | 1 |" in markdown
+    assert "| passed | 3 |" in markdown
+    assert "| skipped | 1 |" in markdown
+    assert "also errored in teardown" in markdown
+
+
+def test_setup_error_with_no_call_is_one_error_not_double_counted(tmp_path):
+    path = tmp_path / "events.jsonl"
+    _write_jsonl(
+        path,
+        [_event(event="test_result", test_id="t_setup", phase="setup", status="error", message="fixture boom")],
+    )
+    stats = evidence_board.aggregate([path], allow=set())
+    assert stats["counts_by_status"] == {"error": 1}
+
+
+def test_empty_input_exits_2_not_a_pass(tmp_path):
+    path = tmp_path / "empty.jsonl"
+    path.write_text("", encoding="utf-8")
+    result = _run_cli([str(path)])
+    assert result.returncode == 2
+    assert "no valid" in result.stderr.lower()
+
+
+def test_all_malformed_lines_exits_2_not_a_pass(tmp_path):
+    path = tmp_path / "junk.jsonl"
+    path.write_text("not json\nalso not json\n", encoding="utf-8")
+    result = _run_cli([str(path)])
+    assert result.returncode == 2
+
+
+def test_malformed_line_fails_the_board_unless_allowed(tmp_path):
+    path = tmp_path / "events.jsonl"
+    path.write_text("not json\n" + json.dumps(_event(status="passed")) + "\n", encoding="utf-8")
+
+    result = _run_cli([str(path)])
+    assert result.returncode == 1
+    assert "**Result: FAIL**" in result.stdout
+
+    allowed = _run_cli([str(path), "--allow-malformed"])
+    assert allowed.returncode == 0
+
+    stats = evidence_board.aggregate([path], allow=set())
+    assert stats["exit_code"] == 1
+    stats_allowed = evidence_board.aggregate([path], allow=set(), allow_malformed=True)
+    assert stats_allowed["exit_code"] == 0
+
+
 def test_help_runs_under_dash_s():
     result = subprocess.run(
         [sys.executable, "-S", "-m", "evidence_board", "--help"],

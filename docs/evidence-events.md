@@ -50,6 +50,7 @@ Every event has all four:
 | `test_id` | string | Identifies one test/case, e.g. a pytest nodeid. |
 | `project` | string | A sub-project/browser-profile/lane, e.g. a Playwright project name. |
 | `stage` | string | One of `install`, `launch`, `navigate`, `interact`, `assert`, `screenshot`, `artifact`, `cleanup` -- the `FAILURE_LAYER_FLATTENING` layers. |
+| `phase` | string | A producer-defined sub-step of one `test_id`, e.g. pytest's report phase (`setup`/`call`/`teardown`, as written by `scripts/pytest_btk_events.py`). Unlike `stage`, `phase` is **not** restricted to a fixed vocabulary -- it exists because pytest's setup/call/teardown are not `FAILURE_LAYER_FLATTENING` layers and must not be written into `stage`. |
 | `status` | string | One of the status vocabulary below. |
 | `returncode` | int | Process exit code, normalized the way `terminal_browser.py` already normalizes signal deaths (`128 + signal`). |
 | `signal` | int | Signal number, present only when the process died from a signal. |
@@ -117,18 +118,28 @@ this order:
 - Producers must never rename or repurpose a field within schema version
   `"btk-event/1"`. A breaking change to a field's meaning ships as a new
   schema string (`"btk-event/2"`), not a silent redefinition.
-- New optional fields and new `event` names can be added freely; only
-  `status`, when present, is restricted to the vocabulary above.
+- New optional fields and new `event` names can be added freely. Two fields
+  are restricted, each when present: `status` to the seven-value vocabulary
+  above, and `stage` to the `FAILURE_LAYER_FLATTENING` layers listed in the
+  optional fields table (`scripts/btk_events.validate()` rejects either one
+  outside its vocabulary). `phase` is deliberately unconstrained.
 
 ## Using the board in CI
 
 `evidence_board.py` exit codes:
 
-- **0**: no event has a blocking status (failed, error, interrupted, blocked, unavailable), or every blocking status present is listed in `--allow`.
-- **1**: at least one blocking status is not allowed.
-- **2**: bad input (a missing or unreadable file, or an unknown status in `--allow`).
+- **0**: no event has a blocking status (failed, error, interrupted, blocked, unavailable), or every blocking status present is listed in `--allow`; at least one valid event was read; and no malformed line was skipped, or `--allow-malformed` was given.
+- **1**: at least one blocking status is not allowed, or a malformed JSONL line was skipped without `--allow-malformed`.
+- **2**: bad input -- a missing or unreadable file, an unknown status in `--allow`, or **zero valid btk-event/1 events** across every input file (an empty file, or a file that is nothing but malformed lines, must not report a passing board).
 
-`skipped` and `passed` never fail the board. `--allow unavailable` is the usual choice for a CI job where an optional tool such as terminal-browser is not installed; the board still reports those events in its callout line.
+`skipped` and `passed` never fail the board. `--allow unavailable` is the usual choice for a CI job where an optional tool such as terminal-browser is not installed; the board still reports those events in its callout line. `--allow-malformed` is for a producer/consumer version mismatch a project has explicitly decided to tolerate; by default any malformed line fails the board, since a truncated or corrupted JSONL file should not be able to slip through as a pass.
+
+`session_summary` events (written once per pytest session by `scripts/pytest_btk_events.py`) are reported in their own table/notes, never folded into the Status counts: a session's own pass/fail rollup would otherwise double count every test already reflected in that session's `test_result` events. Similarly, a test whose `call` phase fails and whose `teardown` phase then also errors is counted once, as one `failed` test, with the teardown problem noted rather than counted as a second failure -- see "Aggregating pytest phases per test_id" in `scripts/evidence_board.py`'s module docstring for the full per-`test_id` reduction rule.
+
+Two pytest-specific outcomes worth knowing when reading the board:
+
+- If pytest collects **no tests at all**, it exits with code 5. `scripts/pytest_btk_events.py` still writes a normal `session_summary`, with `status: "failed"` (a non-zero, non-`KeyboardInterrupt` exit).
+- `xfail` (an expected failure, without `strict=True`) is reported by pytest with `outcome == "skipped"` at the `call` phase, so it is written here with `status: "skipped"`, the same as any other skip.
 
 Set `run_id` so JSONL files from several jobs or retries can be joined later, for example in GitHub Actions:
 
@@ -138,6 +149,8 @@ PYTHONPATH=scripts python -m pytest -p pytest_btk_events \
   --btk-events-run-id "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
 python scripts/evidence_board.py test-results/*.jsonl --allow unavailable --step-summary
 ```
+
+`--btk-events PATH` truncates PATH at session start by default, so each run's file holds only that run's events; pass `--btk-events-append` to append to an existing file across several pytest invocations that should share one JSONL file instead.
 
 ## Reference implementation
 

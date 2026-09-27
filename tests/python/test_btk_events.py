@@ -50,6 +50,28 @@ def test_emit_accepts_every_vocabulary_status(status):
     assert json.loads(stream.getvalue())["status"] == status
 
 
+def test_emit_rejects_unknown_stage():
+    stream = io.StringIO()
+    with pytest.raises(btk_events.EventError, match="stage"):
+        btk_events.emit(stream, source="unit-test", event="probe", stage="call")
+    assert stream.getvalue() == ""
+
+
+@pytest.mark.parametrize("stage", sorted(btk_events.STAGES))
+def test_emit_accepts_every_vocabulary_stage(stage):
+    stream = io.StringIO()
+    btk_events.emit(stream, source="unit-test", event="probe", stage=stage)
+    assert json.loads(stream.getvalue())["stage"] == stage
+
+
+def test_emit_accepts_unconstrained_phase():
+    # Unlike stage, phase carries no fixed vocabulary (pytest's own
+    # setup/call/teardown report phases, or anything else a producer wants).
+    stream = io.StringIO()
+    btk_events.emit(stream, source="unit-test", event="probe", phase="call")
+    assert json.loads(stream.getvalue())["phase"] == "call"
+
+
 def test_read_from_path_skips_and_counts_malformed_lines(tmp_path):
     good = {"schema": "btk-event/1", "source": "unit-test", "time": "2026-01-01T00:00:00+00:00", "event": "probe"}
     path = tmp_path / "events.jsonl"

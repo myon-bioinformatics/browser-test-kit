@@ -67,3 +67,6 @@ jobs:
       - name: Evidence board
         if: always()
         run: python scripts/evidence_board.py test-results/btk-events.jsonl --step-summary
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: btk-events, path: test-results/btk-events.jsonl }

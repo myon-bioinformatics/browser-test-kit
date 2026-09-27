@@ -3,24 +3,71 @@
 
 Keeps terminal-browser optional: browser-test-kit can validate the integration
 without requiring a graphical/kitty-capable terminal in every CI runner.
+
+This file stays copy-paste portable on its own: ``btk_events`` (this kit's
+shared JSONL event library, see ``docs/evidence-events.md``) is imported only
+if it happens to be importable (i.e. ``scripts/btk_events.py`` is alongside
+this file, or already on ``sys.path``). If it is not, a tiny inline fallback
+below reproduces just enough of ``btk_events.emit()``/``classify_terminal_browser()``
+to keep emitting the same btk-event/1-shaped JSONL, so copying this one file
+out of the repo keeps working unmodified.
 """
 from __future__ import annotations
 
 import argparse
+import json
 import shutil
 import signal
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
-import btk_events
+try:
+    import btk_events
+except ImportError:  # pragma: no cover - exercised by test_fallback_without_btk_events
+    btk_events = None
+
+_SCHEMA = "btk-event/1"
+
+
+def _classify_terminal_browser_fallback(event: dict) -> "str | None":
+    """Inline copy of ``btk_events.classify_terminal_browser()``, used only
+    when ``btk_events`` is not importable. Keep in sync with that function;
+    see ``docs/evidence-events.md`` for the mapping this implements."""
+    name = event.get("event")
+    if name == "TERMINAL_BROWSER_UNAVAILABLE":
+        return "unavailable"
+    if name != "terminal_browser_exit":
+        return None
+    if event.get("interrupted"):
+        return "interrupted"
+    if event.get("signal") is not None:
+        return "error"
+    if event.get("returncode") == 0:
+        return "passed"
+    return "failed"
+
+
+def classify_terminal_browser(event: dict) -> "str | None":
+    if btk_events is not None:
+        return btk_events.classify_terminal_browser(event)
+    return _classify_terminal_browser_fallback(event)
 
 
 def emit(event: str, **fields: object) -> None:
     # schema identifies this as a btk-event/1 payload (docs/evidence-events.md);
     # every existing field keeps its name and meaning, so older consumers that
     # only look at source/time/event/returncode/signal/interrupted are unaffected.
-    btk_events.emit(sys.stderr, source="terminal-browser", event=event, **fields)
+    if btk_events is not None:
+        btk_events.emit(sys.stderr, source="terminal-browser", event=event, **fields)
+        return
+    payload = dict(fields)
+    payload["schema"] = _SCHEMA
+    payload["source"] = "terminal-browser"
+    payload.setdefault("time", datetime.now(timezone.utc).isoformat())
+    payload["event"] = event
+    print(json.dumps(payload, ensure_ascii=False), file=sys.stderr, flush=True)
 
 
 def _normalized_returncode(returncode: int) -> tuple[int, int | None]:
@@ -102,7 +149,7 @@ def main() -> int:
         # Only reachable for --log mode (piped stdio): the handler above keeps
         # the default inherited-stdio path from ever raising here.
         exit_fields: dict[str, object] = {"returncode": 130, "interrupted": True}
-        exit_fields["status"] = btk_events.classify_terminal_browser({"event": "terminal_browser_exit", **exit_fields})
+        exit_fields["status"] = classify_terminal_browser({"event": "terminal_browser_exit", **exit_fields})
         emit("terminal_browser_exit", **exit_fields)
         return 130
 
@@ -112,7 +159,7 @@ def main() -> int:
         exit_fields["interrupted"] = True
     if signal_number is not None:
         exit_fields["signal"] = signal_number
-    exit_fields["status"] = btk_events.classify_terminal_browser({"event": "terminal_browser_exit", **exit_fields})
+    exit_fields["status"] = classify_terminal_browser({"event": "terminal_browser_exit", **exit_fields})
     emit("terminal_browser_exit", **exit_fields)
     return returncode
 
