@@ -120,6 +120,25 @@ this order:
 - New optional fields and new `event` names can be added freely; only
   `status`, when present, is restricted to the vocabulary above.
 
+## Using the board in CI
+
+`evidence_board.py` exit codes:
+
+- **0**: no event has a blocking status (failed, error, interrupted, blocked, unavailable), or every blocking status present is listed in `--allow`.
+- **1**: at least one blocking status is not allowed.
+- **2**: bad input (a missing or unreadable file, or an unknown status in `--allow`).
+
+`skipped` and `passed` never fail the board. `--allow unavailable` is the usual choice for a CI job where an optional tool such as terminal-browser is not installed; the board still reports those events in its callout line.
+
+Set `run_id` so JSONL files from several jobs or retries can be joined later, for example in GitHub Actions:
+
+```sh
+PYTHONPATH=scripts python -m pytest -p pytest_btk_events \
+  --btk-events test-results/btk-events.jsonl \
+  --btk-events-run-id "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+python scripts/evidence_board.py test-results/*.jsonl --allow unavailable --step-summary
+```
+
 ## Reference implementation
 
 - `scripts/btk_events.py` -- `emit()`, `read()`, `classify_terminal_browser()`;

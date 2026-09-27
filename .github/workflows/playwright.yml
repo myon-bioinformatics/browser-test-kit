@@ -63,7 +63,7 @@ jobs:
         with: { name: python-browser-evidence, path: test-results, if-no-files-found: error }
       - name: Wrapper tests with btk-events plugin enabled
         run: |
-          PYTHONPATH=scripts python -m pytest tests/python/test_terminal_browser_wrapper.py -p pytest_btk_events --btk-events test-results/btk-events.jsonl
+          PYTHONPATH=scripts python -m pytest tests/python/test_terminal_browser_wrapper.py -p pytest_btk_events --btk-events test-results/btk-events.jsonl --btk-events-run-id "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
       - name: Evidence board
         if: always()
         run: python scripts/evidence_board.py test-results/btk-events.jsonl --step-summary
