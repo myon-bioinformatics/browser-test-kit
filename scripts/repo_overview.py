@@ -18,6 +18,8 @@ file/line/byte counts (top 15 by lines). ``--churn N`` adds an
 ``=== churn ===`` section: the top N files by commit count from ``git log``
 (git work trees only; a plain directory prints a one-line note instead),
 optionally limited to commits after some point in time with ``--since``.
+Commit count is only an approximation of "important, recently touched"
+files: a file edited in many tiny commits ranks above one rewritten once.
 
 Stdlib only; runs under ``python -S``::
 

@@ -11,7 +11,8 @@ when files other than FILE... are already staged (``--allow-staged``
 overrides this check). Each ``--trailer "Key: value"`` (repeatable) is
 appended to the message, separated by a blank line; a trailer whose exact
 text is already present anywhere in the message is left alone (not
-duplicated). ``--push`` runs ``git push origin HEAD`` afterwards, retrying
+duplicated). ``--push`` runs ``git push origin HEAD`` afterwards (remote and
+branch are fixed: the current branch to ``origin``), retrying
 only network-looking failures after 2s/4s/8s/16s; it never forces.
 
 Stdlib only; runs under ``python -S``::
@@ -27,6 +28,7 @@ staged files without --allow-staged).
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 import time
@@ -47,6 +49,13 @@ PUSH_RETRY_DELAYS: tuple[float, ...] = (2.0, 4.0, 8.0, 16.0)
 
 def _run(argv: list[str], run: Runner, **kwargs) -> "subprocess.CompletedProcess[str]":
     return run(argv, capture_output=True, text=True, **kwargs)
+
+
+def _normalize(path: str) -> str:
+    """``./a.py``, ``a.py`` and ``/abs/repo/a.py`` (from the repo root) -> ``a.py``."""
+    if os.path.isabs(path):
+        path = os.path.relpath(path)
+    return Path(os.path.normpath(path)).as_posix()
 
 
 def staged_files(run: Runner = subprocess.run) -> list[str]:
@@ -119,7 +128,9 @@ def main(argv: list[str] | None = None, *, run: Runner = subprocess.run,
         return 2
 
     if not args.allow_staged:
-        unexpected = sorted(set(staged_files(run=run)) - set(args.files))
+        # Compare repo-relative POSIX paths so ./a.py, a.py and an absolute path all match.
+        wanted = {_normalize(path) for path in args.files}
+        unexpected = sorted(path for path in staged_files(run=run) if _normalize(path) not in wanted)
         if unexpected:
             print("error: files other than FILE... are already staged (use --allow-staged to proceed anyway):",
                  file=sys.stderr)

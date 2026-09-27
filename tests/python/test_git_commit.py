@@ -232,3 +232,14 @@ def test_module_help_via_dash_m_exits_zero_with_usage_on_stdout() -> None:
                           encoding="utf-8", cwd=str(SCRIPT.parent))
     assert done.returncode == 0, done.stderr
     assert done.stdout.lower().startswith("usage")
+
+
+def test_cli_accepts_dot_slash_and_absolute_paths_for_already_staged_files(tmp_path: Path) -> None:
+    init_repo(tmp_path)
+    (tmp_path / "a.txt").write_text("changed\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "a.txt"], check=True, env=git_env())
+    (tmp_path / "message.txt").write_text("msg\n", encoding="utf-8")
+    assert run_cli(tmp_path, "--message-file", "message.txt", "./a.txt").returncode == 0
+    (tmp_path / "a.txt").write_text("again\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "a.txt"], check=True, env=git_env())
+    assert run_cli(tmp_path, "--message-file", "message.txt", str(tmp_path / "a.txt")).returncode == 0

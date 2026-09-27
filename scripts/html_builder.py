@@ -85,7 +85,7 @@ def _render_child(child: object) -> str:
     return html.escape(str(child))
 
 
-def h(tag: str, *children: object, **attrs: object) -> str:
+def h(tag: str, *children: object, **attrs: object) -> Raw:
     """Render one HTML element as a ``Raw`` string. See module docstring for rules."""
     is_void = tag in VOID_ELEMENTS
     flat = _flatten(children)
