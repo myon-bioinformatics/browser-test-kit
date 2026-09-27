@@ -104,6 +104,18 @@ def test_cli_reads_stdin_without_site_packages() -> None:
     assert done.stdout.rstrip().endswith("terminal_browser_exit: {\"returncode\":130,\"interrupted\":true}")
 
 
+
+
+def test_btk_never_passing_statuses_are_errors() -> None:
+    records = [
+        {"schema": "btk-event/1", "source": "x", "time": "2026-09-26T00:00:00Z",
+         "event": "run_end", "status": status}
+        for status in ("failed", "error", "interrupted", "blocked", "unavailable")
+    ]
+    report, code = jsonl_digest.digest(lines(records), source="btk.jsonl", last=0)
+    assert code == 0
+    assert "errors: 5" in report
+
 # -- JSON-RPC / MCP awareness (default digest) -------------------------------------------------
 
 
@@ -157,6 +169,35 @@ def test_pairs_lists_unanswered_requests_and_counts_notifications() -> None:
     assert "[6] tools/call name=slow_tool args={} -> no response" in report
     assert "calls: 4 (2 errors, 1 unanswered), notifications: initialized 1, progress 2" in report
 
+
+
+
+def test_pairs_reused_id_matches_fifo_without_cross_pairing() -> None:
+    records = [
+        {"time": "2026-09-26T04:00:00Z", "id": 1, "method": "tools/call",
+         "params": {"name": "first", "arguments": {}}},
+        {"time": "2026-09-26T04:00:01Z", "id": 1, "result": {"value": "first-result"}},
+        {"time": "2026-09-26T04:00:02Z", "id": 1, "method": "tools/call",
+         "params": {"name": "second", "arguments": {}}},
+        {"time": "2026-09-26T04:00:03Z", "id": 1,
+         "result": {"isError": True, "content": [{"type": "text", "text": "boom"}]}},
+    ]
+    report, code = jsonl_digest.digest(lines(records), source="reuse.jsonl", pairs=True, last=0)
+    assert code == 0
+    assert '[0->1] tools/call name=first args={} -> ok {"value":"first-result"}' in report
+    assert '[2->3] tools/call name=second args={} -> ERROR {"isError":true' in report
+    assert "calls: 2 (1 errors, 0 unanswered)" in report
+
+
+def test_pairs_response_before_request_is_not_reused() -> None:
+    records = [
+        {"time": "2026-09-26T04:10:00Z", "id": 7, "result": {"value": "orphan"}},
+        {"time": "2026-09-26T04:10:01Z", "id": 7, "method": "ping", "params": {}},
+    ]
+    report, code = jsonl_digest.digest(lines(records), source="orphan.jsonl", pairs=True, last=0)
+    assert code == 0
+    assert "[1] ping -> no response" in report
+    assert "calls: 1 (0 errors, 1 unanswered)" in report
 
 def test_pairs_elapsed_time_needs_zone_aware_iso_timestamps_on_both_ends() -> None:
     with_zone = [
@@ -244,6 +285,14 @@ def test_num_computes_min_median_mean_max_over_a_field() -> None:
     # here, so all 5 rows count).
     assert "num duration_ms: n=5 min=5 median=9.5 mean=11.05 max=20.25" in report
 
+
+
+
+def test_num_ignores_non_finite_values() -> None:
+    records = [{"x": 1.5}, {"x": float("nan")}, {"x": float("inf")}, {"x": float("-inf")}]
+    report, code = jsonl_digest.digest(lines(records), source="n.jsonl", last=0, num_fields=("x",))
+    assert code == 0
+    assert "num x: n=1 min=1.5 median=1.5 mean=1.5 max=1.5" in report
 
 def test_num_with_no_numeric_values() -> None:
     report, code = jsonl_digest.digest(lines(TRACE_EVENTS), source="t.jsonl", last=0, num_fields=("chat_id",))
