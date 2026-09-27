@@ -25,6 +25,26 @@ def build_context_args(pw, browser_name: str, device_name: str | None) -> dict:
         args.pop("is_mobile", None)
     return args
 
+def close_browser(browser, *, after_failure: bool) -> None:
+    """Close the browser; after a test failure, report a close error instead of masking the failure."""
+    try:
+        browser.close()
+    except Exception as close_exc:
+        if not after_failure:
+            raise
+        # See EVIDENCE_MASKS_ROOT_FAILURE in docs/anti-patterns.md.
+        print(f"warning: browser.close() failed after the test failed: {type(close_exc).__name__}: {close_exc}", file=sys.stderr)
+
+class _BrowserThatFailsToClose:
+    def close(self) -> None:
+        raise RuntimeError("close failed")
+
+def test_close_browser_does_not_mask_an_earlier_failure(capsys) -> None:
+    close_browser(_BrowserThatFailsToClose(), after_failure=True)
+    assert "close failed" in capsys.readouterr().err
+    with pytest.raises(RuntimeError, match="close failed"):
+        close_browser(_BrowserThatFailsToClose(), after_failure=False)
+
 @pytest.mark.parametrize("browser_name", BROWSERS)
 @pytest.mark.parametrize("profile,device_name", PROFILES)
 def test_shared_fixture(browser_name: str, profile: str, device_name: str | None) -> None:
@@ -35,6 +55,7 @@ def test_shared_fixture(browser_name: str, profile: str, device_name: str | None
     page = None
     with sync_playwright() as pw:
         browser = None
+        failed = False
         try:
             browser = getattr(pw, browser_name).launch()
             ctx_args = build_context_args(pw, browser_name, device_name)
@@ -53,10 +74,12 @@ def test_shared_fixture(browser_name: str, profile: str, device_name: str | None
             page.screenshot(path=png, full_page=True)
             stage = "artifact"
             width, height = _check_png.dimensions(png.read_bytes())
-            meta.write_text(json.dumps({"runtime":"python","browser":browser_name,"profile":profile,"emulation":"partial" if browser_name=="firefox" and profile=="mobile" else "full","stage":"complete","artifact":str(png.relative_to(ROOT)),"width":width,"height":height})+"\n", encoding="utf-8")
+            # "artifact" is relative to the metadata file, as in the Node lane; see scripts/check_evidence.py.
+            meta.write_text(json.dumps({"runtime":"python","project":f"{browser_name}-{profile}","browser":browser_name,"profile":profile,"emulation":"partial" if browser_name=="firefox" and profile=="mobile" else "full","stage":"complete","artifact":png.name,"width":width,"height":height})+"\n", encoding="utf-8")
         except Exception as exc:
+            failed = True
             emulation = "partial" if browser_name == "firefox" and profile == "mobile" else "full"
-            meta.write_text(json.dumps({"runtime":"python","browser":browser_name,"profile":profile,"emulation":emulation,"stage":stage,"error":type(exc).__name__,"message":str(exc)[:500]})+"\n", encoding="utf-8")
+            meta.write_text(json.dumps({"runtime":"python","project":f"{browser_name}-{profile}","browser":browser_name,"profile":profile,"emulation":emulation,"stage":stage,"error":type(exc).__name__,"message":str(exc)[:500]})+"\n", encoding="utf-8")
             if page is not None:
                 try:
                     page.screenshot(path=RESULTS / f"{browser_name}-{profile}-failure.png", full_page=True)
@@ -65,4 +88,4 @@ def test_shared_fixture(browser_name: str, profile: str, device_name: str | None
             raise
         finally:
             if browser is not None:
-                browser.close()
+                close_browser(browser, after_failure=failed)
