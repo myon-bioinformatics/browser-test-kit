@@ -11,6 +11,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 WRAPPER = ROOT / "scripts" / "terminal_browser.py"
 
+sys.path.insert(0, str(ROOT / "scripts"))
+import btk_events  # noqa: E402
+
 
 def _fake_terminal_browser(tmp_path: Path, body: str) -> dict[str, str]:
     fake = tmp_path / "terminal-browser"
@@ -32,6 +35,9 @@ def test_unavailable_is_distinct(tmp_path):
     assert result.returncode == 127
     assert result.stdout == ""
     assert '"event": "TERMINAL_BROWSER_UNAVAILABLE"' in result.stderr
+    (event,) = _events(result.stderr)
+    assert event["schema"] == "btk-event/1"
+    assert btk_events.classify_terminal_browser(event) == "unavailable"
 
 
 def test_passthrough_and_log_keep_events_separate(tmp_path):
@@ -56,6 +62,8 @@ def test_passthrough_and_log_keep_events_separate(tmp_path):
         "terminal_browser_exit",
     ]
     assert all(event["source"] == "terminal-browser" for event in events)
+    assert all(event["schema"] == "btk-event/1" for event in events)
+    assert events[-1]["status"] == "passed"
 
 
 def test_log_mode_tolerates_non_utf8_output(tmp_path):
@@ -151,6 +159,7 @@ def test_sigint_is_handed_to_the_child_instead_of_raising(monkeypatch, capsys):
     assert events[-1]["returncode"] == 130
     assert events[-1]["signal"] == 2
     assert events[-1]["interrupted"] is True
+    assert events[-1]["status"] == "interrupted"
     # The handler main() installed must not leak past the call.
     assert module.signal.getsignal(module.signal.SIGINT) is signal.default_int_handler
 
@@ -192,6 +201,7 @@ def test_default_mode_lets_child_finish_its_own_cleanup_after_sigint(tmp_path):
     assert events[-1]["event"] == "terminal_browser_exit"
     assert events[-1]["returncode"] == 130
     assert events[-1]["interrupted"] is True
+    assert events[-1]["status"] == "interrupted"
 
 
 def test_signal_exit_is_normalized(tmp_path):
@@ -207,6 +217,7 @@ def test_signal_exit_is_normalized(tmp_path):
     assert events[-1]["event"] == "terminal_browser_exit"
     assert events[-1]["returncode"] == 143
     assert events[-1]["signal"] == 15
+    assert events[-1]["status"] == "error"
 
 
 def test_check_rejects_child_arguments(tmp_path):

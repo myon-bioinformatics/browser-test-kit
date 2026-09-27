@@ -7,23 +7,20 @@ without requiring a graphical/kitty-capable terminal in every CI runner.
 from __future__ import annotations
 
 import argparse
-import json
 import shutil
 import signal
 import subprocess
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
+
+import btk_events
 
 
 def emit(event: str, **fields: object) -> None:
-    payload = {
-        "source": "terminal-browser",
-        "time": datetime.now(timezone.utc).isoformat(),
-        "event": event,
-        **fields,
-    }
-    print(json.dumps(payload, ensure_ascii=False), file=sys.stderr, flush=True)
+    # schema identifies this as a btk-event/1 payload (docs/evidence-events.md);
+    # every existing field keeps its name and meaning, so older consumers that
+    # only look at source/time/event/returncode/signal/interrupted are unaffected.
+    btk_events.emit(sys.stderr, source="terminal-browser", event=event, **fields)
 
 
 def _normalized_returncode(returncode: int) -> tuple[int, int | None]:
@@ -104,15 +101,18 @@ def main() -> int:
     except KeyboardInterrupt:
         # Only reachable for --log mode (piped stdio): the handler above keeps
         # the default inherited-stdio path from ever raising here.
-        emit("terminal_browser_exit", returncode=130, interrupted=True)
+        exit_fields: dict[str, object] = {"returncode": 130, "interrupted": True}
+        exit_fields["status"] = btk_events.classify_terminal_browser({"event": "terminal_browser_exit", **exit_fields})
+        emit("terminal_browser_exit", **exit_fields)
         return 130
 
     returncode, signal_number = _normalized_returncode(proc.returncode)
-    exit_fields: dict[str, object] = {"returncode": returncode}
+    exit_fields = {"returncode": returncode}
     if interrupted:
         exit_fields["interrupted"] = True
     if signal_number is not None:
         exit_fields["signal"] = signal_number
+    exit_fields["status"] = btk_events.classify_terminal_browser({"event": "terminal_browser_exit", **exit_fields})
     emit("terminal_browser_exit", **exit_fields)
     return returncode
 

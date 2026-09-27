@@ -65,3 +65,13 @@ See [`docs/terminal-browser.md`](docs/terminal-browser.md). The dependency-free 
 python scripts/terminal_browser.py --check
 python scripts/terminal_browser.py action --help
 ```
+
+### Evidence events (btk-event/1)
+
+See [`docs/evidence-events.md`](docs/evidence-events.md) for the shared JSONL
+event contract (schema `btk-event/1`) that `scripts/terminal_browser.py`
+emits, that the opt-in `scripts/pytest_btk_events.py` pytest plugin writes
+per test, and that `scripts/evidence_board.py` aggregates into a Markdown
+table, `--json`, or a GitHub Step Summary. Nothing here loads implicitly:
+there is no `conftest.py`, and the plugin only runs when a project opts in
+with `pytest -p pytest_btk_events --btk-events PATH`.
