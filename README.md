@@ -60,6 +60,7 @@ python scripts/page_text.py <URL> --find "status page"
 - `--json` adds `truncated`, `total_chars`, `bytes`, `status`, and `fetched_at`. `--max-chars`, `--max-bytes`, and `--timeout` bound the work.
 - Exit codes: 0 OK; 1 no `--find` match, or an HTTP error status (the page is still printed; a 404 adds a `LOGIN_WALL_AS_404` hint); 2 usage, input, or network error.
 - JavaScript is not run and CSS is not evaluated, so an empty result on a single-page app is `PAGE_TEXT_AS_RENDERED_TEXT`, not an empty page. Core tests use only local fixtures and a local HTTP server.
+- Not implemented yet: an automatic comparison of this static text with the Playwright lane's `inner_text()` (or terminal-browser's rendered text). Run both side by side when rendering matters.
 
 ### Planned sequence
 
