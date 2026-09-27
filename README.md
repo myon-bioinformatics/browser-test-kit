@@ -67,3 +67,13 @@ python scripts/terminal_browser.py -- <args...>   # passes args through unchange
 ```
 
 Upstream [zenbu-labs/terminal-browser](https://github.com/zenbu-labs/terminal-browser) documents `open <url>`, `action`, `ls`, and `upgrade`, installed via its own install script or Homebrew -- not the npm `terminal-browser@1.0.2` package, which is an unrelated same-name project. This repo's CI does not exercise the real upstream tool, so the wrappers here remain unverified against it. Arguments are forwarded as-is; see "Non-interactive subcommand wrappers" in docs/terminal-browser.md.
+
+### Evidence events (btk-event/1)
+
+See [`docs/evidence-events.md`](docs/evidence-events.md) for the shared JSONL
+event contract (schema `btk-event/1`) that `scripts/terminal_browser.py`
+emits, that the opt-in `scripts/pytest_btk_events.py` pytest plugin writes
+per test, and that `scripts/evidence_board.py` aggregates into a Markdown
+table, `--json`, or a GitHub Step Summary. Nothing here loads implicitly:
+there is no `conftest.py`, and the plugin only runs when a project opts in
+with `pytest -p pytest_btk_events --btk-events PATH`.
