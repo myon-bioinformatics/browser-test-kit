@@ -18,7 +18,10 @@ the interactive renderer.
 
 ## Install and run
 
-Install using an upstream-supported installation method, then verify discovery:
+Install using an upstream-supported installation method -- upstream's own
+install script or Homebrew, per the [zenbu-labs/terminal-browser](https://github.com/zenbu-labs/terminal-browser)
+README -- not the same-named `terminal-browser` package on npm (see
+"Non-interactive subcommand wrappers" below). Then verify discovery:
 
 ```sh
 python scripts/terminal_browser.py --check
@@ -95,30 +98,34 @@ python scripts/terminal_browser.py -- --version
 ## Non-interactive subcommand wrappers
 
 We looked for real, documented non-interactive terminal-browser subcommands
-(`action`, `dump`, `screenshot`, `eval`, ...) to add thin exact-argv wrappers
-around, the way `--check` wraps discovery. We could not confirm any exist:
+to add thin exact-argv wrappers around, the way `--check` wraps discovery.
 
+- The upstream [zenbu-labs/terminal-browser](https://github.com/zenbu-labs/terminal-browser)
+  README documents `open <url>`, `action`, `ls`, and `upgrade` as its
+  subcommand surface, and its official install is upstream's own install
+  script or Homebrew.
 - npm, pip, and cargo were checked through the proxy. `npm view terminal-browser`
-  resolves to a same-named package (`terminal-browser@1.0.2`, published by
-  `martieeeese`), but pip and cargo have no matching package.
-- That npm package installs and runs, but its `bin/dist/index.js` is five
-  lines that unconditionally `render(<App />)` an Ink TUI -- it has no
-  argument parsing at all (no `--help`, no `--version`, no subcommands), and
-  it fails immediately outside a real TTY (`Raw mode is not supported on the
-  current process.stdin`). It does not expose `open <url>`, `action --help`,
-  or `-- --version` the way this document describes, so it does not match the
-  interface `scripts/terminal_browser.py` targets.
-- We could not confirm this npm package is the same project as
-  [zenbu-labs/terminal-browser](https://github.com/zenbu-labs/terminal-browser)
-  (no `repository` field ties them together), and we did not clone that
-  GitHub repository to check, per this task's constraints.
+  resolves to `terminal-browser@1.0.2`, published by `martieeeese` -- an
+  unrelated package that happens to share the name (no `repository` field
+  ties it to zenbu-labs, and it does not expose `open <url>`, `action`, `ls`,
+  or `upgrade`). Its `bin/dist/index.js` is five lines that unconditionally
+  `render(<App />)` an Ink TUI -- no argument parsing at all (no `--help`, no
+  `--version`, no subcommands) -- and it fails immediately outside a real TTY
+  (`Raw mode is not supported on the current process.stdin`). It does not
+  match the interface `scripts/terminal_browser.py` targets, and this repo
+  does not install it.
+- We did not install the real upstream tool (via its install script or
+  Homebrew) in this environment, and CI here still does not exercise it. So
+  even though upstream's documented subcommands are now known, the wrappers
+  in this repo remain unverified against the real tool.
 
-Because we could not exercise a confirmed-real non-interactive subcommand, no
-subcommand wrappers were added here. `scripts/terminal_browser.py` continues
-to pass whatever argv the caller gives it straight through (`open ...`,
-`action --help`, `-- --version`, ...) rather than inventing flags; that
-generic passthrough is designed to already cover a real `action` interface
-once one can be confirmed and installed in this environment (or in CI).
+Because we have not exercised the real tool's non-interactive subcommands in
+this environment or in CI, no subcommand-specific wrappers were added here.
+`scripts/terminal_browser.py` continues to pass whatever argv the caller
+gives it straight through (`open ...`, `action --help`, `-- --version`, ...)
+rather than inventing flags; that generic passthrough already covers
+upstream's documented `open`/`action`/`ls`/`upgrade` interface once the real
+tool is installed and exercised in this environment (or in CI).
 
 ## Portable incident: flutter_navigation_basic #95
 
@@ -146,14 +153,15 @@ What this CI lane still cannot prove, and what closing each gap would need:
   or a `script`/`tmux` session) plus something that can assert on terminal
   contents (a screen buffer or ANSI-aware snapshot), not just process exit
   codes and stderr JSONL.
-- **A confirmed-real non-interactive subcommand surface.** We could not
-  install or verify the actual `zenbu-labs/terminal-browser` tool in this
-  environment (see "Non-interactive subcommand wrappers" above), so
-  `action`/`dump`/`screenshot`-style wrappers remain unbuilt and untested
-  against real output. Closing this needs either network access to the real
-  package/binary this kit is meant to install, or an explicit stub contract
-  from upstream (a documented, versioned CLI reference) that this repo can
-  test against without guessing flags.
+- **Verifying the wrappers against the real upstream tool.** Upstream's
+  README documents `open <url>`, `action`, `ls`, and `upgrade`, installed via
+  its own install script or Homebrew (see "Non-interactive subcommand
+  wrappers" above), but we have not installed that real tool in this
+  environment and CI here still does not exercise it, so `action`/`ls`/
+  `upgrade`-style wrappers remain unverified against real output. Closing
+  this needs installing the actual `zenbu-labs/terminal-browser` tool (via
+  its install script or Homebrew) in this environment or in CI and running
+  the wrapper against it.
 - **The Ctrl-C handoff under a real interactive child.** The new tests cover
   the handoff with a POSIX shell stand-in (`trap`, `sleep`, explicit `exit`
   codes) and a mocked `subprocess.run`. They do not exercise a process that
