@@ -62,6 +62,8 @@ When a new repository teaches a reusable lesson, record: repository/PR, runtime 
 See [`docs/terminal-browser.md`](docs/terminal-browser.md). The dependency-free wrapper keeps missing-tool failures explicit and passes upstream CLI arguments through unchanged:
 
 ```sh
-python scripts/terminal_browser.py --check
-python scripts/terminal_browser.py action --help
+python scripts/terminal_browser.py --check        # verified: discovery + JSONL events
+python scripts/terminal_browser.py -- <args...>   # passes args through unchanged
 ```
+
+The upstream subcommand surface (for example `open` / `action`) is not verified yet: the npm `terminal-browser@1.0.2` package only starts its TUI. Arguments are forwarded as-is; see "Non-interactive subcommand wrappers" in docs/terminal-browser.md.
