@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
+import signal
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -59,15 +60,39 @@ def main() -> int:
     argv = [executable, *child_args]
     emit("terminal_browser_start", argv=argv)
 
+    interrupted = False
+
     try:
         if ns.log is None:
             # Preserve the child's terminal. Interactive commands such as `open`
             # must see the real stdin/stdout/stderr instead of pipes.
-            proc = subprocess.run(argv)
+            #
+            # A bare Ctrl-C raises KeyboardInterrupt on Python's default SIGINT
+            # handler while subprocess.run() is waiting; run() reacts to that
+            # by SIGKILLing the child immediately (see the bare "except:" in
+            # cpython's subprocess.run), which can leave an interactive TUI's
+            # terminal state (raw mode, alternate screen, ...) broken. The
+            # child shares our foreground process group, so it receives the
+            # same SIGINT directly. Install a handler that only records the
+            # interrupt instead of raising, so run() keeps waiting and the
+            # child gets to decide how -- and how quickly -- it cleans up and
+            # exits.
+            previous_handler = signal.getsignal(signal.SIGINT)
+
+            def _record_interrupt(signum: int, frame: object) -> None:
+                nonlocal interrupted
+                interrupted = True
+
+            signal.signal(signal.SIGINT, _record_interrupt)
+            try:
+                proc = subprocess.run(argv)
+            finally:
+                signal.signal(signal.SIGINT, previous_handler)
         else:
             proc = subprocess.run(
                 argv,
                 text=True,
+                errors="replace",
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
             )
@@ -75,13 +100,17 @@ def main() -> int:
             if output:
                 print(output, end="" if output.endswith("\n") else "\n")
             ns.log.parent.mkdir(parents=True, exist_ok=True)
-            ns.log.write_text(output, encoding="utf-8")
+            ns.log.write_text(output, encoding="utf-8", errors="replace")
     except KeyboardInterrupt:
+        # Only reachable for --log mode (piped stdio): the handler above keeps
+        # the default inherited-stdio path from ever raising here.
         emit("terminal_browser_exit", returncode=130, interrupted=True)
         return 130
 
     returncode, signal_number = _normalized_returncode(proc.returncode)
     exit_fields: dict[str, object] = {"returncode": returncode}
+    if interrupted:
+        exit_fields["interrupted"] = True
     if signal_number is not None:
         exit_fields["signal"] = signal_number
     emit("terminal_browser_exit", **exit_fields)
