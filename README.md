@@ -1,6 +1,10 @@
 # browser-test-kit
 Cross-browser testing reference kit for Playwright Node/Python, Stagehand, Replay, screenshots, mobile web, and GitHub Actions.
 
+## Scope
+
+The kit's center is browser testing: Playwright lanes, evidence acquisition and validation, execution strategy, and reproducible diagnostics. It also hosts stdlib-only engineering utilities that the same agents and CI jobs use around that work, such as repository orientation, GitHub/CI operations, log digests, Python-version matrices, HTML fixture building, and explicit-file commits. Every script must run under `python -S`, stay bounded in its output, and have unit tests. A utility that grows its own dependencies or domain belongs in its own repository.
+
 ## Fast Init
 
 Implementation is staged by evidence layer. Deterministic Node/Python Playwright lanes are already implemented; optional agent/exploratory lanes remain separate and must not be described as proven until their own contracts are measured.
