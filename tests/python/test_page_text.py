@@ -353,3 +353,12 @@ def test_network_failure_is_exit_2(monkeypatch, capsys) -> None:
         port = probe.getsockname()[1]
     assert page_text.main([f"http://127.0.0.1:{port}/", "--timeout", "5"]) == 2
     assert "fetch failed" in capsys.readouterr().err
+
+
+def test_textarea_content_is_not_page_text() -> None:
+    assert text_of("<p>a</p><textarea>pre-filled\n  value</textarea><p>b</p>") == "a\n\nb"
+
+
+def test_meta_utf16_label_is_read_as_utf8() -> None:
+    assert page_text._decode(b'<meta charset="utf-16"><p>hi \xe2\x9c\x93</p>') == '<meta charset="utf-16"><p>hi ✓</p>'
+    assert page_text._decode("x".encode("utf-16-le"), "text/html; charset=utf-16le") == "x"

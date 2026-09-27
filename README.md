@@ -54,10 +54,10 @@ curl -sL https://example.com/ | python scripts/page_text.py - --url https://exam
 python scripts/page_text.py <URL> --find "status page"
 ```
 
-- The text comes from the first `<main>`, else the first `<article>`, else `<body>`; `script`, `style`, `noscript`, `template`, and `svg` are dropped with their contents.
+- The text comes from the first `<main>`, else the first `<article>`, else `<body>`; `script`, `style`, `noscript`, `template`, `svg`, and `textarea` are dropped with their contents, as is the never-rendered fallback content of `iframe`, `noembed`, and `noframes`.
 - Line breaks follow `innerText` for each element's default display: a blank line around `<p>`, a new line for other block elements and `<br>`, and a tab between table cells. `<pre>` keeps its indentation, whitespace runs collapse to one space, and blank-line runs collapse to one.
 - `--find` lists links, buttons, headings, and `[role=link|button]` elements whose text, `aria-label`, or `title` contains the query (case-insensitive), with hrefs resolved to absolute URLs. No match exits 1.
-- `--json` adds `truncated`, `total_chars`, `bytes`, `status`, and `fetched_at`. `--max-chars`, `--max-bytes`, and `--timeout` bound the work.
+- `--json` adds `truncated`, `total_chars`, `bytes`, `byte_limit_hit`, `status`, `content_type`, and `fetched_at`. `--find ""` lists every candidate. `--max-chars`, `--max-bytes`, and `--timeout` bound the work.
 - Exit codes: 0 OK; 1 no `--find` match, or an HTTP error status (the page is still printed; a 404 adds a `LOGIN_WALL_AS_404` hint); 2 usage, input, or network error.
 - JavaScript is not run and CSS is not evaluated, so an empty result on a single-page app is `PAGE_TEXT_AS_RENDERED_TEXT`, not an empty page. Core tests use only local fixtures and a local HTTP server.
 - Not implemented yet: an automatic comparison of this static text with the Playwright lane's `inner_text()` (or terminal-browser's rendered text). Run both side by side when rendering matters.

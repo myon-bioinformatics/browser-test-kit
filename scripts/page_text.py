@@ -15,7 +15,7 @@ Rules (v1):
 
 * The text comes from the first ``<main>``, else the first ``<article>``,
   else ``<body>``.
-* ``script``, ``style``, ``noscript``, ``template`` and ``svg`` are dropped
+* ``script``, ``style``, ``noscript``, ``template``, ``svg`` and ``textarea`` are dropped
   with everything inside them, as is the fallback content of ``iframe``,
   ``noembed`` and ``noframes``, which browsers never render.
 * Line breaks follow the browser's ``innerText`` rules for the default
@@ -57,7 +57,8 @@ from typing import Any, Callable
 
 USER_AGENT = "browser-test-kit-page-text/1"
 # Never rendered as page text; dropped together with all descendants.
-EXCLUDED = frozenset({"script", "style", "noscript", "template", "svg", "iframe", "noembed", "noframes"})
+# textarea: innerText does not include form-control values, like <input value>.
+EXCLUDED = frozenset({"script", "style", "noscript", "template", "svg", "iframe", "noembed", "noframes", "textarea"})
 # innerText "required line break count": 2 for <p>, 1 for other default block-level boxes.
 PARAGRAPH = frozenset({"p"})
 BLOCK = frozenset({
@@ -66,7 +67,7 @@ BLOCK = frozenset({
     "header", "hgroup", "hr", "legend", "li", "listing", "main", "menu", "nav", "ol", "optgroup", "option",
     "pre", "search", "section", "summary", "table", "tr", "ul", "xmp",
 })
-PREFORMATTED = frozenset({"pre", "listing", "xmp", "textarea"})
+PREFORMATTED = frozenset({"pre", "listing", "xmp"})
 HEADINGS = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
 HEAD_CONTENT = frozenset({"base", "basefont", "bgsound", "link", "meta", "noscript", "script", "style", "template",
                           "title"})
@@ -319,6 +320,8 @@ def _decode(raw: bytes, content_type: str = "") -> str:
     meta = None if match else _META_CHARSET_RE.search(raw[:4096])
     label = match.group(1) if match else meta.group(1).decode("ascii", "replace") if meta else "utf-8"
     label = label.strip().lower()
+    if meta and not match and label.startswith("utf-16"):
+        label = "utf-8"  # WHATWG prescan: an ASCII-readable <meta> cannot be UTF-16
     try:
         return raw.decode(_CHARSET_ALIASES.get(label, label), "replace")
     except LookupError:
@@ -451,7 +454,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--url", help="URL to report and resolve relative links against (default: the final "
                                       "fetched URL, the file URL, or none for stdin)")
     parser.add_argument("--find", metavar="QUERY", help="list links/buttons/headings whose text, aria-label or "
-                                                        "title contains QUERY")
+                                                        "title contains QUERY (\"\" lists every candidate)")
     parser.add_argument("--limit", type=_positive(int), default=20, help="maximum --find matches (default: 20)")
     return parser
 
