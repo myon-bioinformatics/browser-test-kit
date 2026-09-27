@@ -3,13 +3,14 @@ Cross-browser testing reference kit for Playwright Node/Python, Stagehand, Repla
 
 ## Fast Init
 
-This repository is documentation-first before browser implementation. The first PR records the cross-repository evidence, failure taxonomy, screenshot validation rules, and Node/Python policy that later implementation must follow.
+Implementation is staged by evidence layer. Deterministic Node/Python Playwright lanes are already implemented; optional agent/exploratory lanes remain separate and must not be described as proven until their own contracts are measured.
 
 Initial implementation target:
 - Playwright Node/TypeScript and Playwright Python API/CLI as equal reference lanes.
 - Chromium, Firefox, and WebKit, with explicit desktop/mobile profiles.
 - Screenshot evidence validated by command result, file existence/size, PNG signature, and human-inspectable CI artifacts.
 - Stagehand v4 Python as an optional agent-oriented lane, not a replacement for deterministic Playwright.
+- terminal-browser as an optional real-Chromium CLI/TUI exploratory lane for fast local/agent feedback before the deterministic matrix.
 - Replay as an optional recorded-execution/debug lane.
 - Core CI uses a local deterministic fixture; external network failures remain a separate failure layer.
 
@@ -31,6 +32,7 @@ The implementation must guard against lessons already observed in sibling reposi
 - **VISUAL_DIFF_TOO_EARLY:** validate deterministic screenshot candidates before making pixel baselines blocking.
 - **NODE_OR_PYTHON_MONOCULTURE:** show equivalent Node and Python patterns rather than selecting one as canonical for every repository.
 - **AGENT_REPLACES_DETERMINISTIC_TEST:** Stagehand remains an additional lane.
+- **TERMINAL_BROWSER_AS_MATRIX:** terminal-browser is a fast Chromium exploratory lane, not evidence of Firefox/WebKit parity.
 - **MISSING_FAILURE_ARTIFACTS:** retain screenshot/trace/video/logs on failure where useful.
 
 ### Provenance
@@ -51,5 +53,27 @@ When a new repository teaches a reusable lesson, record: repository/PR, runtime 
 4. Playwright Python API + CLI matrix.
 5. Cross-runtime/browser parity guards.
 6. Stagehand v4 Python optional lane.
-7. Replay optional lane.
-8. Reusable workflow/template examples.
+7. terminal-browser optional CLI/TUI lane.
+8. Replay optional lane.
+9. Reusable workflow/template examples.
+
+### terminal-browser quick lane
+
+See [`docs/terminal-browser.md`](docs/terminal-browser.md). The dependency-free wrapper keeps missing-tool failures explicit and passes upstream CLI arguments through unchanged:
+
+```sh
+python scripts/terminal_browser.py --check        # verified: discovery + JSONL events
+python scripts/terminal_browser.py -- <args...>   # passes args through unchanged
+```
+
+Upstream [zenbu-labs/terminal-browser](https://github.com/zenbu-labs/terminal-browser) documents `open <url>`, `action`, `ls`, and `upgrade`, installed via its own install script or Homebrew -- not the npm `terminal-browser@1.0.2` package, which is an unrelated same-name project. This repo's CI does not exercise the real upstream tool, so the wrappers here remain unverified against it. Arguments are forwarded as-is; see "Non-interactive subcommand wrappers" in docs/terminal-browser.md.
+
+### Evidence events (btk-event/1)
+
+See [`docs/evidence-events.md`](docs/evidence-events.md) for the shared JSONL
+event contract (schema `btk-event/1`) that `scripts/terminal_browser.py`
+emits, that the opt-in `scripts/pytest_btk_events.py` pytest plugin writes
+per test, and that `scripts/evidence_board.py` aggregates into a Markdown
+table, `--json`, or a GitHub Step Summary. Nothing here loads implicitly:
+there is no `conftest.py`, and the plugin only runs when a project opts in
+with `pytest -p pytest_btk_events --btk-events PATH`.
