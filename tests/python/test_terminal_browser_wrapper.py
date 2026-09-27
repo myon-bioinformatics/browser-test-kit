@@ -1,9 +1,11 @@
 import importlib.util
 import json
 import os
+import signal
 import stat
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -56,6 +58,23 @@ def test_passthrough_and_log_keep_events_separate(tmp_path):
     assert all(event["source"] == "terminal-browser" for event in events)
 
 
+def test_log_mode_tolerates_non_utf8_output(tmp_path):
+    # \377 (octal) is byte 0xFF: not valid UTF-8 anywhere. Without
+    # errors="replace" this crashes the wrapper with a UnicodeDecodeError
+    # instead of producing a log.
+    env = _fake_terminal_browser(tmp_path, "printf 'bad: \\377 end\\n'\n")
+    log = tmp_path / "bad.log"
+    result = subprocess.run(
+        [sys.executable, str(WRAPPER), "--log", str(log), "action"],
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 0
+    assert "bad: � end\n" == result.stdout
+    assert log.read_text(encoding="utf-8") == result.stdout
+
+
 def test_double_dash_passes_top_level_child_flag_verbatim(tmp_path):
     env = _fake_terminal_browser(tmp_path, "printf '%s\\n' \"$*\"\n")
     result = subprocess.run(
@@ -97,7 +116,14 @@ def test_default_mode_does_not_capture_child_stdio(tmp_path, monkeypatch):
     assert "stderr" not in seen["kwargs"]
 
 
-def test_keyboard_interrupt_is_recorded_as_130(monkeypatch, capsys):
+def test_sigint_is_handed_to_the_child_instead_of_raising(monkeypatch, capsys):
+    """The default (inherited-stdio) mode must not let subprocess.run's
+    KeyboardInterrupt handling SIGKILL the child. Instead, main() installs a
+    SIGINT handler around the subprocess.run() call that only records the
+    interrupt; the real SIGINT reaches the child too (same foreground process
+    group), and the child decides how it exits. Here the fake subprocess.run
+    simulates that delivery by invoking whatever handler main() installed, then
+    returns as if the child had died from the SIGINT it received (-2)."""
     importlib_spec = importlib.util.spec_from_file_location("terminal_browser_interrupt", WRAPPER)
     assert importlib_spec is not None
     module = importlib.util.module_from_spec(importlib_spec)
@@ -105,11 +131,64 @@ def test_keyboard_interrupt_is_recorded_as_130(monkeypatch, capsys):
     importlib_spec.loader.exec_module(module)
 
     monkeypatch.setattr(module.shutil, "which", lambda _: "/fake/terminal-browser")
-    monkeypatch.setattr(module.subprocess, "run", lambda *args, **kwargs: (_ for _ in ()).throw(KeyboardInterrupt()))
+
+    class Result:
+        returncode = -2  # child terminated by the SIGINT it received (signal 2)
+
+    def fake_run(argv, **kwargs):
+        # Simulate the real SIGINT arriving while the child is still running:
+        # it reaches the handler main() installed, not a KeyboardInterrupt.
+        handler = module.signal.getsignal(module.signal.SIGINT)
+        handler(module.signal.SIGINT, None)
+        return Result()
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
     monkeypatch.setattr(sys, "argv", [str(WRAPPER), "open", "http://127.0.0.1:8000"])
 
     assert module.main() == 130
     events = _events(capsys.readouterr().err)
+    assert events[-1]["event"] == "terminal_browser_exit"
+    assert events[-1]["returncode"] == 130
+    assert events[-1]["signal"] == 2
+    assert events[-1]["interrupted"] is True
+    # The handler main() installed must not leak past the call.
+    assert module.signal.getsignal(module.signal.SIGINT) is signal.default_int_handler
+
+
+def test_default_mode_lets_child_finish_its_own_cleanup_after_sigint(tmp_path):
+    """End-to-end: a real Ctrl-C (SIGINT to the whole process group) must not
+    get the child SIGKILLed mid-cleanup. The fake child ignores the first
+    SIGINT, sleeps (simulating cleanup work), and only then exits -- if the
+    wrapper were still relying on subprocess.run's default KeyboardInterrupt
+    handling, that sleep would be cut short by a kill()."""
+    marker = tmp_path / "cleaned-up"
+    env = _fake_terminal_browser(
+        tmp_path,
+        "trap 'true' INT\n"
+        "sleep 0.3\n"
+        f"touch {marker}\n"
+        "exit 130\n",
+    )
+    wrapper = subprocess.Popen(
+        [sys.executable, str(WRAPPER), "open", "http://127.0.0.1:8000"],
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+    try:
+        time.sleep(0.1)
+        os.killpg(wrapper.pid, signal.SIGINT)
+        _, stderr = wrapper.communicate(timeout=5)
+    finally:
+        if wrapper.poll() is None:
+            wrapper.kill()
+            wrapper.wait()
+
+    assert marker.exists(), "child was killed before it finished its own cleanup"
+    assert wrapper.returncode == 130
+    events = _events(stderr)
     assert events[-1]["event"] == "terminal_browser_exit"
     assert events[-1]["returncode"] == 130
     assert events[-1]["interrupted"] is True
