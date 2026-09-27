@@ -34,15 +34,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
-from collections import Counter
+from collections import Counter, deque
 from datetime import datetime
 from pathlib import Path
 
 KIND_KEYS = ("event", "type", "kind", "method")
 TIME_KEYS = ("time", "timestamp", "ts", "created_at", "at")
 MESSAGE_KEYS = ("message", "payload", "data", "msg")
-FAILED = {"failure", "failed", "error", "errored"}
+FAILED = {"failure", "failed", "error", "errored", "interrupted", "blocked", "unavailable"}
 
 
 def _first(record: dict, keys: tuple[str, ...]) -> tuple[str | None, object]:
@@ -107,9 +108,11 @@ def _fmt_num(value: float) -> str:
 
 def num_line(dicts: list[dict], field: str) -> str:
     values = sorted(
-        float(value)
+        number
         for value in (_get_path(record, field) for record in dicts)
         if isinstance(value, (int, float)) and not isinstance(value, bool)
+        for number in (float(value),)
+        if math.isfinite(number)
     )
     if not values:
         return f"num {field}: (no numeric values)"
@@ -201,10 +204,12 @@ def _elapsed(start: object, end: object) -> str | None:
 
 
 def pair_calls(records: list[object], width: int) -> list[str]:
-    """Pair JSON-RPC requests with responses by id; one line per call, plus a summary line."""
+    """Pair JSON-RPC requests with the first later unused response of the same id."""
     requests: list[tuple[int, object, dict, str | None]] = []
-    responses: dict[object, tuple[int, dict, str | None]] = {}
+    pending: dict[object, deque[int]] = {}
+    matched: dict[int, tuple[int, dict, str | None]] = {}
     notifications: Counter[str] = Counter()
+
     for index, record in enumerate(records):
         message = _rpc_message(record)
         if message is None:
@@ -216,17 +221,24 @@ def pair_calls(records: list[object], width: int) -> list[str]:
         when = str(when) if when is not None else None
         has_id = "id" in message and message.get("id") is not None
         method = message.get("method")
+
         if method is not None and has_id:
+            request_index = len(requests)
             requests.append((index, message.get("id"), message, when))
+            pending.setdefault(_id_key(message.get("id")), deque()).append(request_index)
         elif method is not None:
             notifications[method] += 1
         elif has_id and ("result" in message or "error" in message):
-            responses[_id_key(message.get("id"))] = (index, message, when)
+            queue = pending.get(_id_key(message.get("id")))
+            if queue:
+                request_index = queue.popleft()
+                matched[request_index] = (index, message, when)
+
     lines: list[str] = []
     errors = unanswered = 0
-    for index, rpc_id, message, when in requests:
+    for request_index, (index, _rpc_id, message, when) in enumerate(requests):
         header = _call_header(message, width)
-        response = responses.get(_id_key(rpc_id))
+        response = matched.get(request_index)
         if response is None:
             lines.append(f"[{index}] {header} -> no response")
             unanswered += 1
@@ -238,6 +250,7 @@ def pair_calls(records: list[object], width: int) -> list[str]:
         elapsed = _elapsed(when, r_when)
         suffix = f" ({elapsed})" if elapsed else ""
         lines.append(f"[{index}->{r_index}] {header} -> {status} {preview}{suffix}")
+
     summary = f"calls: {len(requests)} ({errors} errors, {unanswered} unanswered)"
     if notifications:
         summary += ", notifications: " + ", ".join(f"{name} {n}" for name, n in notifications.items())
