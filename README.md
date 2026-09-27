@@ -66,4 +66,4 @@ python scripts/terminal_browser.py --check        # verified: discovery + JSONL 
 python scripts/terminal_browser.py -- <args...>   # passes args through unchanged
 ```
 
-The upstream subcommand surface (for example `open` / `action`) is not verified yet: the npm `terminal-browser@1.0.2` package only starts its TUI. Arguments are forwarded as-is; see "Non-interactive subcommand wrappers" in docs/terminal-browser.md.
+Upstream [zenbu-labs/terminal-browser](https://github.com/zenbu-labs/terminal-browser) documents `open <url>`, `action`, `ls`, and `upgrade`, installed via its own install script or Homebrew -- not the npm `terminal-browser@1.0.2` package, which is an unrelated same-name project. This repo's CI does not exercise the real upstream tool, so the wrappers here remain unverified against it. Arguments are forwarded as-is; see "Non-interactive subcommand wrappers" in docs/terminal-browser.md.
