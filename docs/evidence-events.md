@@ -9,7 +9,7 @@ already emits on stderr (see `docs/terminal-browser.md`) into a shape any
 producer in this kit -- or in a project that vendors this kit -- can reuse.
 
 It exists to keep this repo's own anti-patterns
-(`docs/anti-patterns.md`) from recurring in the aggregation layer:
+(`docs/antipatterns.md`) from recurring in the aggregation layer:
 `FAILURE_LAYER_FLATTENING` (record which stage failed), `MISSING_FAILURE_ARTIFACTS`
 and `EVIDENCE_MASKS_ROOT_FAILURE` (do not let evidence capture hide the real
 failure), and `SUCCESS_COUNT_VS_RETRY_ARTIFACTS` (aggregate by identity, not
