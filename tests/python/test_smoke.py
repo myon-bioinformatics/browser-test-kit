@@ -21,7 +21,7 @@ def build_context_args(pw, browser_name: str, device_name: str | None) -> dict:
         return {}
     args = dict(pw.devices[device_name])
     if browser_name == "firefox":
-        # See DEVICE_DESCRIPTOR_CROSS_ENGINE in docs/anti-patterns.md.
+        # See DEVICE_DESCRIPTOR_CROSS_ENGINE in docs/antipatterns.md.
         args.pop("is_mobile", None)
     return args
 
@@ -32,7 +32,7 @@ def close_browser(browser, *, after_failure: bool) -> None:
     except Exception as close_exc:
         if not after_failure:
             raise
-        # See EVIDENCE_MASKS_ROOT_FAILURE in docs/anti-patterns.md.
+        # See EVIDENCE_MASKS_ROOT_FAILURE in docs/antipatterns.md.
         print(f"warning: browser.close() failed after the test failed: {type(close_exc).__name__}: {close_exc}", file=sys.stderr)
 
 class _BrowserThatFailsToClose:
