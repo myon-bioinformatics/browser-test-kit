@@ -177,6 +177,7 @@ class _Recorder:
         self._handle = None
         self._counts: dict = {}
         self._interrupted = False
+        self._summary_written = False
 
     def _stream(self):
         if self._handle is None:
@@ -222,8 +223,20 @@ class _Recorder:
             message=_short_message(report) if status in ("failed", "error") else None,
         )
 
+    def _record_summary(self, status: str, returncode: int) -> None:
+        if self._summary_written:
+            return
+        counts = {f"count_{name}": count for name, count in sorted(self._counts.items())}
+        self._record("session_summary", status=status, returncode=returncode, **counts)
+        self._summary_written = True
+        self.close()
+
     def pytest_keyboard_interrupt(self, excinfo: Any) -> None:
         self._interrupted = True
+        # pytest may abort before pytest_sessionfinish when SIGINT lands just
+        # after session_start. Persist the terminal evidence at the interrupt
+        # hook itself; sessionfinish is idempotent through _summary_written.
+        self._record_summary("interrupted", 2)
 
     def pytest_sessionfinish(self, session: Any, exitstatus: int) -> None:
         if self._interrupted:
@@ -232,9 +245,7 @@ class _Recorder:
             status = "passed"
         else:
             status = "failed"
-        counts = {f"count_{name}": count for name, count in sorted(self._counts.items())}
-        self._record("session_summary", status=status, returncode=int(exitstatus), **counts)
-        self.close()
+        self._record_summary(status, int(exitstatus))
 
 
 def main(argv: Union[list, None] = None) -> int:
