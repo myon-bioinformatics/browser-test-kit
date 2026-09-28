@@ -298,5 +298,7 @@ def test_keyboard_interrupt_is_reported_as_interrupted_at_session_finish(tmp_pat
             proc.wait()
 
     events = _read_events(events_path)
-    summary = next(event for event in events if event["event"] == "session_summary")
-    assert summary["status"] == "interrupted"
+    summaries = [event for event in events if event["event"] == "session_summary"]
+    assert len(summaries) == 1
+    assert summaries[0]["status"] == "interrupted"
+    assert summaries[0]["returncode"] == 2
