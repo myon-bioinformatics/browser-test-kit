@@ -115,7 +115,7 @@ When physical-device evidence is added later, record OS/device/browser separatel
 
 ## Anti-patterns implied by the doctrine
 
-The central catalog should cover these concepts, reusing existing IDs where possible. IDs not already present in [anti-patterns.md](./anti-patterns.md) are **candidate / not yet adopted** until explicitly promoted into that stable catalog:
+The central catalog should cover these concepts, reusing existing IDs where possible. IDs not already present in [antipatterns.md](./antipatterns.md) are **candidate / not yet adopted** until explicitly promoted into that stable catalog:
 
 - **LANGUAGE_AS_GOAL** — preserving a language/framework becomes more important than platform reach or ownership cost.
 - **MULTI_PLATFORM_BY_SINGLE_ENGINE** — one desktop Chromium pass is described as multi-platform support.
