@@ -146,3 +146,20 @@ consume this guide or the same receipt schema.
 - [Flutter diagnostics #128: scroll and failure preservation](incidents/flutter-diagnostics-128.md)
 - [Stable anti-pattern catalogue](antipatterns.md)
 - [Reference lane contract](fast-init.md)
+
+## Sealing existing CLI capture lanes
+
+`write_capture_evidence.py` adapts existing PNG capture jobs to multi-image receipts.
+Pass an explicit project/bundle identity, required filenames, tested SHA, run ID,
+attempt and `--stage complete|failed|skipped`. Clear success images/receipts before
+capture and call the writer after application assertions/capture outcome is known.
+Only complete bundles pass `check_capture_evidence.py`; failed/skipped receipts are
+preserved but never cover required success. The writer checks all required inputs,
+records byte/hash/dimensions, and saves a failed receipt on invalid/missing input.
+It cannot prove fresh capture or visible semantics merely by hashing a PNG.
+
+`probe_capture_rejections.py` first validates an actual CI bundle, then mutates
+isolated temporary copies (missing image, wrong hash, stale run ID, failed receipt)
+and requires each to fail the same validator. It never modifies the actual evidence.
+Use the same expect/captures/SHA/run/attempt and receipt pattern as the real lane.
+A mixed-engine bundle must be named honestly; it is not an individual engine project.
