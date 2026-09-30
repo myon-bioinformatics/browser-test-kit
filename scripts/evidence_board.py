@@ -14,7 +14,7 @@ the contract) and reports:
 - counts per ``source``/``project`` (grouped as ``source`` alone, or
   ``source/project`` when the event carries a ``project``);
 - the first failure recorded for each ``stage``
-  (``FAILURE_LAYER_FLATTENING`` in ``docs/anti-patterns.md``);
+  (``FAILURE_LAYER_FLATTENING`` in ``docs/antipatterns.md``);
 - ``interrupted``/``unavailable`` counts, called out separately -- neither is
   ever folded into "passed".
 
