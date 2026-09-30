@@ -820,3 +820,147 @@ def test_url_cli_needs_no_client_or_token(monkeypatch):
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
     monkeypatch.delenv("GH_TOKEN", raising=False)
     assert gh_ops.main(["url", "raw", REPO, "main", "a.py"]) == 0
+
+
+# --- read-only repository counts / open Issues ------------------------------------
+
+def count_routes(repo=REPO, issues=(), commits=(), branch="main"):
+    return {
+        ("GET", f"/repos/{repo}"): reply({"default_branch": branch, "open_issues_count": 999}),
+        ("GET", f"/repos/{repo}/issues"): reply(list(issues)),
+        ("GET", f"/repos/{repo}/commits"): reply(list(commits)),
+    }
+
+
+def test_repo_counts_zero_is_success_and_human_columns(capsys):
+    client, stub = client_for(count_routes())
+    assert gh_ops.main(["repo-counts", "octo", "--repos", "demo"], client=client) == 0
+    assert capsys.readouterr().out.splitlines() == [
+        "repo  open issues  open PRs  commits", "octo/demo  0  0  0"]
+    assert stub.methods == ["GET"] * 3
+    assert stub.calls[0]["query"] == {"per_page": ["100"], "state": ["open"]}
+    assert stub.calls[-1]["query"]["sha"] == ["main"]
+
+
+@pytest.mark.parametrize("org,endpoint", [(True, "/orgs/octo/repos"), (False, "/users/octo/repos")])
+def test_repo_counts_empty_owner(org, endpoint):
+    client, stub = client_for({("GET", endpoint): reply([])})
+    result = gh_ops.repo_counts("octo", org=org, client=client)
+    assert result["ok"] and result["repositories"] == []
+    assert result["repository_count"] == 0
+    assert result["totals"] == {"open_issues": 0, "open_prs": 0, "commits": 0}
+    assert stub.methods == ["GET"]
+
+
+def test_repo_counts_explicit_multiple_repos_mixed_and_json(capsys):
+    routes = count_routes(issues=[{"number": 1}, {"number": 2, "pull_request": {}}], commits=[{"sha": HEAD}])
+    routes.update(count_routes("octo/web", issues=[{"number": 3, "pull_request": None}],
+                               commits=[{"sha": HEAD}, {"sha": OTHER}], branch="trunk"))
+    client, stub = client_for(routes)
+    assert gh_ops.main(["--json", "repo-counts", "octo", "--org", "--repos", " web,demo,web "], client=client) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["repositories"] == [
+        {"repo": REPO, "open_issues": 1, "open_prs": 1, "commits": 1, "default_branch": "main"},
+        {"repo": "octo/web", "open_issues": 0, "open_prs": 1, "commits": 2, "default_branch": "trunk"}]
+    assert result["totals"] == {"open_issues": 1, "open_prs": 2, "commits": 3}
+    assert result["commit_scope"] == "default_branch"
+    assert result["repository_count"] == 2
+    assert stub.methods == ["GET"] * 6
+    assert stub.calls[-1]["query"]["sha"] == ["trunk"]
+
+
+def test_repo_counts_paginates_repositories_issues_and_commits_beyond_fifty_pages():
+    def pages(path, data):
+        def route(parts, body):
+            page = int(urllib.parse.parse_qs(parts.query).get("page", ["1"])[0])
+            link = f'<https://api.github.com{path}?per_page=100&page={page + 1}>; rel="next"' if page < len(data) else None
+            return reply(data[page - 1], link=link)
+        return route
+    routes = count_routes()
+    routes.update(count_routes("octo/web"))
+    routes[("GET", "/orgs/octo/repos")] = pages("/orgs/octo/repos", [
+        [{"full_name": "octo/web", "archived": True}], [{"full_name": REPO}]])
+    routes[("GET", f"/repos/{REPO}/issues")] = pages(f"/repos/{REPO}/issues", [
+        [{"number": 1}, {"number": 2, "pull_request": {}}], [{"number": 3}]])
+    routes[("GET", f"/repos/{REPO}/commits")] = pages(f"/repos/{REPO}/commits", [[{"sha": str(i)}] for i in range(51)])
+    client, stub = client_for(routes)
+    result = gh_ops.repo_counts("octo", org=True, client=client)
+    assert result["totals"] == {"open_issues": 2, "open_prs": 1, "commits": 51}
+    assert result["repository_count"] == 2
+    assert set(stub.methods) == {"GET"}
+
+
+def test_repo_counts_empty_git_repository_is_zero():
+    routes = count_routes()
+    routes[("GET", f"/repos/{REPO}/commits")] = reply({"message": "Git Repository is empty.", "status": "409"}, status=409)
+    client, _ = client_for(routes)
+    assert gh_ops.repo_counts("octo", repos=("demo",), client=client)["totals"]["commits"] == 0
+
+
+@pytest.mark.parametrize("status", [403, 404, 409, 500])
+def test_repo_counts_errors_do_not_become_zero(status, capsys):
+    routes = count_routes()
+    routes[("GET", f"/repos/{REPO}/commits")] = reply({"message": "unavailable"}, status=status)
+    client, stub = client_for(routes)
+    assert gh_ops.main(["--json", "repo-counts", "octo", "--repos", "demo"], client=client) == 2
+    captured = capsys.readouterr()
+    assert captured.out == "" and f"HTTP {status}" in captured.err
+    assert set(stub.methods) == {"GET"}
+
+
+def test_open_issues_excludes_prs_and_paginates(capsys):
+    routes = {
+        ("GET", f"/repos/{REPO}/issues"): [
+            reply([{"number": 1, "title": "todo", "html_url": "u1"}, {"number": 2, "pull_request": {}}],
+                  link=f'<https://api.github.com/repos/{REPO}/issues?state=open&per_page=100&page=2>; rel="next"'),
+            reply([{"number": 3, "title": "next", "html_url": "u3"}])],
+        ("GET", "/repos/octo/web/issues"): reply([]),
+    }
+    client, stub = client_for(routes)
+    assert gh_ops.main(["--json", "open-issues", "octo", "--repos", "demo,web"], client=client) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["total"] == 2
+    assert [row["number"] for row in result["issues"]] == [1, 3]
+    assert all(row["repo"] == REPO for row in result["issues"])
+    assert stub.calls[1]["query"]["page"] == ["2"]
+    assert set(stub.methods) == {"GET"}
+
+
+def test_open_issues_zero_human_and_org_enumeration(capsys):
+    client, _ = client_for({("GET", "/orgs/octo/repos"): reply([{"full_name": REPO}]),
+                            ("GET", f"/repos/{REPO}/issues"): reply([])})
+    assert gh_ops.main(["open-issues", "octo", "--org"], client=client) == 0
+    assert capsys.readouterr().out.strip() == "0 open Issue(s) for octo"
+
+
+@pytest.mark.parametrize("link,error", [
+    ('<https://evil.example/items>; rel="next"', "outside the API host"),
+    (f'<https://api.github.com/repos/{REPO}/issues?page=2>; rel="next"', "repeated pagination")])
+def test_counts_reject_unsafe_or_cyclic_pagination(link, error):
+    routes = count_routes()
+    routes[("GET", f"/repos/{REPO}/issues")] = reply([], link=link)
+    client, _ = client_for(routes)
+    with pytest.raises(gh_ops.GhOpsError, match=error):
+        gh_ops.repo_counts("octo", repos=("demo",), client=client)
+
+
+def test_counts_validates_all_explicit_repos_before_any_http():
+    client, stub = client_for({})
+    with pytest.raises(gh_ops.GhOpsError):
+        gh_ops.repo_counts("octo", repos=("demo", "../bad"), client=client)
+    assert stub.calls == []
+
+
+def test_counts_cli_stdlib_only_under_python_s():
+    code = '''import gh_ops
+calls = []
+def transport(method, url, body, headers):
+    calls.append(method)
+    return gh_ops.Response(200, [])
+assert gh_ops.main(["--json", "repo-counts", "octo", "--org"],
+                   client=gh_ops.Client(transport=transport)) == 0
+assert calls == ["GET"]
+'''
+    result = subprocess.run([sys.executable, "-S", "-c", code], cwd=SCRIPTS, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["totals"] == {"open_issues": 0, "open_prs": 0, "commits": 0}

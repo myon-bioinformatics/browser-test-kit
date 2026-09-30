@@ -49,6 +49,9 @@ python -S scripts/gh_ops.py issue-comments OWNER/REPO 24 --show 6,18            
 python -S scripts/gh_ops.py comments-file saved-tool-result.txt --last 5        # same digest from a saved JSON dump, offline
 python -S scripts/gh_ops.py pr-for-branch OWNER/REPO my-branch                    # existing PR for a branch? merged? (none -> exit 1)
 python -S scripts/gh_ops.py open-prs OWNER [--org] [--repos a,b]               # open PRs across repositories, newest first
+python -S scripts/gh_ops.py open-issues OWNER [--org] [--repos a,b]             # all open Issues, excluding PRs
+python -S scripts/gh_ops.py repo-counts OWNER [--org] [--repos a,b]              # repo / open issues / open PRs / commits
+python -S scripts/gh_ops.py --json repo-counts OWNER --repos a,b                # structured rows and totals
 python -S scripts/gh_ops.py checks-wait OWNER/REPO <sha> --min 5
 python -S scripts/gh_ops.py pr-merge OWNER/REPO 11 --sha ecfd0ba --min-checks 5 --method squash --write
 python -S scripts/gh_ops.py pr-body-set OWNER/REPO 11 --file body.md --write     # replace the whole PR body
@@ -58,6 +61,27 @@ python -S scripts/gh_ops.py url pr OWNER/REPO 11 --tab checks                   
 ```
 
 Also: `pr-status`, `runs`, `workflow-state`, `workflow-dispatch`, `pr-body-replace`, `sync-main`. Every subcommand is a function (`from gh_ops import pr_merge`) returning a dict; the CLI is a thin adapter.
+
+`repo_counts(owner, org=False, repos=(), client=None)` and `open_issues(...)`
+use only REST GETs with the same injectable HTTP transport. Without `--repos`,
+they enumerate the user's repositories, or all organization repositories with
+`--org`; explicit comma-separated **short repository names** bypass enumeration.
+Archived and zero-count repositories are included, duplicate names are counted
+once, and rows are sorted by repository name. Every Link `next` page is read,
+without the search API's result cap or a silent page limit. The `/issues` response
+contains both Issues and PRs: presence of `pull_request` identifies a PR;
+`open_issues_count` is never used as an Issue count.
+
+`repo-counts --json` returns `repositories` rows with `repo`, `open_issues`,
+`open_prs`, `commits`, and `default_branch`, plus `repository_count`, `totals`,
+`owner`, `org`, `ok`, and `commit_scope: "default_branch"`. Commits means all
+commits reachable from the default branch, including merge commits, rather than
+all branches or just commits in open PRs. Counting reads the complete commit
+history, so large repositories may require many requests. An empty Git repository
+counts as zero commits; other HTTP errors fail with exit 2 rather than silently
+reporting zero or partial counts. Successful empty results exit 0. Reads are
+sequential, so activity during collection can change the counts; this is not an
+atomic snapshot. `open-issues --json` returns `issues` rows and `total`.
 
 ### Screenshot knowledge across repositories
 

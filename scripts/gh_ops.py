@@ -392,6 +392,86 @@ def open_prs(owner: str, *, org: bool = False, repos: tuple[str, ...] = (), limi
     return {"ok": bool(rows), "owner": owner, "total": data.get("total_count", len(rows)), "pulls": rows}
 
 
+def _all_items(client: Client, path: str, *, params: dict | None = None,
+               empty_repository: bool = False):
+    """Stream every REST page, failing rather than returning truncated counts."""
+    query = {"per_page": 100, **(params or {})}
+    seen = set()
+    while True:
+        response = client.request("GET", path, params=query,
+                                  expect=(200, 409) if empty_repository else (200,))
+        if response.status == 409:
+            # GitHub may include documentation_url/status alongside the message.
+            if not seen and isinstance(response.data, dict) and response.data.get("message") == "Git Repository is empty.":
+                return
+            raise GhOpsError(f"GET {path} -> HTTP 409: cannot count commits")
+        if not isinstance(response.data, list):
+            raise GhOpsError(f"GET {path}: expected a REST list")
+        yield from response.data
+        match = _NEXT_LINK_RE.search(response.headers.get("link", ""))
+        if not match:
+            return
+        path, query = match.group(1), None
+        target, root = urllib.parse.urlsplit(path), urllib.parse.urlsplit(client.api_root)
+        if (target.scheme, target.netloc) != (root.scheme, root.netloc):
+            raise GhOpsError("pagination link points outside the API host")
+        if path in seen:
+            raise GhOpsError("repeated pagination link; counts would be incomplete")
+        seen.add(path)
+
+
+def _repositories(owner: str, org: bool, repos: tuple[str, ...], client: Client) -> list[str]:
+    _repo(owner + "/placeholder")
+    if repos:
+        return sorted({_repo(owner + "/" + name) for name in repos})
+    kind = "orgs" if org else "users"
+    return sorted({_repo(item["full_name"]) for item in
+                   _all_items(client, f"/{kind}/{owner}/repos", params={"type": "all"})})
+
+
+def open_issues(owner: str, *, org: bool = False, repos: tuple[str, ...] = (),
+                client: Client | None = None) -> dict:
+    """List all open Issues across selected repositories, excluding PRs."""
+    client = _client(client)
+    rows = []
+    for repo in _repositories(owner, org, repos, client):
+        for issue in _all_items(client, f"/repos/{repo}/issues", params={"state": "open"}):
+            if "pull_request" not in issue:
+                rows.append({"repo": repo, "number": issue.get("number"), "title": issue.get("title"),
+                             "author": _login(issue), "updated_at": issue.get("updated_at"),
+                             "url": issue.get("html_url")})
+    return {"ok": True, "owner": owner, "total": len(rows), "issues": rows}
+
+
+def repo_counts(owner: str, *, org: bool = False, repos: tuple[str, ...] = (),
+                client: Client | None = None) -> dict:
+    """Count open Issues/PRs and default-branch reachable commits using GET only.
+
+    Includes zero-count and archived repositories. Counts reflect sequential
+    REST reads, not an atomic snapshot. Errors propagate; unavailable != zero.
+    """
+    client = _client(client)
+    rows = []
+    for repo in _repositories(owner, org, repos, client):
+        issues = pulls = 0
+        for item in _all_items(client, f"/repos/{repo}/issues", params={"state": "open"}):
+            if "pull_request" in item:
+                pulls += 1
+            else:
+                issues += 1
+        metadata = client.get(f"/repos/{repo}")
+        branch = metadata.get("default_branch")
+        if not branch:
+            raise GhOpsError(f"{repo}: missing default_branch; cannot count commits")
+        commits = sum(1 for _ in _all_items(client, f"/repos/{repo}/commits",
+                                           params={"sha": branch}, empty_repository=True))
+        rows.append({"repo": repo, "open_issues": issues, "open_prs": pulls,
+                     "commits": commits, "default_branch": branch})
+    totals = {key: sum(row[key] for row in rows) for key in ("open_issues", "open_prs", "commits")}
+    return {"ok": True, "owner": owner, "org": org, "repositories": rows,
+            "repository_count": len(rows), "totals": totals, "commit_scope": "default_branch"}
+
+
 def checks_wait(repo: str, sha: str, *, min_checks: int = 1, timeout: float = 600.0, interval: float = 15.0,
                 client: Client | None = None, sleep: Callable[[float], None] = time.sleep,
                 clock: Callable[[], float] = time.monotonic) -> dict:
@@ -818,6 +898,13 @@ def url_raw(repo: str, ref: str, path: str) -> dict:
 # --- CLI adapter ----------------------------------------------------------------
 
 def _render(command: str, result: dict) -> str:
+    if command == "repo-counts":
+        return "\n".join(["repo  open issues  open PRs  commits"] + [
+            f"{row['repo']}  {row['open_issues']}  {row['open_prs']}  {row['commits']}"
+            for row in result["repositories"]])
+    if command == "open-issues":
+        return "\n".join([f"{result['total']} open Issue(s) for {result['owner']}"] + [
+            f"{row['repo']}#{row['number']} {row['title']} {row['url']}" for row in result["issues"]])
     if command in {"issue-comments", "comments-file"}:
         if command == "comments-file":
             title = f" \"{result['title']}\"" if result["title"] else ""
@@ -909,6 +996,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("owner"); p.add_argument("--org", action="store_true", help="OWNER is an organization")
     p.add_argument("--limit", type=int, default=50, help="rows to show (max 100)")
     p.add_argument("--repos", default="", help="comma-separated repository names: read each via /repos/OWNER/NAME/pulls instead of search")
+
+    for command, help_text in (("repo-counts", "open Issue/PR counts and default-branch commit counts"),
+                               ("open-issues", "all open Issues across repositories (excluding PRs)")):
+        p = sub.add_parser(command, help=help_text)
+        p.add_argument("owner")
+        p.add_argument("--org", action="store_true", help="OWNER is an organization")
+        p.add_argument("--repos", default="", help="comma-separated repository names; bypass owner enumeration")
 
     p = sub.add_parser("pr-for-branch", help="PRs whose head is BRANCH (none -> exit 1)")
     p.add_argument("repo"); p.add_argument("branch", help="branch name, or owner:branch for a fork")
@@ -1008,6 +1102,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 def run_command(args: argparse.Namespace, client: Client | None = None) -> dict:
     command = args.command
+    if command in {"repo-counts", "open-issues"}:
+        repos = tuple(name.strip() for name in args.repos.split(",") if name.strip())
+        operation = repo_counts if command == "repo-counts" else open_issues
+        return operation(args.owner, org=args.org, repos=repos, client=client)
     if command == "comments-file":
         show = tuple(int(part) for part in args.show.split(",") if part.strip()) if args.show else ()
         return comments_file(args.path, last=args.last, author=args.author, preview=args.preview, show=show)
