@@ -17,10 +17,12 @@ and framework scroll adapters in the owning application.
   Its stage/status vocabulary is separate from the screenshot receipt's
   `stage: "complete"`; do not interchange those formats.
 
-The current screenshot validator handles one `artifact` per receipt. It does
-**not** validate application-specific `captures[]`, commit SHA, PNG SHA-256,
-run identity, or visible canonical metadata. Consumers must validate those
-additions locally until a shared implementation and regression coverage exist.
+`scripts/check_capture_evidence.py` separately handles multi-image `captures[]`
+receipts. It requires a complete named capture set per project, validates every
+complete retry, checks checkout SHA, PNG byte counts/hashes and optional dimensions,
+and can compare canonical timestamps and run identity. The single-image validator
+keeps its existing contract. Neither validator proves the visible screen's meaning;
+application assertions and visual review remain necessary.
 
 ## Capture, validate, publish
 
@@ -61,12 +63,41 @@ python -S scripts/check_evidence.py test-results \
 This is an example matrix. Use the consumer's measured projects and keep CI browser
 installation, Playwright config and expected identities in parity.
 
+For multi-capture receipts such as Flutter's Home/Build diagnostics format:
+
+```sh
+python -S scripts/check_capture_evidence.py test-results \
+  --expect chromium,firefox,webkit,mobile-webkit \
+  --captures home.png,build-diagnostics.png \
+  --sha "$TESTED_SHA" --canonical build/metadata.json
+```
+
+Each receipt requires `project`, `sha`, and a nonempty `captures` list with
+`file`, integer `bytes`, and lowercase `sha256` for each PNG. Files must stay
+inside the receipt directory, including after symlink resolution. Optional capture
+`width`/`height` must match. `--canonical` expects `head.sha`, `head.timestamp`
+and `generated_at`; receipts must match them as `sha`, `committed_at` and
+`generated_at`. Pass the actual producer JSON path; the path above is illustrative.
+Receipt metadata equality does not establish equality with embedded/displayed values.
+
+An explicit `stage` other than `complete` is ignored as incomplete. An absent stage
+supports Flutter's legacy success-only receipt: the producer must write it only after
+assertions and all captures succeed. Partial receipts from different retries cannot
+combine into a successful scenario set. Extra projects/captures are permitted but
+their complete receipts and images are also validated.
+
+Use `--run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT"` when receipts
+record these exact strings as `run_id` and `run_attempt`. Without both flags the tool
+prints a note and cannot reject old evidence from the same SHA; clean the output
+directory before the attempt. Exit codes are 0 for valid evidence, 1 for failed
+validation, and 2 for invalid CLI arguments. Output is capped at 20 notes/errors each.
+
 ## Receipts, retries and screenshot meaning
 
 | Concern | Rule |
 | --- | --- |
 | Project and scenario | Check each required identity, not only a total file count. |
-| Multiple captures | Declare required scenario names, such as Home and Build diagnostics; validate every image. The existing validator needs one receipt per capture or a local adapter. |
+| Multiple captures | Declare required scenario file names and validate every image with `check_capture_evidence.py`, or use separate single-image receipts. |
 | Retry/run attempt | Keep attempt identity and output directories distinct. Extra retry artifacts must not cause a false count failure, and old runs must not satisfy current-run coverage. |
 | Provenance | Record reviewed SHA and tested SHA explicitly; validate source-derived values against the build actually exercised. |
 | Image integrity | Check file presence, PNG structure and positive dimensions. When a receipt records size/hash, recompute them from the saved bytes. |
