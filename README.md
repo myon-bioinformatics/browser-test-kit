@@ -59,6 +59,13 @@ python -S scripts/gh_ops.py url pr OWNER/REPO 11 --tab checks                   
 
 Also: `pr-status`, `runs`, `workflow-state`, `workflow-dispatch`, `pr-body-replace`, `sync-main`. Every subcommand is a function (`from gh_ops import pr_merge`) returning a dict; the CLI is a thin adapter.
 
+### Screenshot knowledge across repositories
+
+See [docs/screenshot-evidence.md](docs/screenshot-evidence.md) for the shared
+capture/validation/publishing procedure, existing validator limits and consumer
+adoption map. Application-specific incidents retain source head/run and measured
+repair status; the first record covers Flutter diagnostics #128.
+
 ### Provenance
 
 The initial rules were distilled from working patterns and incidents in `mcp-toolcall-lab`, `flutter_navigation_basic`, `web-ui`, `markdown`, and `Ironmate`.

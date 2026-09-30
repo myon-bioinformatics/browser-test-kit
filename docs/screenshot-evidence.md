@@ -1,0 +1,117 @@
+# Screenshot evidence across repositories
+
+This is the shared screenshot knowledge entry point for browser-test-kit consumers.
+Keep portable procedures and validators here; keep routes, selectors, app bootstrap,
+and framework scroll adapters in the owning application.
+
+## Existing implementation and limits
+
+- `scripts/check_png.py`: stdlib-only PNG signature, IHDR dimensions and terminal
+  IEND checks. This is a structural check, not a full image decoder or visual review.
+- `scripts/check_evidence.py`: requires exact project identities with at least one
+  `stage: "complete"` receipt and validates every complete PNG record, including
+  retries. Optional recorded dimensions must match the PNG.
+- `tests/node/smoke.spec.ts`, `tests/python/test_smoke.py` and
+  `.github/workflows/playwright.yml`: working Node/Python reference lanes.
+- [btk-event/1](evidence-events.md): optional event stream and evidence board.
+  Its stage/status vocabulary is separate from the screenshot receipt's
+  `stage: "complete"`; do not interchange those formats.
+
+The current screenshot validator handles one `artifact` per receipt. It does
+**not** validate application-specific `captures[]`, commit SHA, PNG SHA-256,
+run identity, or visible canonical metadata. Consumers must validate those
+additions locally until a shared implementation and regression coverage exist.
+
+## Capture, validate, publish
+
+1. Define the required project × scenario identities before execution. Record
+   intentional skips and known blockers; they do not count as verified coverage.
+2. Build the intended entrypoint and route at an explicit checkout. Record repository,
+   reviewed head SHA, tested checkout SHA, CI run ID/attempt, Playwright/runtime version,
+   engine/version, device profile and viewport. PR merge SHA and PR head SHA may differ.
+3. Open the correct route, complete app bootstrap, perform the scenario, and assert
+   its terminal state using current locators. For canonical metadata, compare the
+   producer JSON, embedded asset and displayed values; preserve unknown values rather
+   than substituting the device clock or a second Git collector.
+4. Bring the intended content into the viewport using an operation supported by the
+   engine/profile and the application's actual scroll container. A locator existing
+   or passing a visibility check alone does not establish that it appears in the PNG.
+5. Capture named success screenshots explicitly after the assertions. Failure-only
+   screenshot configuration does not produce success evidence. Disable animations
+   where appropriate and wait for deterministic state rather than an arbitrary delay.
+6. Write receipts only after the required assertions and capture checks succeed.
+   Record the reached stage and original error separately on failure; do not mark a
+   failure screenshot as a complete success receipt.
+7. Validate project/scenario identity, each PNG and any consumer-specific receipt
+   fields. Fail a required evidence lane when required success evidence is missing.
+   Preserve the original test failure if validation or cleanup also fails.
+8. Upload available PNGs, receipts, report, trace/logs and canonical source JSON even
+   after failure, using `if: always()`. Check upload results and publish a run/artifact
+   link plus retention in the job summary. An uploaded failure bundle proves
+   preservation, not success.
+
+Use the existing single-capture validator where its receipt fits:
+
+```sh
+python -S scripts/check_evidence.py test-results \
+  --pattern '**/evidence.json' \
+  --expect chromium,firefox,webkit,mobile-webkit
+```
+
+This is an example matrix. Use the consumer's measured projects and keep CI browser
+installation, Playwright config and expected identities in parity.
+
+## Receipts, retries and screenshot meaning
+
+| Concern | Rule |
+| --- | --- |
+| Project and scenario | Check each required identity, not only a total file count. |
+| Multiple captures | Declare required scenario names, such as Home and Build diagnostics; validate every image. The existing validator needs one receipt per capture or a local adapter. |
+| Retry/run attempt | Keep attempt identity and output directories distinct. Extra retry artifacts must not cause a false count failure, and old runs must not satisfy current-run coverage. |
+| Provenance | Record reviewed SHA and tested SHA explicitly; validate source-derived values against the build actually exercised. |
+| Image integrity | Check file presence, PNG structure and positive dimensions. When a receipt records size/hash, recompute them from the saved bytes. |
+| Semantic proof | Assert expected state and viewport intersection before success capture; inspect images when layout or canvas content matters. A hash alone cannot prove the intended screen is shown. |
+| Different screenshots | Different hashes can help detect accidental duplicate captures but do not prove that the correct scenario was captured. |
+| Pixel regression | Stabilize capture candidates before making pixel baselines blocking. |
+| Mobile/WebKit | Record emulation explicitly. Playwright WebKit evidence is not physical iOS/Safari evidence. |
+| Workflow green | A skipped/untriggered capture lane does not establish screenshot coverage. Verify the required evidence job and artifact on the relevant SHA. |
+
+A focused screenshot lane can run automatically on relevant UI/metadata changes.
+Keep its triggers explicit and its build/scenarios bounded. Full E2E may remain
+manual; the job summary must say which lane ran and which coverage remains unmeasured.
+
+## Where knowledge and binaries live
+
+Commit procedures, incident records, schemas/fixtures and reusable validator code.
+Store run-specific screenshots, traces and reports in CI artifacts with declared
+retention. A deliberately selected visual baseline may be versioned separately;
+do not turn every diagnostic run into repository binary history.
+
+Link source runs and preserve compact textual facts in incident records. CI artifacts
+expire, so an artifact URL alone is not durable knowledge.
+
+## Adoption
+
+1. Link this guide from a consumer's testing documentation.
+2. Record its required scenarios, engine/profile matrix, entrypoint and receipt mapping.
+3. Reuse kit validators with an explicit upstream commit and the consumer's provenance
+   convention. Do not copy validators silently or assume the kit is imported everywhere.
+4. Keep application interactions local until repeated measured evidence justifies a
+   portable adapter. Share a small deterministic fixture and tests when extracting one.
+5. Feed new failures back as incident records with source head/run and verification status.
+
+| Consumer | Existing evidence pattern | Next use of this guide |
+| --- | --- | --- |
+| browser-test-kit | Node/Python matrix and single-capture validator | Shared reference and future portable fixtures. |
+| flutter_navigation_basic | PR #128 focused Home/Build diagnostics lane, four projects, local multi-capture receipts | Keep Flutter scrolling/bootstrap local; resolve and measure the current incident before claiming portable interaction. |
+| Ironmate | CLI captures of stub and consumer examples | Map named scenarios and metadata to receipts if adopting the stronger contract. |
+| mcp-toolcall-lab | Stub/Pages and frontend evidence lanes | Apply the same success/failure/provenance rules to each actual capture lane. |
+
+This table identifies integration points; it does not claim those repositories already
+consume this guide or the same receipt schema.
+
+## Incident index
+
+- [Flutter diagnostics #128: scroll and failure preservation](incidents/flutter-diagnostics-128.md)
+- [Stable anti-pattern catalogue](antipatterns.md)
+- [Reference lane contract](fast-init.md)
