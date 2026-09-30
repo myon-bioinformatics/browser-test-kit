@@ -149,6 +149,10 @@ def test_cli_without_site_packages_and_exit_codes(tmp_path):
     (tmp_path / "webkit" / FILES[0]).unlink()
     assert subprocess.run(args, capture_output=True).returncode == 1
     assert subprocess.run(args[:-1] + ["short"], capture_output=True).returncode == 2
+    canonical = tmp_path / "canonical.json"
+    canonical.write_text("null")
+    result = subprocess.run(args + ["--canonical", str(canonical)], capture_output=True, text=True)
+    assert result.returncode == 1 and "must be an object" in result.stderr
 
 
 @pytest.mark.parametrize("value", [[], "text", {"captures": []}])

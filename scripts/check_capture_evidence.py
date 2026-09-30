@@ -130,6 +130,8 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     try:
         canonical = json.loads(args.canonical.read_text(encoding="utf-8")) if args.canonical else None
+        if args.canonical and not isinstance(canonical, dict):
+            raise ValueError("canonical metadata must be an object")
     except (OSError, UnicodeError, ValueError) as exc:
         print(f"invalid canonical metadata: {exc}", file=sys.stderr)
         return 1
