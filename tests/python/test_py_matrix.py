@@ -29,12 +29,12 @@ class FakeRun:
 
 def test_exact_uv_argv_and_one_summary_line_per_version(capsys) -> None:
     run = FakeRun({"3.9": (0, "....\n39 passed in 1.61s\n"), "3.13": (0, "39 passed in 1.69s\n")})
-    code = py_matrix.main(["3.9", "3.13", "--with", "pytest>=8,<10", "--", "tests/python/test_gh_ops.py", "-k", "merge"],
+    code = py_matrix.main(["3.9", "3.13", "--with", "pytest>=8", "--", "tests/python/test_gh_ops.py", "-k", "merge"],
                           which=lambda name: "/usr/bin/uv", run=run)
     assert code == 0
     assert capsys.readouterr().out == "py3.9: 39 passed in 1.61s\npy3.13: 39 passed in 1.69s\n"
     argv, kwargs = run.calls[0]
-    assert argv == ["uv", "run", "--no-project", "--quiet", "--python", "3.9", "--with", "pytest>=8,<10", "python",
+    assert argv == ["uv", "run", "--no-project", "--quiet", "--python", "3.9", "--with", "pytest>=8", "python",
                     "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests/python/test_gh_ops.py", "-k", "merge"]
     assert kwargs["env"]["PYTHONDONTWRITEBYTECODE"] == "1"
 
