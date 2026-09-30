@@ -127,3 +127,24 @@ per test, and that `scripts/evidence_board.py` aggregates into a Markdown
 table, `--json`, or a GitHub Step Summary. Nothing here loads implicitly:
 there is no `conftest.py`, and the plugin only runs when a project opts in
 with `pytest -p pytest_btk_events --btk-events PATH`.
+
+### Shared Git inventory
+
+`repo_overview.list_files()` uses the stdlib-only `scripts/git_inspector.py`
+from `myon-bioinformatics/myon-bioinformatics` at
+`61dcf273e54157c1dc23b20dcd40a17f8c71e97a`. The sibling
+`git_inspector.provenance.json` records its source path, Git blob SHA-1 and
+SHA-256; the vendored Python file is unchanged from upstream.
+
+The combined inventory includes tracked and untracked-but-not-ignored files.
+The consumer deduplicates, filters dependency/cache/result directories and
+missing/non-file entries, and sorts the final result independently of Git's
+order. Missing Git or a failed Git observation retains the directory-walk
+fallback (which does not interpret `.gitignore`). A truncated successful
+observation raises an explicit error rather than publishing a partial list or
+walking ignored files: the shared bounds are 10,000 paths and 1,000,000 bytes.
+Direct invocation and installed `python -m repo_overview` still work with
+`python -S`; `git_inspector` itself is an import-only shared API.
+
+This migration covers file inventory only. The existing churn/log parser and
+write/network-capable `gh_ops.py` remain separate rollout work.

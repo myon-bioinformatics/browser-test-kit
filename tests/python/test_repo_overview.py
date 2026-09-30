@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
+import json
 import os
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "repo_overview.py"
@@ -96,6 +100,68 @@ def test_cli_on_this_repository_runs_without_site_packages() -> None:
     assert "=== playwright.config.ts (" in done.stdout and "=== files (" in done.stdout
     missing = subprocess.run([sys.executable, "-S", str(SCRIPT), str(ROOT / "nope")], capture_output=True, text=True)
     assert missing.returncode == 2
+
+
+def test_shared_combined_inventory_matches_previous_git_contract(tmp_path: Path) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, env=git_env())
+    tracked = ["z tracked.txt", "日本語/記録.txt", "tab\tname.txt", "line\nname.txt", "build/tracked.txt"]
+    untracked = ["a untracked.txt", "日本語/未追跡.txt", "tab\tuntracked.txt", "line\nuntracked.txt", "node_modules/untracked.txt"]
+    for name in tracked + untracked + ["ignored.log", "cache/ignored.txt"]:
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("fixture\n", encoding="utf-8")
+    (tmp_path / ".gitignore").write_text("*.log\ncache/\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "--", *tracked], check=True, env=git_env())
+    old = subprocess.run(["git", "-C", str(tmp_path), "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+                         check=True, capture_output=True, env=git_env()).stdout.decode("utf-8").split("\0")
+    expected = sorted(set(tracked[:-1] + untracked[:-1] + [".gitignore"]))
+    assert sorted({p for p in old if p and not repo_overview._skipped(p)}) == expected
+    assert repo_overview.list_files(tmp_path) == expected
+
+
+def test_non_git_walk_fallback_is_sorted_and_skips_dirs(tmp_path: Path) -> None:
+    make_tree(tmp_path)
+    (tmp_path / "日本語.txt").write_text("fixture", encoding="utf-8")
+    # Without Git, .gitignore is an ordinary file; walk never implements Git's
+    # ignore rules. Preserve this existing fallback contract.
+    (tmp_path / ".gitignore").write_text("*.log\n", encoding="utf-8")
+    (tmp_path / "debug.log").write_text("fixture", encoding="utf-8")
+    assert repo_overview.list_files(tmp_path) == sorted([
+        ".github/workflows/ci.yml", ".gitignore", "Dockerfile.bin", "README.md",
+        "debug.log", "package.json", "requirements-test.txt", "src/app.py", "日本語.txt",
+    ])
+
+
+def test_missing_git_keeps_walk_fallback(tmp_path: Path, monkeypatch) -> None:
+    make_tree(tmp_path)
+    def missing(*args, **kwargs):
+        raise FileNotFoundError("git")
+    monkeypatch.setattr(repo_overview.git_inspector, "_spawn", missing)
+    assert "src/app.py" in repo_overview.list_files(tmp_path)
+    assert not any(repo_overview._skipped(p) for p in repo_overview.list_files(tmp_path))
+
+
+def test_shared_inventory_sort_and_truncation_are_not_hidden(tmp_path: Path, monkeypatch) -> None:
+    for name in ("a.txt", "z.txt"):
+        (tmp_path / name).write_text("fixture", encoding="utf-8")
+    def inventory(root, *, include_untracked):
+        assert root == tmp_path and include_untracked is True
+        return {"paths": ["z.txt", "a.txt", "z.txt"], "truncated": False}
+    monkeypatch.setattr(repo_overview.git_inspector, "ls_files", inventory)
+    assert repo_overview.list_files(tmp_path) == ["a.txt", "z.txt"]
+    monkeypatch.setattr(repo_overview.git_inspector, "ls_files",
+                        lambda *args, **kwargs: {"paths": ["z.txt"], "truncated": True})
+    with pytest.raises(RuntimeError, match="inventory exceeds"):
+        repo_overview.list_files(tmp_path)
+
+
+def test_vendored_inspector_matches_pinned_provenance() -> None:
+    record = json.loads((ROOT / "scripts/git_inspector.provenance.json").read_text(encoding="utf-8"))
+    data = (ROOT / record["vendored_path"]).read_bytes()
+    assert record["upstream_commit"] == "61dcf273e54157c1dc23b20dcd40a17f8c71e97a"
+    assert record["git_blob_sha1"] == "c0bc679fc186b6167b1c9a9c3cc1bd121075795d"
+    assert hashlib.sha1(b"blob " + str(len(data)).encode() + b"\0" + data).hexdigest() == record["git_blob_sha1"]
+    assert hashlib.sha256(data).hexdigest() == record["sha256"]
 
 
 # --- about --------------------------------------------------------------

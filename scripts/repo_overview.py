@@ -33,12 +33,20 @@ Exit codes: 0 = OK, 2 = ROOT is not a directory.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import re
 import subprocess
 import sys
 from pathlib import Path
+
+# Load the vendored sibling independently of site-packages/sys.path. This also
+# supports direct file imports and the installed top-level module entry point.
+_spec = importlib.util.spec_from_file_location("_btk_git_inspector", Path(__file__).with_name("git_inspector.py"))
+git_inspector = importlib.util.module_from_spec(_spec)
+assert _spec.loader
+_spec.loader.exec_module(git_inspector)
 
 KEY_FILES = (
     "README*", "CLAUDE.md", "AGENTS.md", "CONTRIBUTING*",
@@ -139,14 +147,18 @@ def about(root: Path) -> str | None:
 def list_files(root: Path) -> list[str]:
     """Repository files relative to ``root``, sorted, without dependency/cache/result directories."""
     try:
-        done = subprocess.run(["git", "-C", str(root), "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
-                              capture_output=True, check=True)
-        files = {path for path in done.stdout.decode("utf-8", "replace").split("\0") if path}
-    except (OSError, subprocess.CalledProcessError):
+        inventory = git_inspector.ls_files(root, include_untracked=True)
+    except git_inspector.GitInspectionError:
         files = set()
         for directory, subdirs, names in os.walk(root):
             subdirs[:] = [name for name in subdirs if name not in SKIP_DIRS]
             files.update(Path(directory, name).relative_to(root).as_posix() for name in names)
+    else:
+        if inventory["truncated"]:
+            # A walk would include ignored files; never substitute it for a
+            # successful but incomplete Git observation or hide partial output.
+            raise RuntimeError("repository file inventory exceeds shared inspector limits")
+        files = set(inventory["paths"])
     return sorted(path for path in files if not _skipped(path) and (root / path).is_file())
 
 
