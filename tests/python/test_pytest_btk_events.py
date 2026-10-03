@@ -3,12 +3,15 @@ as a real, separate `pytest -p pytest_btk_events` subprocess against a tiny
 temp test file. No pytester plugin is used or required.
 """
 import json
+import hashlib
+import importlib.util
 import os
 import signal
 import subprocess
 import sys
 import time
 from pathlib import Path
+import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = ROOT / "scripts"
@@ -162,6 +165,100 @@ def _run_pytest(test_file, events_path, env, extra_args=()):
         text=True,
         capture_output=True,
     )
+
+
+def test_same_child_junit_xprobe_and_btk_bridge(tmp_path):
+    """JUnit compact identity complements native phase evidence; neither is input."""
+    vendor = ROOT / "tests" / "vendor" / "xprobe"
+    provenance = json.loads((vendor / "provenance.json").read_text(encoding="utf-8"))
+    assert provenance["repository"] == "myon-bioinformatics/xprobe"
+    assert provenance["commit"] == "642999cea4185a68bffa7f7ccc46bd78dde03e5a"
+    for name, blob in {
+        "xprobe.py": "8cc1abbaf4269e5298de44f1b4ce7de692ec9ae2",
+        "LICENSE": "4ec4989b801bf1a3df6184d21f79e6e7ed5931f6",
+    }.items():
+        data = (vendor / name).read_bytes()
+        assert provenance["files"][name]["blob"] == blob
+        assert hashlib.sha1(b"blob " + str(len(data)).encode() + b"\0" + data).hexdigest() == blob
+        assert hashlib.sha256(data).hexdigest() == provenance["files"][name]["sha256"]
+    spec = importlib.util.spec_from_file_location("bridge_xprobe", vendor / "xprobe.py")
+    xprobe = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(xprobe)
+
+    # Synthetic sentinels prove raw diagnostics/parameter labels stay local.
+    fixture = FIXTURE_TESTS.replace(
+        "def test_fail():\n    assert False",
+        '@pytest.mark.parametrize("value", ["PARAMETER_SENTINEL"], ids=["PARAMETER_SENTINEL"])\n'
+        'def test_fail(value):\n    print("STDOUT_SENTINEL")\n    assert False, "ASSERTION_SENTINEL"',
+    ).replace("fixture setup boom", "SETUP_SENTINEL")
+    test_file = tmp_path / "test_fixture.py"
+    test_file.write_text(fixture, encoding="utf-8")
+    events_path = tmp_path / "btk-events.jsonl"
+    junit_path = tmp_path / "junit.xml"
+    repository = "myon-bioinformatics/browser-test-kit"
+    run_id = "controlled-bridge"
+    env = _env_with_scripts_on_path()
+    env.update(PYTEST_DISABLE_PLUGIN_AUTOLOAD="1", PYTEST_ADDOPTS="")
+    result = subprocess.run(
+        [sys.executable, "-m", "pytest", "test_fixture.py", "--rootdir", str(tmp_path),
+         "-p", "pytest_btk_events", "--btk-events", str(events_path),
+         "--btk-events-project", repository, "--btk-events-run-id", run_id,
+         "--junitxml", str(junit_path), "-o", "junit_logging=all", "-q"],
+        cwd=tmp_path, env=env, text=True, capture_output=True, timeout=60,
+    )
+    assert result.returncode == 1, result.stdout + result.stderr
+    events = _read_events(events_path)
+    assert all(e["schema"] == "btk-event/1" and e["project"] == repository
+               and e["run_id"] == run_id for e in events)
+    summary = next(e for e in events if e["event"] == "session_summary")
+    assert (summary["status"], summary["returncode"]) == ("failed", 1)
+    results = {e["test_id"]: e for e in events if e["event"] == "test_result"}
+    raw = junit_path.read_text(encoding="utf-8")
+    imported = xprobe.cases_from_junit(raw, repository=repository, report_id=run_id)
+    assert imported["truncated"] is False
+    cases = imported["cases"]
+    assert len(cases) == 2
+    expected = {"test_fail": ("failure", "failed", "call"),
+                "test_setup_error": ("error", "error", "setup")}
+    # Fixture-local, exact raw identity mapping; not a generic nodeid parser.
+    junit_tests = {tc.attrib["name"]: tc for tc in ET.fromstring(raw).iter("testcase")}
+    for case in cases:
+        value = case["value"]
+        kind, status, phase = expected[value["test"]]
+        raw_name = ("test_fail[PARAMETER_SENTINEL]" if value["test"] == "test_fail"
+                    else "test_setup_error")
+        tc = junit_tests[raw_name]
+        assert tc.attrib["classname"] == value["class"] == "test_fixture"
+        assert tc.find(kind) is not None
+        assert value == {"test": value["test"], "class": "test_fixture", "kind": kind}
+        event = results["test_fixture.py::" + raw_name]
+        assert (event["status"], event["phase"]) == (status, phase)
+        assert "stage" not in event  # pytest phase must not become a BTK stage
+        assert case["context"] == {"repository": repository, "commit_sha": None,
+                                   "report_id": run_id}
+    assert {c["value"]["test"] for c in cases} == set(expected)
+    assert sum(e["status"] == "skipped" for e in results.values()) == 2
+    compact = xprobe.corpus_to_json(cases)
+    assert xprobe.corpus_from_json(compact) == cases
+    for sentinel in ("PARAMETER_SENTINEL", "STDOUT_SENTINEL", "ASSERTION_SENTINEL", "SETUP_SENTINEL"):
+        assert sentinel in raw
+        assert sentinel not in compact
+    assert "Traceback" not in compact
+
+    board = subprocess.run(
+        [sys.executable, "-S", str(SCRIPTS / "evidence_board.py"), str(events_path), "--json"],
+        text=True, capture_output=True, timeout=60,
+    )
+    assert board.returncode == 1, board.stdout + board.stderr
+    stats = json.loads(board.stdout)
+    assert stats["exit_code"] == 1
+    assert stats["blocking_statuses"] == ["error", "failed"]
+    assert stats["counts_by_status"] == {"passed": 1, "failed": 1, "error": 1, "skipped": 2}
+    assert stats["test_failures"]["test_fixture.py::test_fail[PARAMETER_SENTINEL]"]["status"] == "failed"
+    assert stats["test_failures"]["test_fixture.py::test_setup_error"]["status"] == "error"
+    assert stats["session_summaries"][0]["returncode"] == 1
+    assert stats["first_failure_by_stage"] == {}  # phases remain in the source stream
+    assert stats["malformed_lines"] == 0
 
 
 def test_btk_events_path_is_truncated_by_default(tmp_path):
