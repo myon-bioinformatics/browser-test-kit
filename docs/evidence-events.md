@@ -154,6 +154,60 @@ python scripts/evidence_board.py test-results/*.jsonl --allow unavailable --step
 
 ## Reference implementation
 
+### Same-run JUnit / xprobe bridge (test-only)
+
+`tests/python/test_pytest_btk_events.py::test_same_child_junit_xprobe_and_btk_bridge`
+starts one controlled child pytest invocation that writes both `--junitxml`
+and `--btk-events`. The child exits **1**, its session summary retains **1**,
+and the evidence board exits **1** without allowing failed/error statuses.
+The outer regression passes only when these expected failures and their
+identities are preserved. This is not CI `continue-on-error`.
+
+| Controlled child | Raw JUnit | xprobe compact identity | btk-event/1 |
+| --- | --- | --- | --- |
+| Assertion failure | `test_fixture.test_fail[PARAMETER_SENTINEL]`, `failure` | class `test_fixture`, test `test_fail`, kind `failure` | full nodeid, `failed`, phase `call` |
+| Fixture exception | `test_fixture.test_setup_error`, `error` | class `test_fixture`, test `test_setup_error`, kind `error` | full nodeid, `error`, phase `setup` |
+| Runtime/marker skip | `skipped` | omitted by JUnit importer | `skipped`, phase `call`/`setup` |
+
+The importer is byte-identical xprobe from merge SHA
+`642999cea4185a68bffa7f7ccc46bd78dde03e5a`, vendored only under
+`tests/vendor/xprobe` with MIT license and commit/blob/SHA-256 provenance
+checked by the regression. No runtime dependency or parser is added.
+Repository and report/run identity are explicitly supplied; measured
+repository commit identity is unavailable in this fixture, so
+`commit_sha=null` (the xprobe source pin is not the measured repository SHA).
+
+Correlation uses exact raw JUnit names and full btk nodeids within this
+single controlled fixture. The compact importer strips parameter labels;
+its test/class pair is not a universally unique parameter-instance key.
+Do not infer one-to-one parameter identity from compact cases alone or
+generalize this fixture's mapping into a runner-neutral nodeid parser.
+
+The board consumes the **same** btk stream and preserves failed/error test
+counts and the failed session/returncode. Pytest phases remain in the source
+stream; they are not reclassified as BTK stages, and the board does not
+invent stage evidence. The regression asserts both source phase mapping
+and board failure classification.
+
+Raw JUnit, btk messages, board diagnostics and captured stdout are local
+diagnostic evidence, not a share-safe learning payload. Synthetic sentinels
+verify messages, parameter labels and stdout are absent from the serialized
+xprobe corpus. JUnit identity is **not a reproducer**: original inputs and
+source chat text must be attached explicitly with provenance, never inferred.
+The two schemas stay separate.
+
+This is the small follow-up to shared Issue
+[myon-bioinformatics#22](https://github.com/myon-bioinformatics/myon-bioinformatics/issues/22)
+and [PR #36's follow-up](https://github.com/myon-bioinformatics/browser-test-kit/pull/36#issuecomment-5947650447).
+It provides a regression guard against failure-layer flattening and evidence
+masking the original failure. A reusable learning/incident record still
+requires explicit review of provenance, failure layer, fix and regression
+guard; automatic chat ingestion, reproducer linkage, downstream native
+rollout and cross-repository learning are not completed by this fixture.
+
+Run it with `python -m pytest tests/python/test_pytest_btk_events.py -q`.
+The existing Python CI suite collects this regression directly.
+
 - `scripts/btk_events.py` -- `emit()`, `read()`, `classify_terminal_browser()`;
   stdlib-only, importable by any producer or consumer.
 - `scripts/pytest_btk_events.py` -- opt-in pytest plugin producer
