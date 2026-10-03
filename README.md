@@ -173,5 +173,4 @@ Direct invocation and installed `python -m repo_overview` still work with
 This migration covers file inventory only. The existing churn/log parser and
 write/network-capable `gh_ops.py` remain separate rollout work.
 
-
 Public source placement and automatic Python CI updates: [vendor automation](docs/vendor-automation.md).
