@@ -2,6 +2,8 @@ import ast
 from pathlib import Path
 import re
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[2]
 
 def test_browser_install_and_config_parity() -> None:
@@ -9,10 +11,16 @@ def test_browser_install_and_config_parity() -> None:
     workflow = (ROOT / ".github" / "workflows" / "playwright.yml").read_text(encoding="utf-8")
     engines = {"chromium", "firefox", "webkit"}
     assert engines <= set(re.findall(r"name: '(chromium|firefox|webkit)'", config))
-    installs = re.findall(r"playwright install --with-deps ([^\n]+)", workflow)
-    assert len(installs) == 2
-    for line in installs:
-        assert engines == set(line.strip().split())
+    jobs = yaml.load(workflow, Loader=yaml.BaseLoader)["jobs"]
+    installs = {
+        name: re.findall(r"playwright install --with-deps ([^\n]+)",
+                         "\n".join(step.get("run", "") for step in job.get("steps", [])))
+        for name, job in jobs.items()
+    }
+    assert {name for name, lines in installs.items() if lines} == {"node", "python", "test-locked"}
+    for name in ("node", "python", "test-locked"):
+        assert len(installs[name]) == 1
+        assert engines == set(installs[name][0].strip().split())
 
 def _evidence_expectations(workflow: str, directory: str) -> set[str]:
     match = re.search(rf"check_evidence\.py {re.escape(directory)} .*--expect ([\w,-]+)", workflow)
