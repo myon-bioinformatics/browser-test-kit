@@ -53,7 +53,7 @@ jobs:
           python -S .vendor-sync-tools/vendor_sync.py update --manifest vendor.lock.json
           python -S .vendor-sync-tools/vendor_sync.py check --manifest vendor.lock.json
       - name: Refresh legacy provenance from the verified lock
-        run: python -S scripts/sync_vendor_provenance.py
+        run: python -S tool/sync_vendor_provenance.py
       - name: Preserve resolved vendor snapshot
         if: always()
         uses: actions/upload-artifact@v7
@@ -115,7 +115,7 @@ jobs:
         shell: bash
         run: |
           python -S .vendor-sync-tools/vendor_sync.py check --manifest vendor.lock.json
-          python -S scripts/sync_vendor_provenance.py
+          python -S tool/sync_vendor_provenance.py
       - run: python -m pip install -r requirements-test.txt
       - run: python -m playwright install --with-deps chromium firefox webkit
       - run: python -m pytest tests/python -q

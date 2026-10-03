@@ -38,7 +38,7 @@ python -S .vendor-sync-tools/vendor_sync.py check --manifest vendor.lock.json
 python -S .vendor-sync-tools/vendor_sync.py materialize --manifest vendor.lock.json
 python -S .vendor-sync-tools/vendor_sync.py update --manifest vendor.lock.json
 python -S .vendor-sync-tools/vendor_sync.py check --manifest vendor.lock.json
-python -S scripts/sync_vendor_provenance.py
+python -S tool/sync_vendor_provenance.py
 ```
 
 Run the existing Python suite with its test-only dependencies after projection.
