@@ -4,11 +4,11 @@
     {
       "repository": "myon-bioinformatics/myon-bioinformatics",
       "ref": "refs/heads/main",
-      "commit": "61dcf273e54157c1dc23b20dcd40a17f8c71e97a",
+      "commit": "a06641024a782af31bdb51fb0e0d6a1ea21995d0",
       "source": "git_inspector.py",
       "destination": "scripts/git_inspector.py",
-      "blob_sha": "c0bc679fc186b6167b1c9a9c3cc1bd121075795d",
-      "sha256": "53c33f25576e5fc0f08ff537debf6e4a924487071398a985dbd7f0eac8a8104f"
+      "blob_sha": "9f6d88101688e2578a3ca45e7eaf7c805fe6f1bd",
+      "sha256": "7b960e0851b23ca7ca64d8f917dd8e56aa0509ca6332d191309a7895cf382641"
     }
   ]
 }

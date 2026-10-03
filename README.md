@@ -152,11 +152,11 @@ table, `--json`, or a GitHub Step Summary. Nothing here loads implicitly:
 there is no `conftest.py`, and the plugin only runs when a project opts in
 with `pytest -p pytest_btk_events --btk-events PATH`.
 
-### Shared Git inventory
+### Shared Git inventory and churn
 
 `repo_overview.list_files()` uses the stdlib-only `scripts/git_inspector.py`
 from `myon-bioinformatics/myon-bioinformatics` at
-`61dcf273e54157c1dc23b20dcd40a17f8c71e97a`. The sibling
+`a06641024a782af31bdb51fb0e0d6a1ea21995d0`. The sibling
 `git_inspector.provenance.json` records its source path, Git blob SHA-1 and
 SHA-256; the vendored Python file is unchanged from upstream.
 
@@ -170,7 +170,22 @@ walking ignored files: the shared bounds are 10,000 paths and 1,000,000 bytes.
 Direct invocation and installed `python -m repo_overview` still work with
 `python -S`; `git_inspector` itself is an import-only shared API.
 
-This migration covers file inventory only. The existing churn/log parser and
-write/network-capable `gh_ops.py` remain separate rollout work.
+`repo_overview.churn()` delegates Git execution and numstat parsing to
+`log_numstat()`. Commit scanned counts include empty/merge/binary-only commits;
+binary file counts remain excluded from ranking. Ranking is still commit count
+descending, then raw path ascending, with committer dates and `--since` retained.
+
+Intentional display improvements (covered by before/after fixtures): renames
+are attributed to the destination path rather than Git's compact `old => new`
+label, without folding earlier old-path history into the destination. Unicode
+paths appear as Unicode rather than Git's quoted octal spelling. Control
+characters (including tab/newline) use JSON string escaping so each path stays
+on one row. Ordinary path output is unchanged. History now has explicit bounds
+of 10,000 commits / 1,000,000 bytes: only complete commits count as scanned and
+an additional truncation note makes partial-history rankings explicit. The top-N
+file omission note remains independent. Missing/failed Git retains the existing
+`not a git work tree; skipping --churn` message.
+
+Write/network-capable `gh_ops.py` remains separate rollout work.
 
 Public source placement and automatic Python CI updates: [vendor automation](docs/vendor-automation.md).
