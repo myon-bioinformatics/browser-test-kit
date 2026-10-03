@@ -10,6 +10,12 @@ from pathlib import Path
 
 import pytest
 
+
+def _locked(destination):
+    root = Path(__file__).resolve().parents[2]
+    lock = json.loads((root / "vendor.lock.json").read_text(encoding="utf-8"))
+    return next(e for e in lock["files"] if e["destination"] == destination)
+
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "repo_overview.py"
 spec = importlib.util.spec_from_file_location("repo_overview", SCRIPT)
@@ -158,8 +164,8 @@ def test_shared_inventory_sort_and_truncation_are_not_hidden(tmp_path: Path, mon
 def test_vendored_inspector_matches_pinned_provenance() -> None:
     record = json.loads((ROOT / "scripts/git_inspector.provenance.json").read_text(encoding="utf-8"))
     data = (ROOT / record["vendored_path"]).read_bytes()
-    assert record["upstream_commit"] == "61dcf273e54157c1dc23b20dcd40a17f8c71e97a"
-    assert record["git_blob_sha1"] == "c0bc679fc186b6167b1c9a9c3cc1bd121075795d"
+    assert record["upstream_commit"] == _locked('scripts/git_inspector.py')['commit']
+    assert record["git_blob_sha1"] == _locked('scripts/git_inspector.py')['blob_sha']
     assert hashlib.sha1(b"blob " + str(len(data)).encode() + b"\0" + data).hexdigest() == record["git_blob_sha1"]
     assert hashlib.sha256(data).hexdigest() == record["sha256"]
 
