@@ -37,7 +37,6 @@ import importlib.util
 import json
 import os
 import re
-import subprocess
 import sys
 from pathlib import Path
 
@@ -231,52 +230,44 @@ def stats(root: Path) -> str:
     return "\n".join(lines_out)
 
 
-def _git_log_numstat(root: Path, since: str | None) -> str | None:
-    argv = ["git", "-C", str(root), "log", "--numstat", "--format=%x00%H%x00%cs"]
-    if since:
-        argv += ["--since", since]
-    try:
-        done = subprocess.run(argv, capture_output=True, check=True)
-    except (OSError, subprocess.CalledProcessError):
-        return None
-    return done.stdout.decode("utf-8", "replace")
+def _churn_path(path: str) -> str:
+    """Keep one display row per path; ordinary/Unicode paths stay readable."""
+    if any(ord(char) < 32 or ord(char) == 127 for char in path):
+        return json.dumps(path, ensure_ascii=False)
+    return path
 
 
 def churn(root: Path, top: int, *, since: str | None = None) -> str:
     """The ``=== churn ===`` section, or a one-line note outside a git work tree."""
-    raw = _git_log_numstat(root, since)
-    if raw is None:
+    try:
+        history = git_inspector.log_numstat(root, since=since or None)
+    except git_inspector.GitInspectionError:
         return "not a git work tree; skipping --churn"
-    parts = raw.split("\0")
     per_file: dict[str, dict[str, object]] = {}
-    total_commits = 0
-    for index in range(1, len(parts), 2):
-        rest_lines = parts[index + 1].splitlines() if index + 1 < len(parts) else []
-        if not rest_lines:
-            continue
-        total_commits += 1
-        date = rest_lines[0]
-        for line in rest_lines[1:]:
-            if not line.strip():
+    total_commits = len(history["commits"])
+    for commit in history["commits"]:
+        date = commit["date"]
+        for file in commit["files"]:
+            added, deleted, path = file["added"], file["deleted"], file["path"]
+            if added is None or deleted is None:
                 continue
-            bits = line.split("\t")
-            if len(bits) != 3:
-                continue
-            added_text, deleted_text, path = bits
-            if added_text == "-" or deleted_text == "-":
-                continue
+            # Attribute a rename to its destination, without merging old-path
+            # history: the shared API retains orig_path for other consumers.
             entry = per_file.setdefault(path, {"commits": 0, "added": 0, "deleted": 0, "last": date})
             entry["commits"] += 1
-            entry["added"] += int(added_text)
-            entry["deleted"] += int(deleted_text)
+            entry["added"] += added
+            entry["deleted"] += deleted
             entry["last"] = max(entry["last"], date)
     ranked = sorted(per_file.items(), key=lambda kv: (-kv[1]["commits"], kv[0]))
     lines_out = [f"=== churn ({_plural(total_commits, 'commit')} scanned) ==="]
     for path, entry in ranked[:top]:
         lines_out.append(f"  {_plural(entry['commits'], 'commit')}  +{entry['added']}/-{entry['deleted']}  "
-                         f"{entry['last']}  {path}")
+                         f"{entry['last']}  {_churn_path(path)}")
     if len(ranked) > top:
         lines_out.append(f"[... {len(ranked) - top} more files (--churn {top} shows the top {top})]")
+    if history["truncated"]:
+        lines_out.append("[... history truncated by shared inspector limits "
+                         "(10,000 commits / 1,000,000 bytes); ranking covers complete scanned commits only]")
     return "\n".join(lines_out)
 
 

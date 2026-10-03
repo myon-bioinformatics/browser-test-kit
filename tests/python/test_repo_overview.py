@@ -295,3 +295,87 @@ def test_cli_stats_and_churn_flags(tmp_path: Path) -> None:
     assert "=== stats ===" in done.stdout
     assert "=== churn (1 commit scanned) ===" in done.stdout
     assert "a.py" in done.stdout
+
+
+def make_churn_migration_fixture(root: Path) -> None:
+    subprocess.run(['git', 'init', '-q', str(root)], check=True, env=git_env())
+    # A normal path is touched twice: count wins over path order.
+    commit_file(root, 'z.txt', 'one\n', '2026-01-01T00:00:00+0000')
+    commit_file(root, 'z.txt', 'one\ntwo\n', '2026-01-02T00:00:00+0000')
+    for name in ['a.txt', '日本語.txt', 'tab\tname.txt', 'line\nname.txt', 'old.txt']:
+        commit_file(root, name, 'fixture\n', '2026-02-01T00:00:00+0000')
+    subprocess.run(['git', '-C', str(root), 'mv', '--', 'old.txt', 'new.txt'], check=True, env=git_env())
+    subprocess.run(['git', '-C', str(root), 'commit', '-q', '-m', 'rename'], check=True,
+                   env=git_env(GIT_AUTHOR_DATE='2026-03-01T00:00:00+0000',
+                               GIT_COMMITTER_DATE='2026-03-01T00:00:00+0000'))
+    commit_file(root, 'binary.bin', b'\x00binary', '2026-03-02T00:00:00+0000')
+    subprocess.run(['git', '-C', str(root), 'commit', '--allow-empty', '-q', '-m', 'empty'], check=True,
+                   env=git_env(GIT_AUTHOR_DATE='2026-03-03T00:00:00+0000',
+                               GIT_COMMITTER_DATE='2026-03-03T00:00:00+0000'))
+
+
+def test_churn_before_after_migration_fixture(tmp_path: Path) -> None:
+    make_churn_migration_fixture(tmp_path)
+    snapshots = json.loads((ROOT / 'tests/python/fixtures/churn_migration.json').read_text(encoding='utf-8'))
+    for case in snapshots['cases']:
+        after = repo_overview.churn(tmp_path, 20, since=case['since'])
+        assert after == case['after']
+        # Complete commit count, binary exclusion and normal rows are unchanged.
+        assert after.splitlines()[0] == case['before'].splitlines()[0]
+        assert 'binary.bin' not in after and 'binary.bin' not in case['before']
+        for row in case['before'].splitlines()[1:]:
+            if row.endswith(('  a.txt', '  z.txt', '  old.txt')):
+                assert row in after.splitlines()
+    observation = repo_overview.git_inspector.log_numstat(tmp_path)
+    renamed = [f for c in observation['commits'] for f in c['files'] if f['orig_path']]
+    assert renamed == [{'path': 'new.txt', 'orig_path': 'old.txt', 'added': 0, 'deleted': 0}]
+    binary = [f for c in observation['commits'] for f in c['files'] if f['path'] == 'binary.bin']
+    assert binary == [{'path': 'binary.bin', 'orig_path': None, 'added': None, 'deleted': None}]
+    assert '  1 commit  +0/-0  2026-03-01  new.txt' in snapshots['cases'][0]['after']
+    assert 'old.txt => new.txt' in snapshots['cases'][0]['before']
+
+
+@pytest.mark.parametrize('limit', ['count', 'byte'])
+def test_churn_complete_commits_and_explicit_history_truncation(tmp_path: Path, monkeypatch, limit: str) -> None:
+    make_churn_migration_fixture(tmp_path)
+    inspector = repo_overview.git_inspector
+    original = inspector.log_numstat
+    if limit == 'count':
+        kwargs = {'max_count': 2}
+    else:
+        # This boundary includes the newest empty commit and the following
+        # binary commit, then cuts the rename destination. Only complete commits
+        # may contribute to the scanned count or ranking.
+        raw, _, _ = inspector._run(tmp_path, ['log', '--no-ext-diff', '--no-textconv', '--no-color',
+                                               '-z', '--numstat', '--format=%x00%H%x00%cs', '--'])
+        kwargs = {'max_bytes': raw.index(b'new.txt') + 2}
+    bounded = original(tmp_path, **kwargs)
+    assert bounded['truncated'] and len(bounded['commits']) == 2
+    def limited(root, *, since):
+        return original(root, since=since, **kwargs)
+    monkeypatch.setattr(inspector, 'log_numstat', limited)
+    out = repo_overview.churn(tmp_path, 20)
+    assert out.splitlines() == [
+        '=== churn (2 commits scanned) ===',
+        '[... history truncated by shared inspector limits (10,000 commits / 1,000,000 bytes); '
+        'ranking covers complete scanned commits only]',
+    ]
+
+
+def test_churn_missing_git_keeps_message(tmp_path: Path, monkeypatch) -> None:
+    def missing(*args, **kwargs):
+        raise FileNotFoundError('git')
+    monkeypatch.setattr(repo_overview.git_inspector, '_spawn', missing)
+    assert repo_overview.churn(tmp_path, 5) == 'not a git work tree; skipping --churn'
+
+
+def test_churn_delegates_since_and_keeps_top_note_with_history_note(tmp_path: Path, monkeypatch) -> None:
+    def observe(root, *, since):
+        assert root == tmp_path and since == '3 months ago'
+        return {'commits': [{'date': '2026-01-01', 'files': [
+            {'path': path, 'added': 1, 'deleted': 0} for path in ['z.txt', 'a.txt']]}], 'truncated': True}
+    monkeypatch.setattr(repo_overview.git_inspector, 'log_numstat', observe)
+    out = repo_overview.churn(tmp_path, 1, since='3 months ago')
+    assert out.splitlines()[1] == '  1 commit  +1/-0  2026-01-01  a.txt'
+    assert out.splitlines()[2] == '[... 1 more files (--churn 1 shows the top 1)]'
+    assert 'history truncated' in out.splitlines()[3]
