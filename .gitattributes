@@ -1,1 +1,4 @@
 scripts/git_inspector.py -text
+scripts/myon-bioinformatics-LICENSE -text
+tests/vendor/xprobe/xprobe.py -text
+tests/vendor/xprobe/LICENSE -text

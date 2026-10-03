@@ -169,7 +169,7 @@ identities are preserved. This is not CI `continue-on-error`.
 | Fixture exception | `test_fixture.test_setup_error`, `error` | class `test_fixture`, test `test_setup_error`, kind `error` | full nodeid, `error`, phase `setup` |
 | Runtime/marker skip | `skipped` | omitted by JUnit importer | `skipped`, phase `call`/`setup` |
 
-The importer is byte-identical xprobe from merge SHA
+The checked-in baseline importer is byte-identical xprobe from merge SHA
 `642999cea4185a68bffa7f7ccc46bd78dde03e5a`, vendored only under
 `tests/vendor/xprobe` with MIT license and commit/blob/SHA-256 provenance
 checked by the regression. No runtime dependency or parser is added.
@@ -214,3 +214,10 @@ The existing Python CI suite collects this regression directly.
   (`pytest -p pytest_btk_events --btk-events PATH`).
 - `scripts/evidence_board.py` -- aggregator/consumer: Markdown table, `--json`,
   `--step-summary`.
+
+The test-only importer and its LICENSE are enrolled in `vendor.lock.json`.
+Ordinary candidate CI can update them; the baseline job restores their exact
+locked commits. The legacy grouped provenance is projected only after every
+locked source/LICENSE hash verifies. Its top-level commit identifies xprobe.py;
+the LICENSE commit is independently recorded in the lock. Both records and all
+bytes are preserved in the candidate and locked evidence artifacts.

@@ -13,8 +13,11 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = '.github/workflows/playwright.yml'
 TEST_JOB = 'python'
 HELPER = 'tool/sync_vendor_provenance.py'
-SNAPSHOT = ['vendor.lock.json', 'scripts/git_inspector.py', 'scripts/git_inspector.provenance.json']
-EXPECTED = {('myon-bioinformatics/myon-bioinformatics', 'git_inspector.py', 'scripts/git_inspector.py')}
+SNAPSHOT = ['tests/vendor/xprobe/xprobe.py', 'tests/vendor/xprobe/LICENSE', 'tests/vendor/xprobe/provenance.json', 'scripts/myon-bioinformatics-LICENSE', 'vendor.lock.json', 'scripts/git_inspector.py', 'scripts/git_inspector.provenance.json']
+EXPECTED = {('myon-bioinformatics/xprobe', 'xprobe.py', 'tests/vendor/xprobe/xprobe.py'),
+ ('myon-bioinformatics/xprobe', 'LICENSE', 'tests/vendor/xprobe/LICENSE'),
+ ('myon-bioinformatics/myon-bioinformatics', 'LICENSE', 'scripts/myon-bioinformatics-LICENSE'),
+ ('myon-bioinformatics/myon-bioinformatics', 'git_inspector.py', 'scripts/git_inspector.py')}
 
 
 def _workflow():
@@ -101,7 +104,7 @@ def test_public_vendor_ci_updates_without_repository_writes():
         assert set(upload['with']['path'].splitlines()) == set(SNAPSHOT)
     pins = [s['with']['ref'] for steps in (resolve,test) for s in steps
             if s.get('with',{}).get('repository') == 'myon-bioinformatics/myon-bioinformatics']
-    assert pins == ['90bc069c33901bd4b5373eb02311026e0acf2e2e'] * 2
+    assert pins == ['37f30d5acdc1906d4acbd103ce6f652bc13ca7eb'] * 2
     for steps in (resolve,test):
         for step in steps:
             if step.get('uses','').startswith('actions/checkout@'):
@@ -130,7 +133,8 @@ def test_updated_lock_projects_exact_identity_and_keeps_reader_formats(tmp_path)
     _copy_snapshot(tmp_path)
     lock_path = tmp_path / 'vendor.lock.json'
     lock = json.loads(lock_path.read_text(encoding='utf-8'))
-    for e in lock['files']: e['commit'] = 'a' * 40
+    for e in lock['files']:
+        e['commit'] = ('b' if e['source'] == 'LICENSE' else 'a') * 40
     lock_path.write_text(json.dumps(lock),encoding='utf-8')
     projector = _projector()
     projector.project(tmp_path)
@@ -143,14 +147,22 @@ def test_updated_lock_projects_exact_identity_and_keeps_reader_formats(tmp_path)
         entry = records[destination]
         for target,source in fields.items():
             assert projected[target] == ('https://github.com/'+entry['repository'] if source == 'repository_url' else entry[source])
-    # Grouped formats are absent in this consumer.
+    projected = json.loads((tmp_path / "tests/vendor/xprobe/provenance.json").read_text())
+    assert projected["commit"] == records["tests/vendor/xprobe/xprobe.py"]["commit"]
+    for name in ("xprobe.py", "LICENSE"):
+        entry = records["tests/vendor/xprobe/" + name]
+        assert projected["files"][name] == {
+            "upstream_path": entry["source"], "blob": entry["blob_sha"], "sha256": entry["sha256"]}
 
 
-@pytest.mark.parametrize('license_file', [False])
-def test_invalid_source_or_license_does_not_rewrite_any_provenance(tmp_path, license_file):
+
+@pytest.mark.parametrize('destination', [
+    'scripts/git_inspector.py', 'scripts/myon-bioinformatics-LICENSE',
+    'tests/vendor/xprobe/xprobe.py', 'tests/vendor/xprobe/LICENSE'])
+def test_invalid_source_or_license_does_not_rewrite_any_provenance(tmp_path, destination):
     _copy_snapshot(tmp_path)
     entries = json.loads((tmp_path / 'vendor.lock.json').read_text(encoding='utf-8'))['files']
-    entry = next(e for e in entries if (e['source'] == 'LICENSE') == license_file)
+    entry = next(e for e in entries if e['destination'] == destination)
     before = {p:(tmp_path / p).read_bytes() for p in SNAPSHOT if p.endswith('.json')}
     (tmp_path / entry['destination']).write_bytes(b'corrupt source or license')
     with pytest.raises(ValueError, match='locked bytes mismatch'):
@@ -249,7 +261,7 @@ def test_locked_baseline_runs_automatically_without_candidate_snapshot():
                     if s.get('name') == 'Recreate locked vendor files from GitHub')
     assert steps[recreate] == original
     tool = next(s for s in steps if s.get('name') == 'Fetch pinned shared vendor tool')
-    assert tool['with']['ref'] == '90bc069c33901bd4b5373eb02311026e0acf2e2e'
+    assert tool['with']['ref'] == '37f30d5acdc1906d4acbd103ce6f652bc13ca7eb'
     for step in steps:
         assert 'continue-on-error' not in step
         if step.get('uses', '').startswith('actions/checkout@'):

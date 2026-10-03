@@ -19,7 +19,10 @@ BINDINGS = [['scripts/git_inspector.provenance.json',
    'upstream_path': 'source',
    'upstream_repository': 'repository',
    'vendored_path': 'destination'}]]
-EXPECTED = {('myon-bioinformatics/myon-bioinformatics', 'git_inspector.py', 'scripts/git_inspector.py')}
+EXPECTED = {('myon-bioinformatics/xprobe', 'xprobe.py', 'tests/vendor/xprobe/xprobe.py'),
+ ('myon-bioinformatics/xprobe', 'LICENSE', 'tests/vendor/xprobe/LICENSE'),
+ ('myon-bioinformatics/myon-bioinformatics', 'LICENSE', 'scripts/myon-bioinformatics-LICENSE'),
+ ('myon-bioinformatics/myon-bioinformatics', 'git_inspector.py', 'scripts/git_inspector.py')}
 
 
 def records(root):
@@ -56,7 +59,19 @@ def project(root):
             record["license"] = {"source_path": "LICENSE", "vendored_path": license_entry["destination"],
                                  "blob_sha": license_entry["blob_sha"], "sha256": license_entry["sha256"]}
         pending[path] = record
-    # All per-file formats are mapped above.
+    # The grouped commit identifies the importer; LICENSE has its own lock identity.
+    path = "tests/vendor/xprobe/provenance.json"
+    record = json.loads((root / path).read_text(encoding="utf-8"))
+    source = entries["tests/vendor/xprobe/xprobe.py"]
+    record["repository"] = source["repository"]
+    record["commit"] = source["commit"]
+    record["files"] = {}
+    for name in ("xprobe.py", "LICENSE"):
+        entry = entries["tests/vendor/xprobe/" + name]
+        record["files"][name] = {"upstream_path": entry["source"],
+                                 "blob": entry["blob_sha"], "sha256": entry["sha256"]}
+    pending[path] = record
+
     for path, record in pending.items():
         (root / path).write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
 

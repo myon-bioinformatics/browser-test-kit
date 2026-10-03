@@ -172,15 +172,15 @@ def test_same_child_junit_xprobe_and_btk_bridge(tmp_path):
     vendor = ROOT / "tests" / "vendor" / "xprobe"
     provenance = json.loads((vendor / "provenance.json").read_text(encoding="utf-8"))
     assert provenance["repository"] == "myon-bioinformatics/xprobe"
-    assert provenance["commit"] == "642999cea4185a68bffa7f7ccc46bd78dde03e5a"
-    for name, blob in {
-        "xprobe.py": "8cc1abbaf4269e5298de44f1b4ce7de692ec9ae2",
-        "LICENSE": "4ec4989b801bf1a3df6184d21f79e6e7ed5931f6",
-    }.items():
+    lock = json.loads((ROOT / "vendor.lock.json").read_text(encoding="utf-8"))
+    entries = {entry["destination"]: entry for entry in lock["files"]}
+    assert provenance["commit"] == entries["tests/vendor/xprobe/xprobe.py"]["commit"]
+    for name in ("xprobe.py", "LICENSE"):
+        entry = entries["tests/vendor/xprobe/" + name]
         data = (vendor / name).read_bytes()
-        assert provenance["files"][name]["blob"] == blob
-        assert hashlib.sha1(b"blob " + str(len(data)).encode() + b"\0" + data).hexdigest() == blob
-        assert hashlib.sha256(data).hexdigest() == provenance["files"][name]["sha256"]
+        assert provenance["files"][name]["blob"] == entry["blob_sha"]
+        assert hashlib.sha1(b"blob " + str(len(data)).encode() + b"\0" + data).hexdigest() == entry["blob_sha"]
+        assert hashlib.sha256(data).hexdigest() == provenance["files"][name]["sha256"] == entry["sha256"]
     spec = importlib.util.spec_from_file_location("bridge_xprobe", vendor / "xprobe.py")
     xprobe = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(xprobe)
