@@ -148,6 +148,139 @@ def test_pr_status_summary(capsys):
     )
 
 
+def observe_routes(*, checks=None, issue_comments=(), reviews=(), review_comments=(), pr=None):
+    return {
+        ("GET", "/repos/octo/demo/pulls/11"): reply(pr or pr_payload()),
+        ("GET", f"/repos/octo/demo/commits/{HEAD}/check-runs"): reply(
+            {"check_runs": checks if checks is not None else [check_run("unit")]}),
+        ("GET", "/repos/octo/demo/issues/11/comments"): reply(list(issue_comments)),
+        ("GET", "/repos/octo/demo/pulls/11/reviews"): reply(list(reviews)),
+        ("GET", "/repos/octo/demo/pulls/11/comments"): reply(list(review_comments)),
+    }
+
+
+def test_pr_observe_binds_green_checks_and_activity_to_current_head(capsys):
+    issue = {"id": 501, "updated_at": "2026-10-04T10:00:00Z"}
+    review = {"id": 601, "submitted_at": "2026-10-04T10:01:00Z"}
+    inline = {"id": 701, "updated_at": "2026-10-04T10:02:00Z"}
+    client, stub = client_for(observe_routes(
+        checks=[check_run("unit"), check_run("lint", conclusion="skipped", run_id=2)],
+        issue_comments=[issue], reviews=[review], review_comments=[inline]))
+    result = gh_ops.pr_observe(REPO, 11, min_checks=2, client=client)
+    assert result["schema"] == "gh-ops-pr-observation/1"
+    assert result["head_sha"] == HEAD and result["checks"]["sha"] == HEAD
+    assert result["checks"]["state"] == "green" and result["checks"]["ok"] is True
+    assert result["activity"]["issue_comments"] == {
+        "count": 1, "latest_id": 501, "latest_at": "2026-10-04T10:00:00Z"}
+    assert result["activity"]["reviews"]["latest_id"] == 601
+    assert result["activity"]["review_comments"]["latest_id"] == 701
+    assert set(stub.methods) == {"GET"}
+    assert gh_ops.main(["pr-observe", REPO, "11", "--min", "2"], client=client_for(observe_routes(
+        checks=[check_run("unit"), check_run("lint", conclusion="skipped", run_id=2)],
+        issue_comments=[issue], reviews=[review], review_comments=[inline]))[0]) == 0
+    assert "checks=green" in capsys.readouterr().out
+
+
+def test_pr_observe_zero_checks_is_pending_not_green():
+    client, _ = client_for(observe_routes(checks=[]))
+    result = gh_ops.pr_observe(REPO, 11, client=client)
+    assert result["ok"] is True
+    assert result["checks"]["state"] == "pending"
+    assert result["checks"]["ok"] is False
+    assert "only 0 check run" in result["checks"]["reason"]
+
+
+def observation(**overrides):
+    data = {
+        "ok": True, "schema": "gh-ops-pr-observation/1", "repo": REPO, "number": 11,
+        "state": "open", "draft": True, "merged": False, "head_sha": HEAD,
+        "checks": {"state": "pending"},
+        "activity": {
+            "issue_comments": {"count": 1, "latest_id": 1, "latest_at": "a"},
+            "reviews": {"count": 0, "latest_id": None, "latest_at": None},
+            "review_comments": {"count": 0, "latest_id": None, "latest_at": None},
+        },
+    }
+    data.update(overrides)
+    return data
+
+
+def test_pr_observation_diff_emits_meaningful_events():
+    before = observation()
+    after = observation(state="closed", draft=False, merged=True, head_sha=OTHER,
+                        checks={"state": "green"},
+                        activity={
+                            "issue_comments": {"count": 2, "latest_id": 2, "latest_at": "b"},
+                            "reviews": {"count": 1, "latest_id": 3, "latest_at": "c"},
+                            "review_comments": {"count": 0, "latest_id": None, "latest_at": None},
+                        })
+    result = gh_ops.pr_observation_diff(before, after)
+    kinds = [event["type"] for event in result["events"]]
+    assert result["changed"] is True
+    assert kinds == ["head_changed", "state_changed", "draft_changed", "merged",
+                     "ci_became_green", "issue_comments_changed", "reviews_changed"]
+
+
+def test_pr_observation_diff_identical_is_quiet_and_rejects_wrong_pr():
+    before = observation()
+    result = gh_ops.pr_observation_diff(before, json.loads(json.dumps(before)))
+    assert result["ok"] is True and result["changed"] is False and result["events"] == []
+    with pytest.raises(gh_ops.GhOpsError, match="different pull requests"):
+        gh_ops.pr_observation_diff(before, observation(number=12))
+
+
+def test_pr_diff_cli_reads_snapshots_offline(tmp_path, capsys):
+    before = tmp_path / "before.json"
+    after = tmp_path / "after.json"
+    before.write_text(json.dumps(observation()), encoding="utf-8")
+    after.write_text(json.dumps(observation(checks={"state": "failed"})), encoding="utf-8")
+    assert gh_ops.main(["pr-diff", str(before), str(after)]) == 0
+    assert "ci_failed" in capsys.readouterr().out
+
+
+def test_issue_comment_dry_run_verifies_pr_and_never_posts():
+    client, stub = client_for({("GET", "/repos/octo/demo/pulls/11"): reply(pr_payload())})
+    result = gh_ops.issue_comment_create(REPO, 11, body="hello", client=client)
+    assert result["ok"] is True and result["dry_run"] is True and result["posted"] is False
+    assert result["head_sha"] == HEAD and result["would_post"]["body"] == {"body": "hello"}
+    assert stub.methods == ["GET"]
+
+
+def test_issue_comment_write_posts_then_verifies_exact_body():
+    routes = {
+        ("GET", "/repos/octo/demo/pulls/11"): reply(pr_payload()),
+        ("POST", "/repos/octo/demo/issues/11/comments"): reply(
+            {"id": 900, "html_url": "https://x/comment/900"}, status=201),
+        ("GET", "/repos/octo/demo/issues/comments/900"): reply(
+            {"id": 900, "body": "hello", "html_url": "https://x/comment/900"}),
+    }
+    client, stub = client_for(routes)
+    result = gh_ops.issue_comment_create(REPO, 11, body="hello", write=True, client=client)
+    assert result["ok"] is True and result["posted"] is True and result["verified"] is True
+    assert result["comment_id"] == 900
+    assert stub.methods == ["GET", "POST", "GET"]
+    assert stub.calls[1]["body"] == {"body": "hello"}
+
+
+def test_issue_comment_posted_but_verification_mismatch_warns_before_retry():
+    routes = {
+        ("GET", "/repos/octo/demo/pulls/11"): reply(pr_payload()),
+        ("POST", "/repos/octo/demo/issues/11/comments"): reply({"id": 900}, status=201),
+        ("GET", "/repos/octo/demo/issues/comments/900"): reply({"id": 900, "body": "different"}),
+    }
+    client, _ = client_for(routes)
+    result = gh_ops.issue_comment_create(REPO, 11, body="hello", write=True, client=client)
+    assert result["ok"] is False and result["posted"] is True and result["verified"] is False
+    assert "inspect before retrying" in result["reason"]
+
+
+def test_issue_comment_empty_body_fails_before_http():
+    client, stub = client_for({})
+    with pytest.raises(gh_ops.GhOpsError, match="must not be empty"):
+        gh_ops.issue_comment_create(REPO, 11, body="\n  ", client=client)
+    assert stub.calls == []
+
+
 def test_runs_by_sha_and_workflow():
     data = {"total_count": 1, "workflow_runs": [{"id": 9, "event": "pull_request", "head_sha": HEAD,
                                                  "status": "completed", "conclusion": "success", "html_url": "u"}]}
