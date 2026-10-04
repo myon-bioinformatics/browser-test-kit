@@ -161,7 +161,7 @@ def observe_routes(*, checks=None, issue_comments=(), reviews=(), review_comment
 
 def test_pr_observe_binds_green_checks_and_activity_to_current_head(capsys):
     issue = {"id": 501, "updated_at": "2026-10-04T10:00:00Z"}
-    review = {"id": 601, "submitted_at": "2026-10-04T10:01:00Z"}
+    review = {"id": 601, "submitted_at": "2026-10-04T10:01:00Z", "state": "APPROVED"}
     inline = {"id": 701, "updated_at": "2026-10-04T10:02:00Z"}
     client, stub = client_for(observe_routes(
         checks=[check_run("unit"), check_run("lint", conclusion="skipped", run_id=2)],
@@ -173,6 +173,7 @@ def test_pr_observe_binds_green_checks_and_activity_to_current_head(capsys):
     assert result["activity"]["issue_comments"] == {
         "count": 1, "latest_id": 501, "latest_at": "2026-10-04T10:00:00Z"}
     assert result["activity"]["reviews"]["latest_id"] == 601
+    assert result["activity"]["reviews"]["states"] == {"APPROVED": 1}
     assert result["activity"]["review_comments"]["latest_id"] == 701
     assert set(stub.methods) == {"GET"}
     assert gh_ops.main(["pr-observe", REPO, "11", "--min", "2"], client=client_for(observe_routes(
@@ -188,6 +189,18 @@ def test_pr_observe_zero_checks_is_pending_not_green():
     assert result["checks"]["state"] == "pending"
     assert result["checks"]["ok"] is False
     assert "only 0 check run" in result["checks"]["reason"]
+
+
+def test_pr_observe_rejects_snapshot_if_head_changes_during_reads():
+    changed = pr_payload(head={"sha": OTHER, "ref": "feature"})
+    routes = observe_routes()
+    routes[("GET", "/repos/octo/demo/pulls/11")] = [reply(pr_payload()), reply(changed)]
+    client, stub = client_for(routes)
+    result = gh_ops.pr_observe(REPO, 11, client=client)
+    assert result["ok"] is False and result["stale"] is True
+    assert result["observed_head_sha"] == HEAD and result["current_head_sha"] == OTHER
+    assert "discard this snapshot" in result["reason"]
+    assert stub.methods.count("GET") == 6
 
 
 def observation(**overrides):
