@@ -47,6 +47,9 @@ Stdlib-only (`python -S`) REST helpers for PR/CI work where the `gh` CLI is unav
 python -S scripts/gh_ops.py issue-comments OWNER/REPO 24 --save comments.json   # one line per comment
 python -S scripts/gh_ops.py issue-comments OWNER/REPO 24 --show 6,18            # full text of selected comments
 python -S scripts/gh_ops.py comments-file saved-tool-result.txt --last 5        # same digest from a saved JSON dump, offline
+python -S scripts/gh_ops.py --json pr-observe OWNER/REPO 24 > before.json     # PR/head/check/review snapshot
+python -S scripts/gh_ops.py pr-diff before.json after.json                         # offline meaningful-change events
+python -S scripts/gh_ops.py issue-comment OWNER/REPO 24 --file note.md --write     # verified top-level PR comment
 python -S scripts/gh_ops.py pr-for-branch OWNER/REPO my-branch                    # existing PR for a branch? merged? (none -> exit 1)
 python -S scripts/gh_ops.py open-prs OWNER [--org] [--repos a,b]               # open PRs across repositories, newest first
 python -S scripts/gh_ops.py open-issues OWNER [--org] [--repos a,b]             # all open Issues, excluding PRs
@@ -61,6 +64,8 @@ python -S scripts/gh_ops.py url pr OWNER/REPO 11 --tab checks                   
 ```
 
 Also: `pr-status`, `runs`, `workflow-state`, `workflow-dispatch`, `pr-body-replace`, `sync-main`. Every subcommand is a function (`from gh_ops import pr_merge`) returning a dict; the CLI is a thin adapter.
+
+`pr-observe` binds the check summary to the PR's current head SHA and records small digests for conversation comments, reviews, and inline review comments. Zero checks are `pending`, never green. `pr-diff` is offline and emits events such as `head_changed`, `ci_became_green`, `ci_failed`, `draft_changed`, `merged`, and review/comment activity changes; it deliberately does not infer semantic labels such as Blocking/Should from prose. `issue-comment` is dry-run by default, first verifies that the number is a PR, and after POST re-reads the created comment. If verification is uncertain it reports that the comment may already exist and tells the caller to inspect before retrying, rather than encouraging duplicate posts.
 
 `repo_counts(owner, org=False, repos=(), client=None)` and `open_issues(...)`
 use only REST GETs with the same injectable HTTP transport. Without `--repos`,
