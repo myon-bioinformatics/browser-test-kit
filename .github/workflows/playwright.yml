@@ -165,7 +165,13 @@ jobs:
           python scripts/check_png.py test-results/python-cli-chromium.png test-results/python-cli-webkit-mobile.png
       - uses: actions/upload-artifact@v7
         if: always()
-        with: { name: python-browser-evidence, path: test-results, if-no-files-found: error }
+        with:
+          name: python-browser-evidence
+          path: |
+            test-results
+            !test-results/junit/**
+            !test-results/controlled-failure/**
+          if-no-files-found: error
       - name: Wrapper tests with btk-events plugin enabled
         run: |
           PYTHONPATH=scripts python -m pytest tests/python/test_terminal_browser_wrapper.py -p pytest_btk_events --btk-events test-results/btk-events.jsonl --btk-events-run-id "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
@@ -232,53 +238,52 @@ jobs:
         python -S .vendor-sync-tools/vendor_sync.py check --manifest vendor.lock.json
     - name: Refresh legacy provenance from the verified lock
       run: python -S tool/sync_vendor_provenance.py
-    - run: python -m pip install -r requirements-test.txt
-    - run: python -m playwright install --with-deps chromium firefox webkit
-    - run: python -m pytest tests/python -q
-    - name: Validate Python API screenshots
-      if: always()
-      run: python scripts/check_evidence.py test-results/python --pattern '*.json' --expect chromium-desktop,chromium-mobile,firefox-desktop,firefox-mobile,webkit-desktop,webkit-mobile
-    - name: Python Playwright CLI screenshot
-      run: |
-        python -m playwright screenshot --browser=chromium --device="Desktop Chrome" --full-page "file://$GITHUB_WORKSPACE/fixtures/index.html" test-results/python-cli-chromium.png
-        python -m playwright screenshot --browser=webkit --device="iPhone 13" --full-page "file://$GITHUB_WORKSPACE/fixtures/index.html" test-results/python-cli-webkit-mobile.png
-        python scripts/check_png.py test-results/python-cli-chromium.png test-results/python-cli-webkit-mobile.png
-    - uses: actions/upload-artifact@v7
-      if: always()
+    - uses: actions/setup-node@v7
       with:
-        name: locked-python-browser-evidence
-        path: test-results
-        if-no-files-found: error
-    - name: Wrapper tests with btk-events plugin enabled
+        node-version: '22'
+    - name: Install Python verification tools
+      run: python -m pip install -r tests/requirements.txt
+    - name: Verify GitHub CLI
       run: |
-        PYTHONPATH=scripts python -m pytest tests/python/test_terminal_browser_wrapper.py -p pytest_btk_events --btk-events test-results/btk-events.jsonl --btk-events-run-id "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
-    - name: Evidence board
-      if: always()
-      run: python scripts/evidence_board.py test-results/btk-events.jsonl --step-summary
-    - uses: actions/upload-artifact@v7
-      if: always()
+        git --version
+        gh --version
+    - name: Fetch pinned test-only JUnit importer
+      uses: actions/checkout@v7
       with:
-        name: locked-btk-events
-        path: test-results/btk-events.jsonl
+        repository: myon-bioinformatics/xprobe
+        ref: 7e7015b2df69ad446b968f6fa49711b5b1dbdd3f
+        path: .junit-tools
+        persist-credentials: false
+        sparse-checkout: xprobe.py
+        sparse-checkout-cone-mode: false
+    - name: Run pytest
+      run: python -m pytest -v
+    - name: Execute repository diagnostics renderer
+      run: node tests/repository_diagnostics.node.js
+    - name: Generate canonical repository metadata (stdlib only)
+      run: python -S tool/vendor/repository_metadata_generator.py --repository myon-bioinformatics/web-ui --root . --output-dir .
+    - name: Capture advisory tooling metadata
+      run: python tool/tooling_meta.py > tooling-meta.json
+    - uses: actions/upload-artifact@v7
+      with:
+        name: locked-tooling-meta
+        path: |
+          tooling-meta.json
+          repository-metadata.json
+          repository-metadata.jsonl
+        retention-days: 14
         if-no-files-found: error
-    - name: Scripts install and run as modules (python -m)
-      run: |
-        python -m pip install .
-        cd "$RUNNER_TEMP"
-        python -m check_png --help
     - name: Preserve vendor lock used by this run
       if: always()
       uses: actions/upload-artifact@v7
       with:
-        name: locked-vendor-lock-py3.13
+        name: locked-vendor-lock-py3.12
         path: |
           vendor.lock.json
-          scripts/myon-bioinformatics-LICENSE
-          tests/vendor/xprobe/xprobe.py
-          tests/vendor/xprobe/LICENSE
-          tests/vendor/xprobe/provenance.json
-          scripts/git_inspector.py
-          scripts/git_inspector.provenance.json
+          tool/vendor/repository_metadata_contract.py
+          tool/vendor/repository_metadata_generator.py
+          tool/vendor/LICENSE
+          tool/vendor/provenance.json
         if-no-files-found: error
         retention-days: 14
     name: Locked baseline
