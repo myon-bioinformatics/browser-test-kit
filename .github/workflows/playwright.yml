@@ -135,7 +135,26 @@ jobs:
           python -S tool/sync_vendor_provenance.py
       - run: python -m pip install -r requirements-test.txt
       - run: python -m playwright install --with-deps chromium firefox webkit
-      - run: python -m pytest tests/python -q
+      - name: Run Python tests with JUnit
+        env:
+          BTK_FAILURE_EVIDENCE: test-results/controlled-failure
+        run: python -m pytest tests/python -q --junitxml=test-results/junit/python-3.13.xml
+      - name: Preserve junit-python-3.13
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: junit-python-3.13
+          path: test-results/junit/python-3.13.xml
+          if-no-files-found: error
+          retention-days: 14
+      - name: Preserve junit-controlled-python-3.13
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: junit-controlled-python-3.13
+          path: test-results/controlled-failure/
+          if-no-files-found: error
+          retention-days: 14
       - name: Validate Python API screenshots
         if: always()
         run: python scripts/check_evidence.py test-results/python --pattern '*.json' --expect chromium-desktop,chromium-mobile,firefox-desktop,firefox-mobile,webkit-desktop,webkit-mobile
@@ -146,7 +165,13 @@ jobs:
           python scripts/check_png.py test-results/python-cli-chromium.png test-results/python-cli-webkit-mobile.png
       - uses: actions/upload-artifact@v7
         if: always()
-        with: { name: python-browser-evidence, path: test-results, if-no-files-found: error }
+        with:
+          name: python-browser-evidence
+          path: |
+            test-results
+            !test-results/junit/**
+            !test-results/controlled-failure/**
+          if-no-files-found: error
       - name: Wrapper tests with btk-events plugin enabled
         run: |
           PYTHONPATH=scripts python -m pytest tests/python/test_terminal_browser_wrapper.py -p pytest_btk_events --btk-events test-results/btk-events.jsonl --btk-events-run-id "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
@@ -264,3 +289,14 @@ jobs:
         retention-days: 14
     name: Locked baseline
     timeout-minutes: 20
+
+
+  junit-identity:
+    needs: [changes, python]
+    if: always() && needs.changes.outputs.non_docs_changed == 'true'
+    permissions:
+      contents: read
+      actions: read
+    uses: myon-bioinformatics/myon-bioinformatics/.github/workflows/reusable-junit-identity.yml@4dfda95d6573250477f991a0421fa6acb9bc0258
+    with:
+      expected-reports: '["junit-python-3.13/python-3.13.xml", "junit-controlled-python-3.13/junit.xml"]'

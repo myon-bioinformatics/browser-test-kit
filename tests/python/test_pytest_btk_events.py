@@ -193,12 +193,20 @@ def test_same_child_junit_xprobe_and_btk_bridge(tmp_path):
     ).replace("fixture setup boom", "SETUP_SENTINEL")
     test_file = tmp_path / "test_fixture.py"
     test_file.write_text(fixture, encoding="utf-8")
-    events_path = tmp_path / "btk-events.jsonl"
-    junit_path = tmp_path / "junit.xml"
+    evidence = Path(os.environ.get("BTK_FAILURE_EVIDENCE", tmp_path / "evidence")).resolve()
+    evidence.mkdir(parents=True, exist_ok=True)
+    events_path = evidence / "btk-events.jsonl"
+    junit_path = evidence / "junit.xml"
     repository = "myon-bioinformatics/browser-test-kit"
     run_id = "controlled-bridge"
     env = _env_with_scripts_on_path()
     env.update(PYTEST_DISABLE_PLUGIN_AUTOLOAD="1", PYTEST_ADDOPTS="")
+    plain = subprocess.run(
+        [sys.executable, "-m", "pytest", "test_fixture.py", "--rootdir", str(tmp_path),
+         "-p", "pytest_btk_events", "--btk-events", str(tmp_path / "plain-events.jsonl"),
+         "--btk-events-project", repository, "--btk-events-run-id", run_id, "-q"],
+        cwd=tmp_path, env=env, text=True, capture_output=True, timeout=60,
+    )
     result = subprocess.run(
         [sys.executable, "-m", "pytest", "test_fixture.py", "--rootdir", str(tmp_path),
          "-p", "pytest_btk_events", "--btk-events", str(events_path),
@@ -206,7 +214,11 @@ def test_same_child_junit_xprobe_and_btk_bridge(tmp_path):
          "--junitxml", str(junit_path), "-o", "junit_logging=all", "-q"],
         cwd=tmp_path, env=env, text=True, capture_output=True, timeout=60,
     )
-    assert result.returncode == 1, result.stdout + result.stderr
+    (evidence / "exit.json").write_text(
+        json.dumps({"without_junit": plain.returncode, "with_junit": result.returncode}),
+        encoding="utf-8",
+    )
+    assert plain.returncode == result.returncode == 1, plain.stdout + plain.stderr + result.stdout + result.stderr
     events = _read_events(events_path)
     assert all(e["schema"] == "btk-event/1" and e["project"] == repository
                and e["run_id"] == run_id for e in events)
@@ -239,6 +251,7 @@ def test_same_child_junit_xprobe_and_btk_bridge(tmp_path):
     assert {c["value"]["test"] for c in cases} == set(expected)
     assert sum(e["status"] == "skipped" for e in results.values()) == 2
     compact = xprobe.corpus_to_json(cases)
+    (evidence / "compact.json").write_text(compact, encoding="utf-8")
     assert xprobe.corpus_from_json(compact) == cases
     for sentinel in ("PARAMETER_SENTINEL", "STDOUT_SENTINEL", "ASSERTION_SENTINEL", "SETUP_SENTINEL"):
         assert sentinel in raw
@@ -249,6 +262,7 @@ def test_same_child_junit_xprobe_and_btk_bridge(tmp_path):
         [sys.executable, "-S", str(SCRIPTS / "evidence_board.py"), str(events_path), "--json"],
         text=True, capture_output=True, timeout=60,
     )
+    (evidence / "board.json").write_text(board.stdout, encoding="utf-8")
     assert board.returncode == 1, board.stdout + board.stderr
     stats = json.loads(board.stdout)
     assert stats["exit_code"] == 1
