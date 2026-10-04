@@ -363,6 +363,18 @@ def _activity_digest(items: list) -> dict:
     return {"count": len(items), "latest_id": latest.get("id"), "latest_at": stamp(latest) or None}
 
 
+def _review_digest(items: list) -> dict:
+    """Activity digest plus review-state counts so approve/dismiss changes are observable."""
+    result = _activity_digest(items)
+    states = {}
+    for item in items:
+        state = item.get("state")
+        if state:
+            states[state] = states.get(state, 0) + 1
+    result["states"] = {key: states[key] for key in sorted(states)}
+    return result
+
+
 def pr_observe(repo: str, number: int, *, min_checks: int = 1, client: Client | None = None) -> dict:
     """Return a compact PR observation suitable for persisted snapshot comparison.
 
@@ -383,25 +395,31 @@ def pr_observe(repo: str, number: int, *, min_checks: int = 1, client: Client | 
     issue_comments = client.paginate(f"/repos/{repo}/issues/{number}/comments")
     reviews = client.paginate(base + "/reviews")
     review_comments = client.paginate(base + "/comments")
+    final_pr = client.get(base)
+    final_head = (final_pr.get("head") or {}).get("sha")
+    if final_head != head:
+        return {"ok": False, "schema": "gh-ops-pr-observation/1", "repo": repo, "number": number,
+                "stale": True, "observed_head_sha": head, "current_head_sha": final_head,
+                "reason": "PR head changed during observation; discard this snapshot and retry"}
     return {
         "ok": True,
         "schema": "gh-ops-pr-observation/1",
         "repo": repo,
         "number": number,
-        "state": pr.get("state"),
-        "draft": bool(pr.get("draft")),
-        "merged": bool(pr.get("merged")),
-        "mergeable_state": pr.get("mergeable_state"),
+        "state": final_pr.get("state"),
+        "draft": bool(final_pr.get("draft")),
+        "merged": bool(final_pr.get("merged")),
+        "mergeable_state": final_pr.get("mergeable_state"),
         "head_sha": head,
-        "head_ref": (pr.get("head") or {}).get("ref"),
-        "base_ref": (pr.get("base") or {}).get("ref"),
+        "head_ref": (final_pr.get("head") or {}).get("ref"),
+        "base_ref": (final_pr.get("base") or {}).get("ref"),
         "checks": checks,
         "activity": {
             "issue_comments": _activity_digest(issue_comments),
-            "reviews": _activity_digest(reviews),
+            "reviews": _review_digest(reviews),
             "review_comments": _activity_digest(review_comments),
         },
-        "url": pr.get("html_url"),
+        "url": final_pr.get("html_url"),
     }
 
 
@@ -410,6 +428,8 @@ def pr_observation_diff(before: dict, after: dict) -> dict:
     schema = "gh-ops-pr-observation/1"
     if before.get("schema") != schema or after.get("schema") != schema:
         raise GhOpsError(f"both snapshots must use schema {schema!r}")
+    if before.get("ok") is not True or after.get("ok") is not True:
+        raise GhOpsError("cannot diff an incomplete/stale observation")
     if (before.get("repo"), before.get("number")) != (after.get("repo"), after.get("number")):
         raise GhOpsError("snapshots refer to different pull requests")
     events = []
@@ -1094,6 +1114,8 @@ def _render(command: str, result: dict) -> str:
                 f"commits={r['commits']} files={r['changed_files']} +{r['additions']}/-{r['deletions']}")
     if command == "pr-observe":
         r = result
+        if not r["ok"]:
+            return f"NG pr-observe: {r.get('reason', 'incomplete observation')}"
         checks = r["checks"]
         return (f"#{r['number']} {r['state']} draft={r['draft']} merged={r['merged']} "
                 f"head={str(r['head_sha'])[:12]} checks={checks['state']} "
