@@ -10,6 +10,9 @@ Every operation is a plain function returning a dict with ``ok``; the CLI
 is a thin adapter over them::
 
     python -S scripts/gh_ops.py issue-comments OWNER/REPO 24 --save comments.json
+    python -S scripts/gh_ops.py --json pr-observe OWNER/REPO 24 > before.json
+    python -S scripts/gh_ops.py pr-diff before.json after.json
+    python -S scripts/gh_ops.py issue-comment OWNER/REPO 24 --file comment.md --write
     python -S scripts/gh_ops.py comments-file saved-tool-result.txt --last 5   # offline
     python -S scripts/gh_ops.py pr-merge OWNER/REPO 11 --sha ecfd0ba --min-checks 5 --write
     python -c "from gh_ops import pr_merge; print(pr_merge('OWNER/REPO', 11, sha='ecfd0ba'))"
@@ -333,6 +336,119 @@ def _summarize_checks(runs: list, min_checks: int) -> dict:
     }
 
 
+def checks_status(repo: str, sha: str, *, min_checks: int = 1, client: Client | None = None) -> dict:
+    """One-shot check summary for a SHA; unlike checks_wait this never polls."""
+    if min_checks < 1:
+        raise GhOpsError("--min must be at least 1; zero check runs never counts as green")
+    repo, sha = _repo(repo), _sha(sha)
+    summary = _summarize_checks(_check_runs(_client(client), repo, sha), min_checks)
+    if summary["ok"]:
+        state = "green"
+    elif summary["pending"] or summary["total"] < min_checks:
+        state = "pending"
+    else:
+        state = "failed"
+    return {"sha": sha, "state": state, **summary}
+
+
+def _activity_digest(items: list) -> dict:
+    """Stable small digest for conversation/review activity."""
+    if not items:
+        return {"count": 0, "latest_id": None, "latest_at": None}
+
+    def stamp(item):
+        return str(item.get("updated_at") or item.get("submitted_at") or item.get("created_at") or "")
+
+    latest = max(items, key=lambda item: (stamp(item), int(item.get("id") or 0)))
+    return {"count": len(items), "latest_id": latest.get("id"), "latest_at": stamp(latest) or None}
+
+
+def pr_observe(repo: str, number: int, *, min_checks: int = 1, client: Client | None = None) -> dict:
+    """Return a compact PR observation suitable for persisted snapshot comparison.
+
+    A failed or pending check set does not make the observation itself fail.
+    Checks are bound to the current PR head. Conversation comments, reviews,
+    and inline review comments are digested separately. Semantic labels such
+    as Blocking or Should are intentionally not inferred from prose.
+    """
+    if min_checks < 1:
+        raise GhOpsError("--min must be at least 1; zero check runs never counts as green")
+    client, repo, number = _client(client), _repo(repo), int(number)
+    base = f"/repos/{repo}/pulls/{number}"
+    pr = client.get(base)
+    head = (pr.get("head") or {}).get("sha")
+    if not head:
+        raise GhOpsError("PR response is missing head.sha")
+    checks = checks_status(repo, head, min_checks=min_checks, client=client)
+    issue_comments = client.paginate(f"/repos/{repo}/issues/{number}/comments")
+    reviews = client.paginate(base + "/reviews")
+    review_comments = client.paginate(base + "/comments")
+    return {
+        "ok": True,
+        "schema": "gh-ops-pr-observation/1",
+        "repo": repo,
+        "number": number,
+        "state": pr.get("state"),
+        "draft": bool(pr.get("draft")),
+        "merged": bool(pr.get("merged")),
+        "mergeable_state": pr.get("mergeable_state"),
+        "head_sha": head,
+        "head_ref": (pr.get("head") or {}).get("ref"),
+        "base_ref": (pr.get("base") or {}).get("ref"),
+        "checks": checks,
+        "activity": {
+            "issue_comments": _activity_digest(issue_comments),
+            "reviews": _activity_digest(reviews),
+            "review_comments": _activity_digest(review_comments),
+        },
+        "url": pr.get("html_url"),
+    }
+
+
+def pr_observation_diff(before: dict, after: dict) -> dict:
+    """Compare two pr_observe snapshots without network access."""
+    schema = "gh-ops-pr-observation/1"
+    if before.get("schema") != schema or after.get("schema") != schema:
+        raise GhOpsError(f"both snapshots must use schema {schema!r}")
+    if (before.get("repo"), before.get("number")) != (after.get("repo"), after.get("number")):
+        raise GhOpsError("snapshots refer to different pull requests")
+    events = []
+
+    def changed(kind, field):
+        if before.get(field) != after.get(field):
+            events.append({"type": kind, "from": before.get(field), "to": after.get(field)})
+
+    changed("head_changed", "head_sha")
+    changed("state_changed", "state")
+    changed("draft_changed", "draft")
+    if not before.get("merged") and after.get("merged"):
+        events.append({"type": "merged", "from": False, "to": True})
+    elif before.get("merged") != after.get("merged"):
+        events.append({"type": "merged_changed", "from": before.get("merged"), "to": after.get("merged")})
+    old_checks = (before.get("checks") or {}).get("state")
+    new_checks = (after.get("checks") or {}).get("state")
+    if old_checks != new_checks:
+        kind = "ci_became_green" if new_checks == "green" else "ci_failed" if new_checks == "failed" else "ci_state_changed"
+        events.append({"type": kind, "from": old_checks, "to": new_checks})
+    for key in ("issue_comments", "reviews", "review_comments"):
+        old = (before.get("activity") or {}).get(key)
+        new = (after.get("activity") or {}).get(key)
+        if old != new:
+            events.append({"type": key + "_changed", "from": old, "to": new})
+    return {"ok": True, "schema": "gh-ops-pr-observation-diff/1", "repo": after["repo"],
+            "number": after["number"], "changed": bool(events), "events": events}
+
+
+def pr_observation_diff_files(before_path: str, after_path: str) -> dict:
+    """Read two observation JSON files and compare them offline."""
+    try:
+        before = json.loads(Path(before_path).read_text(encoding="utf-8"))
+        after = json.loads(Path(after_path).read_text(encoding="utf-8"))
+    except json.JSONDecodeError as error:
+        raise GhOpsError(f"observation file is not JSON: {error}") from None
+    return pr_observation_diff(before, after)
+
+
 def pr_for_branch(repo: str, branch: str, *, state: str = "all", client: Client | None = None) -> dict:
     """PRs whose head is ``branch``: number, state, merged, head SHA, base, and URL.
 
@@ -540,6 +656,43 @@ def workflow_state(repo: str, workflow: str, *, client: Client | None = None) ->
 
 
 # --- write operations (dry run unless write=True) ---------------------------------
+
+def issue_comment_create(repo: str, number: int, *, body: str, write: bool = False,
+                         client: Client | None = None) -> dict:
+    """Create one top-level PR conversation comment, dry-run by default.
+
+    The PR endpoint is read first so an Issue number cannot be mistaken for a
+    PR. After a successful POST the returned comment id is re-read and the body
+    is verified. If post-write verification fails, posted remains true and the
+    result tells callers to inspect the conversation before any retry.
+    """
+    if not body.strip():
+        raise GhOpsError("comment body must not be empty")
+    client, repo, number = _client(client), _repo(repo), int(number)
+    pr = client.get(f"/repos/{repo}/pulls/{number}")
+    path = f"/repos/{repo}/issues/{number}/comments"
+    if not write:
+        return {"ok": True, "dry_run": True, "posted": False, "number": number,
+                "head_sha": (pr.get("head") or {}).get("sha"), "body_chars": len(body),
+                "would_post": {"path": path, "body": {"body": body}}}
+    response = client.request("POST", path, {"body": body}, expect=(201,))
+    data = response.data if isinstance(response.data, dict) else {}
+    comment_id = data.get("id")
+    if comment_id is None:
+        return {"ok": False, "dry_run": False, "posted": True, "number": number, "comment_id": None,
+                "verified": False,
+                "reason": "comment POST returned success without an id; inspect the PR conversation before retrying"}
+    try:
+        observed = client.get(f"/repos/{repo}/issues/comments/{int(comment_id)}")
+    except GhOpsError as error:
+        return {"ok": False, "dry_run": False, "posted": True, "number": number, "comment_id": comment_id,
+                "verified": False,
+                "reason": f"comment was posted but verification failed; inspect before retrying: {error}"}
+    verified = (observed.get("body") or "") == body
+    return {"ok": verified, "dry_run": False, "posted": True, "number": number, "comment_id": comment_id,
+            "url": observed.get("html_url") or data.get("html_url"), "verified": verified,
+            "reason": "" if verified else "comment was posted but body verification differed; inspect before retrying"}
+
 
 def workflow_dispatch(repo: str, workflow: str, *, ref: str, inputs: dict | None = None, write: bool = False,
                       client: Client | None = None) -> dict:
@@ -939,6 +1092,19 @@ def _render(command: str, result: dict) -> str:
         return (f"#{r['number']} {r['state']} draft={r['draft']} merged={r['merged']} mergeable={r['mergeable']} "
                 f"({r['mergeable_state']}) head={str(r['head_sha'])[:12]} {r['head_ref']} -> {r['base_ref']} "
                 f"commits={r['commits']} files={r['changed_files']} +{r['additions']}/-{r['deletions']}")
+    if command == "pr-observe":
+        r = result
+        checks = r["checks"]
+        return (f"#{r['number']} {r['state']} draft={r['draft']} merged={r['merged']} "
+                f"head={str(r['head_sha'])[:12]} checks={checks['state']} "
+                f"({checks['succeeded']} success/{checks['failed']} failed/{checks['pending']} pending, "
+                f"{checks['total']} total) comments={r['activity']['issue_comments']['count']} "
+                f"reviews={r['activity']['reviews']['count']} inline={r['activity']['review_comments']['count']}")
+    if command == "pr-diff":
+        if not result["events"]:
+            return f"#{result['number']} no meaningful snapshot changes"
+        return "\n".join([f"#{result['number']} {len(result['events'])} change(s)"] + [
+            f"  {event['type']}: {event.get('from')!r} -> {event.get('to')!r}" for event in result["events"]])
     if command == "checks-wait":
         lines = [f"{'OK' if result['ok'] else 'NG'} {result['sha'][:12]}: {result['succeeded']} success, "
                  f"{result['failed']} failed, {result['pending']} pending of {result['total']}"
@@ -1011,6 +1177,13 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("pr-status", help="one-line PR state")
     p.add_argument("repo"); p.add_argument("number", type=int)
 
+    p = sub.add_parser("pr-observe", help="snapshot PR/head/check/review activity for later diffing")
+    p.add_argument("repo"); p.add_argument("number", type=int)
+    p.add_argument("--min", type=int, default=1, dest="min_checks")
+
+    p = sub.add_parser("pr-diff", help="compare two saved pr-observe JSON snapshots offline")
+    p.add_argument("before"); p.add_argument("after")
+
     p = sub.add_parser("checks-wait", help="wait for check runs on a SHA and report conclusions/annotations")
     p.add_argument("repo"); p.add_argument("sha")
     p.add_argument("--min", type=int, default=1, dest="min_checks")
@@ -1028,6 +1201,11 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("workflow-dispatch", help="trigger workflow_dispatch (needs --write)")
     p.add_argument("repo"); p.add_argument("workflow")
     p.add_argument("--ref", required=True)
+    p.add_argument("--write", action="store_true")
+
+    p = sub.add_parser("issue-comment", help="create a top-level PR conversation comment (needs --write)")
+    p.add_argument("repo"); p.add_argument("number", type=int)
+    p.add_argument("--file", required=True, help="UTF-8 file containing the comment body (one trailing newline ignored)")
     p.add_argument("--write", action="store_true")
 
     p = sub.add_parser("pr-body-replace", help="replace an anchor that occurs exactly once (needs --write)")
@@ -1120,6 +1298,10 @@ def run_command(args: argparse.Namespace, client: Client | None = None) -> dict:
         return pr_for_branch(args.repo, args.branch, state=args.state, client=client)
     if command == "pr-status":
         return pr_status(args.repo, args.number, client=client)
+    if command == "pr-observe":
+        return pr_observe(args.repo, args.number, min_checks=args.min_checks, client=client)
+    if command == "pr-diff":
+        return pr_observation_diff_files(args.before, args.after)
     if command == "checks-wait":
         return checks_wait(args.repo, args.sha, min_checks=args.min_checks, timeout=args.timeout,
                            interval=args.interval, client=client)
@@ -1129,6 +1311,9 @@ def run_command(args: argparse.Namespace, client: Client | None = None) -> dict:
         return workflow_state(args.repo, args.workflow, client=client)
     if command == "workflow-dispatch":
         return workflow_dispatch(args.repo, args.workflow, ref=args.ref, write=args.write, client=client)
+    if command == "issue-comment":
+        return issue_comment_create(args.repo, args.number, body=_read_text(args.file),
+                                    write=args.write, client=client)
     if command == "pr-body-replace":
         return pr_body_replace(args.repo, args.number, old=_read_text(args.old), new=_read_text(args.new),
                                write=args.write, client=client)
