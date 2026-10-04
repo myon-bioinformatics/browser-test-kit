@@ -218,7 +218,7 @@ def test_same_child_junit_xprobe_and_btk_bridge(tmp_path):
         json.dumps({"without_junit": plain.returncode, "with_junit": result.returncode}),
         encoding="utf-8",
     )
-    assert plain.returncode == result.returncode == 1, result.stdout + result.stderr
+    assert plain.returncode == result.returncode == 1, plain.stdout + plain.stderr + result.stdout + result.stderr
     events = _read_events(events_path)
     assert all(e["schema"] == "btk-event/1" and e["project"] == repository
                and e["run_id"] == run_id for e in events)
