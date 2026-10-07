@@ -148,6 +148,25 @@ def test_pr_status_summary(capsys):
     )
 
 
+def test_pr_head_identity_uses_ghi_comparison_contract():
+    client, stub = client_for({("GET", "/repos/octo/demo/pulls/11"): reply(pr_payload())})
+    result = gh_ops.compare_pr_head_identity(REPO, 11, {"sha": HEAD.upper()}, client=client)
+    assert result["schema"] == "gh-identity-comparison/1"
+    assert result["comparable"] is True and result["same"] is True
+    assert result["local_sha"] == HEAD and result["remote_sha"] == HEAD
+    assert result["head_ref"] == "feature" and result["base_ref"] == "main"
+    assert stub.methods == ["GET"]
+
+
+def test_pr_head_identity_preserves_unknown_and_mismatch():
+    for local, expected in [({"sha": None}, None), ({"sha": OTHER}, False)]:
+        client, _ = client_for({("GET", "/repos/octo/demo/pulls/11"): reply(pr_payload())})
+        result = gh_ops.compare_pr_head_identity(REPO, 11, local, client=client)
+        assert result["same"] is expected
+        assert result["comparable"] is (expected is not None)
+
+
+
 def observe_routes(*, checks=None, issue_comments=(), reviews=(), review_comments=(), pr=None):
     return {
         ("GET", "/repos/octo/demo/pulls/11"): reply(pr or pr_payload()),
