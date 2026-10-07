@@ -323,11 +323,16 @@ def _check_runs(client: Client, repo: str, sha: str) -> list:
 
 
 def _summarize_checks(runs: list, min_checks: int) -> dict:
-    pending = [run for run in runs if run.get("status") != "completed"]
-    failed = [run for run in runs if run.get("status") == "completed" and run.get("conclusion") not in PASSING_CONCLUSIONS]
-    succeeded = [run for run in runs if run.get("conclusion") == "success"]
-    if len(runs) < min_checks:
-        reason = f"only {len(runs)} check run(s), expected at least {min_checks}"
+    """Compatibility shape over GHI's canonical pure check classification."""
+    summary = gh_identity.summarize_checks(runs, len(runs), min_checks)
+    normalized = summary["checks"]
+    pending = [run for run in normalized if run.get("status") != "completed"]
+    failed = [run for run in normalized
+              if run.get("status") == "completed" and
+              run.get("conclusion") not in PASSING_CONCLUSIONS]
+    succeeded = [run for run in normalized if run.get("conclusion") == "success"]
+    if len(normalized) < min_checks:
+        reason = f"only {len(normalized)} check run(s), expected at least {min_checks}"
     elif pending:
         reason = f"{len(pending)} check run(s) still pending"
     elif failed:
@@ -337,22 +342,15 @@ def _summarize_checks(runs: list, min_checks: int) -> dict:
     else:
         reason = ""
     return {
-        "ok": not reason,
+        "ok": summary["state"] == "green",
         "reason": reason,
-        "total": len(runs),
+        "total": summary["count"],
         "pending": len(pending),
         "failed": len(failed),
         "succeeded": len(succeeded),
         "runs": [
-            {
-                "id": run.get("id"),
-                "name": run.get("name"),
-                "status": run.get("status"),
-                "conclusion": run.get("conclusion"),
-                "head_sha": run.get("head_sha"),
-                "annotations_count": (run.get("output") or {}).get("annotations_count", 0),
-            }
-            for run in runs
+            {**run, "head_sha": original.get("head_sha")}
+            for run, original in zip(normalized, runs)
         ],
     }
 
