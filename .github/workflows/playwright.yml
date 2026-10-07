@@ -74,6 +74,8 @@ jobs:
           name: vendor-snapshot
           path: |
             vendor.lock.json
+            scripts/gh_identity.py
+            scripts/gh_identity-LICENSE
             scripts/myon-bioinformatics-LICENSE
             tests/vendor/xprobe/xprobe.py
             tests/vendor/xprobe/LICENSE
@@ -194,6 +196,8 @@ jobs:
           name: vendor-lock-py3.13
           path: |
             vendor.lock.json
+            scripts/gh_identity.py
+            scripts/gh_identity-LICENSE
             scripts/myon-bioinformatics-LICENSE
             tests/vendor/xprobe/xprobe.py
             tests/vendor/xprobe/LICENSE
@@ -279,6 +283,8 @@ jobs:
         name: locked-vendor-lock-py3.13
         path: |
           vendor.lock.json
+          scripts/gh_identity.py
+          scripts/gh_identity-LICENSE
           scripts/myon-bioinformatics-LICENSE
           tests/vendor/xprobe/xprobe.py
           tests/vendor/xprobe/LICENSE
