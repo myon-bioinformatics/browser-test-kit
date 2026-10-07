@@ -104,7 +104,10 @@ def test_public_vendor_ci_updates_without_repository_writes():
         upload = next(s for s in steps if s.get('name') == name)
         assert upload['if'] == 'always()'
         assert upload['with']['if-no-files-found'] == 'error'
-        expected = set(SNAPSHOT)\n        if steps is resolve:\n            expected.add('vendor-promotion.json')\n        assert set(upload['with']['path'].splitlines()) == expected
+        expected = set(SNAPSHOT)
+        if steps is resolve:
+            expected.add('vendor-promotion.json')
+        assert set(upload['with']['path'].splitlines()) == expected
     pins = [s['with']['ref'] for steps in (resolve,test) for s in steps
             if s.get('with',{}).get('repository') == 'myon-bioinformatics/myon-bioinformatics']
     assert pins == ['08dc3757deeb930c950bdcc6bd55ec3112ba49fc'] * 2
