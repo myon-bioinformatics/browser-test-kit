@@ -148,6 +148,23 @@ def test_pr_status_summary(capsys):
     )
 
 
+def test_gh_ops_loads_adjacent_ghi_without_scripts_on_sys_path(tmp_path):
+    code = (
+        "import importlib.util, pathlib, sys; "
+        "p=pathlib.Path(r'" + str(SCRIPTS / "gh_ops.py") + "'); "
+        "spec=importlib.util.spec_from_file_location('isolated_gh_ops', p); "
+        "m=importlib.util.module_from_spec(spec); sys.modules['isolated_gh_ops']=m; "
+        "spec.loader.exec_module(m); "
+        "print(m.gh_identity.__file__)"
+    )
+    env = dict(os.environ)
+    env.pop("PYTHONPATH", None)
+    done = subprocess.run([sys.executable, "-S", "-c", code], cwd=tmp_path,
+                          env=env, capture_output=True, text=True, check=False)
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.strip().endswith("scripts/gh_identity.py")
+
+
 def test_pr_head_identity_uses_ghi_comparison_contract():
     client, stub = client_for({("GET", "/repos/octo/demo/pulls/11"): reply(pr_payload())})
     result = gh_ops.compare_pr_head_identity(REPO, 11, {"sha": HEAD.upper()}, client=client)
