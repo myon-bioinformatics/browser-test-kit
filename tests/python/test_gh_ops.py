@@ -18,6 +18,11 @@ assert spec.loader
 sys.modules["gh_ops"] = gh_ops
 spec.loader.exec_module(gh_ops)
 
+ghi_spec = importlib.util.spec_from_file_location("gh_identity", SCRIPTS / "gh_identity.py")
+gh_identity = importlib.util.module_from_spec(ghi_spec)
+assert ghi_spec.loader
+ghi_spec.loader.exec_module(gh_identity)
+
 REPO = "octo/demo"
 HEAD = "ecfd0ba1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7"
 OTHER = "ecfd0ba9999999999999999999999999999999aa"
@@ -136,6 +141,39 @@ def test_issue_comments_cli_prints_one_line_per_comment(capsys):
     assert out[3].startswith("[2] ")
     assert out[4:] == ["--- [1] ---", "comment 1"]
 
+
+
+
+def test_ghi_pr_contract_matches_legacy_pr_status_identity(monkeypatch):
+    payload = pr_payload()
+    client, _ = client_for({("GET", "/repos/octo/demo/pulls/11"): reply(payload)})
+    legacy = gh_ops.pr_status(REPO, 11, client=client)
+    def fake_request(method, path, payload=None, transport="auto", timeout=30, mutating=False):
+        assert method == "GET"
+        assert path == "repos/octo/demo/pulls/11"
+        return pr_payload()
+    monkeypatch.setattr(gh_identity, "request", fake_request)
+    current = gh_identity.pr(REPO, 11)
+    assert current["head_sha"] == legacy["head_sha"]
+    assert current["head_ref"] == legacy["head_ref"]
+    assert current["base_ref"] == legacy["base_ref"]
+    assert current["state"] == legacy["state"]
+    assert current["draft"] == legacy["draft"]
+    assert current["merged"] == legacy["merged"]
+
+
+def test_ghi_checks_contract_matches_legacy_green_identity(monkeypatch):
+    runs = [check_run("unit"), check_run("lint", conclusion="skipped", run_id=2)]
+    client, _ = client_for({("GET", f"/repos/octo/demo/commits/{HEAD}/check-runs"): reply({"check_runs": runs})})
+    legacy = gh_ops.checks_status(REPO, HEAD, min_checks=2, client=client)
+    def fake_request(method, path, payload=None, transport="auto", timeout=30, mutating=False):
+        assert method == "GET"
+        return {"total_count": len(runs), "check_runs": runs}
+    monkeypatch.setattr(gh_identity, "request", fake_request)
+    current = gh_identity.checks_for_sha(REPO, HEAD, min_checks=2)
+    assert current["sha"] == legacy["sha"]
+    assert current["state"] == legacy["state"] == "green"
+    assert current["count"] == legacy["total"] == 2
 
 # --- pr-status / runs / workflow-state ----------------------------------------------
 
