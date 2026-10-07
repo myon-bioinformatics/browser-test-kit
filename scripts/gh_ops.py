@@ -27,6 +27,7 @@ communication error.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import base64
 import difflib
 import json
@@ -42,7 +43,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-import gh_identity
+def _load_adjacent_gh_identity():
+    path = Path(__file__).with_name("gh_identity.py")
+    spec = importlib.util.spec_from_file_location("_btk_gh_identity", path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load vendored gh_identity from {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+gh_identity = _load_adjacent_gh_identity()
 
 API_ROOT = "https://api.github.com"
 PASSING_CONCLUSIONS = frozenset({"success", "neutral", "skipped"})
