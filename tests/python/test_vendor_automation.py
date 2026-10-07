@@ -13,8 +13,10 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = '.github/workflows/playwright.yml'
 TEST_JOB = 'python'
 HELPER = 'tool/sync_vendor_provenance.py'
-SNAPSHOT = ['tests/vendor/xprobe/xprobe.py', 'tests/vendor/xprobe/LICENSE', 'tests/vendor/xprobe/provenance.json', 'scripts/myon-bioinformatics-LICENSE', 'vendor.lock.json', 'scripts/git_inspector.py', 'scripts/git_inspector.provenance.json']
-EXPECTED = {('myon-bioinformatics/xprobe', 'xprobe.py', 'tests/vendor/xprobe/xprobe.py'),
+SNAPSHOT = ['scripts/gh_identity.py', 'scripts/gh_identity-LICENSE', 'tests/vendor/xprobe/xprobe.py', 'tests/vendor/xprobe/LICENSE', 'tests/vendor/xprobe/provenance.json', 'scripts/myon-bioinformatics-LICENSE', 'vendor.lock.json', 'scripts/git_inspector.py', 'scripts/git_inspector.provenance.json']
+EXPECTED = {('myon-bioinformatics/gh_identity', 'gh_identity.py', 'scripts/gh_identity.py'),
+ ('myon-bioinformatics/gh_identity', 'LICENSE', 'scripts/gh_identity-LICENSE'),
+ ('myon-bioinformatics/xprobe', 'xprobe.py', 'tests/vendor/xprobe/xprobe.py'),
  ('myon-bioinformatics/xprobe', 'LICENSE', 'tests/vendor/xprobe/LICENSE'),
  ('myon-bioinformatics/myon-bioinformatics', 'LICENSE', 'scripts/myon-bioinformatics-LICENSE'),
  ('myon-bioinformatics/myon-bioinformatics', 'git_inspector.py', 'scripts/git_inspector.py')}
