@@ -218,6 +218,8 @@ def test_pr_observe_rejects_snapshot_if_head_changes_during_reads():
     result = gh_ops.pr_observe(REPO, 11, client=client)
     assert result["ok"] is False and result["stale"] is True
     assert result["observed_head_sha"] == HEAD and result["current_head_sha"] == OTHER
+    assert result["identity"]["schema"] == "gh-identity-comparison/1"
+    assert result["identity"]["comparable"] is True and result["identity"]["same"] is False
     assert "discard this snapshot" in result["reason"]
     assert stub.methods.count("GET") == 6
 
