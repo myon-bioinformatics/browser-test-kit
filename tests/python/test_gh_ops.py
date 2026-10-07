@@ -18,6 +18,11 @@ assert spec.loader
 sys.modules["gh_ops"] = gh_ops
 spec.loader.exec_module(gh_ops)
 
+ghi_spec = importlib.util.spec_from_file_location("gh_identity", SCRIPTS / "gh_identity.py")
+gh_identity = importlib.util.module_from_spec(ghi_spec)
+assert ghi_spec.loader
+ghi_spec.loader.exec_module(gh_identity)
+
 REPO = "octo/demo"
 HEAD = "ecfd0ba1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7"
 OTHER = "ecfd0ba9999999999999999999999999999999aa"
@@ -146,6 +151,28 @@ def test_pr_status_summary(capsys):
         "#11 open draft=False merged=False mergeable=True (clean) head=ecfd0ba1c2d3 feature -> main "
         "commits=2 files=3 +10/-2"
     )
+
+
+
+def test_pr_status_head_sha_has_ghi_identity_parity():
+    client, _ = client_for({("GET", "/repos/octo/demo/pulls/11"): reply(pr_payload())})
+    status = gh_ops.pr_status(REPO, 11, client=client)
+    identity = gh_identity.local_identity(identity={
+        "sha": HEAD.upper(), "ref": "feature", "dirty": None, "source": "fixture",
+    })
+    comparison = gh_identity.compare_sha(identity, status["head_sha"])
+    assert comparison["schema"] == "gh-identity-comparison/1"
+    assert comparison["comparable"] is True
+    assert comparison["same"] is True
+    assert comparison["remote_sha"] == HEAD
+
+
+def test_pr_status_missing_head_stays_unknown_in_ghi_comparison():
+    client, _ = client_for({("GET", "/repos/octo/demo/pulls/11"): reply(pr_payload(head={}))})
+    status = gh_ops.pr_status(REPO, 11, client=client)
+    comparison = gh_identity.compare_sha({"sha": HEAD}, status["head_sha"])
+    assert comparison["comparable"] is False
+    assert comparison["same"] is None
 
 
 def observe_routes(*, checks=None, issue_comments=(), reviews=(), review_comments=(), pr=None):
