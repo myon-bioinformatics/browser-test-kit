@@ -42,6 +42,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+import gh_identity
+
 API_ROOT = "https://api.github.com"
 PASSING_CONCLUSIONS = frozenset({"success", "neutral", "skipped"})
 MERGE_METHODS = ("merge", "squash", "rebase")
@@ -295,6 +297,15 @@ def pr_status(repo: str, number: int, *, client: Client | None = None) -> dict:
         "deletions": pr.get("deletions"),
         "url": pr.get("html_url"),
     }
+
+
+def compare_pr_head_identity(repo: str, number: int, local: dict, *, client: Client | None = None) -> dict:
+    """Compare a caller-supplied local identity with the current PR head via GHI."""
+    status = pr_status(repo, number, client=client)
+    result = gh_identity.compare_sha(local, status.get("head_sha"))
+    return {**result, "repo": repo, "number": int(number), "head_ref": status.get("head_ref"),
+            "base_ref": status.get("base_ref")}
+
 
 
 def _check_runs(client: Client, repo: str, sha: str) -> list:
