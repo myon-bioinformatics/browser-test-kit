@@ -148,6 +148,42 @@ def test_pr_status_summary(capsys):
     )
 
 
+def test_gh_ops_loads_adjacent_ghi_without_scripts_on_sys_path(tmp_path):
+    code = (
+        "import importlib.util, pathlib, sys; "
+        "p=pathlib.Path(r'" + str(SCRIPTS / "gh_ops.py") + "'); "
+        "spec=importlib.util.spec_from_file_location('isolated_gh_ops', p); "
+        "m=importlib.util.module_from_spec(spec); sys.modules['isolated_gh_ops']=m; "
+        "spec.loader.exec_module(m); "
+        "print(m.gh_identity.__file__)"
+    )
+    env = dict(os.environ)
+    env.pop("PYTHONPATH", None)
+    done = subprocess.run([sys.executable, "-S", "-c", code], cwd=tmp_path,
+                          env=env, capture_output=True, text=True, check=False)
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.strip().endswith("scripts/gh_identity.py")
+
+
+def test_pr_head_identity_uses_ghi_comparison_contract():
+    client, stub = client_for({("GET", "/repos/octo/demo/pulls/11"): reply(pr_payload())})
+    result = gh_ops.compare_pr_head_identity(REPO, 11, {"sha": HEAD.upper()}, client=client)
+    assert result["schema"] == "gh-identity-comparison/1"
+    assert result["comparable"] is True and result["same"] is True
+    assert result["local_sha"] == HEAD and result["remote_sha"] == HEAD
+    assert result["head_ref"] == "feature" and result["base_ref"] == "main"
+    assert stub.methods == ["GET"]
+
+
+def test_pr_head_identity_preserves_unknown_and_mismatch():
+    for local, expected in [({"sha": None}, None), ({"sha": OTHER}, False)]:
+        client, _ = client_for({("GET", "/repos/octo/demo/pulls/11"): reply(pr_payload())})
+        result = gh_ops.compare_pr_head_identity(REPO, 11, local, client=client)
+        assert result["same"] is expected
+        assert result["comparable"] is (expected is not None)
+
+
+
 def observe_routes(*, checks=None, issue_comments=(), reviews=(), review_comments=(), pr=None):
     return {
         ("GET", "/repos/octo/demo/pulls/11"): reply(pr or pr_payload()),
@@ -199,6 +235,8 @@ def test_pr_observe_rejects_snapshot_if_head_changes_during_reads():
     result = gh_ops.pr_observe(REPO, 11, client=client)
     assert result["ok"] is False and result["stale"] is True
     assert result["observed_head_sha"] == HEAD and result["current_head_sha"] == OTHER
+    assert result["identity"]["schema"] == "gh-identity-comparison/1"
+    assert result["identity"]["comparable"] is True and result["identity"]["same"] is False
     assert "discard this snapshot" in result["reason"]
     assert stub.methods.count("GET") == 6
 

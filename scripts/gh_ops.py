@@ -27,6 +27,7 @@ communication error.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import base64
 import difflib
 import json
@@ -41,6 +42,17 @@ import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional
+
+def _load_adjacent_gh_identity():
+    path = Path(__file__).with_name("gh_identity.py")
+    spec = importlib.util.spec_from_file_location("_btk_gh_identity", path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load vendored gh_identity from {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+gh_identity = _load_adjacent_gh_identity()
 
 API_ROOT = "https://api.github.com"
 PASSING_CONCLUSIONS = frozenset({"success", "neutral", "skipped"})
@@ -297,6 +309,15 @@ def pr_status(repo: str, number: int, *, client: Client | None = None) -> dict:
     }
 
 
+def compare_pr_head_identity(repo: str, number: int, local: dict, *, client: Client | None = None) -> dict:
+    """Compare a caller-supplied local identity with the current PR head via GHI."""
+    status = pr_status(repo, number, client=client)
+    result = gh_identity.compare_sha(local, status.get("head_sha"))
+    return {**result, "repo": repo, "number": int(number), "head_ref": status.get("head_ref"),
+            "base_ref": status.get("base_ref")}
+
+
+
 def _check_runs(client: Client, repo: str, sha: str) -> list:
     return client.paginate(f"/repos/{repo}/commits/{sha}/check-runs", key="check_runs")
 
@@ -397,9 +418,11 @@ def pr_observe(repo: str, number: int, *, min_checks: int = 1, client: Client | 
     review_comments = client.paginate(base + "/comments")
     final_pr = client.get(base)
     final_head = (final_pr.get("head") or {}).get("sha")
-    if final_head != head:
+    head_identity = gh_identity.compare_sha({"sha": head}, final_head)
+    if not head_identity["same"]:
         return {"ok": False, "schema": "gh-ops-pr-observation/1", "repo": repo, "number": number,
                 "stale": True, "observed_head_sha": head, "current_head_sha": final_head,
+                "identity": head_identity,
                 "reason": "PR head changed during observation; discard this snapshot and retry"}
     return {
         "ok": True,
