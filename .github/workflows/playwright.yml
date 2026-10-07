@@ -53,7 +53,8 @@ jobs:
         shell: bash
         if: inputs.vendor-mode != 'locked'
         run: |
-          python -S .vendor-sync-tools/vendor_sync.py update --manifest vendor.lock.json
+          python -S .vendor-sync-tools/vendor_sync.py promote --manifest vendor.lock.json | tee vendor-promotion.json
+          python -S -m json.tool vendor-promotion.json > /dev/null
           python -S .vendor-sync-tools/vendor_sync.py check --manifest vendor.lock.json
       - name: Refresh legacy provenance from the verified lock
         run: python -S tool/sync_vendor_provenance.py
@@ -74,6 +75,7 @@ jobs:
           name: vendor-snapshot
           path: |
             vendor.lock.json
+            vendor-promotion.json
             scripts/gh_identity.py
             scripts/gh_identity-LICENSE
             scripts/myon-bioinformatics-LICENSE
