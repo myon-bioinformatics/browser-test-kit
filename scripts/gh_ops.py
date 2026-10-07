@@ -408,9 +408,11 @@ def pr_observe(repo: str, number: int, *, min_checks: int = 1, client: Client | 
     review_comments = client.paginate(base + "/comments")
     final_pr = client.get(base)
     final_head = (final_pr.get("head") or {}).get("sha")
-    if final_head != head:
+    head_identity = gh_identity.compare_sha({"sha": head}, final_head)
+    if not head_identity["same"]:
         return {"ok": False, "schema": "gh-ops-pr-observation/1", "repo": repo, "number": number,
                 "stale": True, "observed_head_sha": head, "current_head_sha": final_head,
+                "identity": head_identity,
                 "reason": "PR head changed during observation; discard this snapshot and retry"}
     return {
         "ok": True,
