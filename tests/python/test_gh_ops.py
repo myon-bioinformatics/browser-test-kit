@@ -218,6 +218,21 @@ def test_pr_observe_binds_green_checks_and_activity_to_current_head(capsys):
     assert "checks=green" in capsys.readouterr().out
 
 
+def test_check_summary_delegates_classification_to_ghi(monkeypatch):
+    calls = []
+    real = gh_ops.gh_identity.summarize_checks
+    def wrapped(rows, expected_count, min_checks=1):
+        calls.append((rows, expected_count, min_checks))
+        return real(rows, expected_count, min_checks)
+    monkeypatch.setattr(gh_ops.gh_identity, "summarize_checks", wrapped)
+    runs = [check_run("unit", annotations=3)]
+    result = gh_ops._summarize_checks(runs, 1)
+    assert result["ok"] is True
+    assert result["runs"][0]["head_sha"] == HEAD
+    assert result["runs"][0]["annotations_count"] == 3
+    assert calls == [(runs, 1, 1)]
+
+
 def test_pr_observe_zero_checks_is_pending_not_green():
     client, _ = client_for(observe_routes(checks=[]))
     result = gh_ops.pr_observe(REPO, 11, client=client)
