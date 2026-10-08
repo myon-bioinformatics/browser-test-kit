@@ -1,0 +1,309 @@
+name: playwright-prototype
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      vendor-mode:
+        description: Public vendor placement mode for this CI run
+        type: choice
+        options: [update, locked]
+        default: update
+
+jobs:
+  resolve-vendor:
+    permissions:
+      contents: read
+    needs: changes
+    if: needs.changes.outputs.non_docs_changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Fetch pinned shared vendor tool
+        uses: actions/checkout@v7
+        with:
+          repository: myon-bioinformatics/myon-bioinformatics
+          ref: 017f614c44cf841fc584ac78bd7d9e433a1ecc1f
+          path: .vendor-sync-tools
+          persist-credentials: false
+      - name: Verify checked-in vendor copies
+        run: python -S .vendor-sync-tools/vendor_sync.py check --manifest vendor.lock.json
+      - name: Save checked-in vendor identities
+        run: cp vendor.lock.json .vendor-baseline.lock.json
+      - name: Recreate locked vendor files from GitHub
+        shell: bash
+        run: |
+          python -S - <<'PY'
+          import json
+          from pathlib import Path
+          for entry in json.loads(Path('vendor.lock.json').read_text(encoding='utf-8'))['files']:
+              Path(entry['destination']).unlink()
+          PY
+          python -S .vendor-sync-tools/vendor_sync.py materialize --manifest vendor.lock.json
+          python -S .vendor-sync-tools/vendor_sync.py check --manifest vendor.lock.json
+      - name: Update public vendor files for this run
+        id: vendor-update
+        shell: bash
+        if: inputs.vendor-mode != 'locked'
+        run: |
+          python -S .vendor-sync-tools/vendor_sync.py promote --manifest vendor.lock.json | tee vendor-promotion.json
+          python -S -m json.tool vendor-promotion.json > /dev/null
+          python -S .vendor-sync-tools/vendor_sync.py check --manifest vendor.lock.json
+      - name: Refresh legacy provenance from the verified lock
+        run: python -S tool/sync_vendor_provenance.py
+      - name: Summarize snapshot and checked-in baseline
+        if: always()
+        shell: bash
+        env:
+          VENDOR_UPDATE_OUTCOME: ${{ steps.vendor-update.outcome }}
+        run: >-
+          python -S tool/sync_vendor_provenance.py
+          --summary-baseline .vendor-baseline.lock.json
+          --summary-output "$GITHUB_STEP_SUMMARY"
+          --update-outcome "$VENDOR_UPDATE_OUTCOME"
+      - name: Stage canonical vendor evidence
+        if: always()
+        env:
+          VENDOR_EVIDENCE_KIND: ${{ inputs.vendor-mode == 'locked' && 'locked' || 'candidate' }}
+        run: >-
+          python -S .vendor-sync-tools/vendor_stage.py
+          --kind "$VENDOR_EVIDENCE_KIND" --output build/vendor-evidence-candidate
+          --legacy-evidence scripts/git_inspector.provenance.json
+          --legacy-evidence tests/vendor/xprobe/provenance.json
+          --promotion-receipt vendor-promotion.json
+      - name: Preserve resolved vendor snapshot
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: vendor-snapshot
+          path: build/vendor-evidence-candidate
+          if-no-files-found: error
+          retention-days: 14
+
+  changes:
+    name: Change detection
+    uses: myon-bioinformatics/myon-bioinformatics/.github/workflows/reusable-change-detection.yml@main
+
+  node:
+    needs: changes
+    if: needs.changes.outputs.non_docs_changed == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with: { node-version: '22' }
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium firefox webkit
+      - run: npm run test:node
+      - name: Validate Node screenshots
+        if: always()
+        run: python3 scripts/check_evidence.py test-results --pattern '**/evidence.json' --expect chromium,firefox,webkit,mobile-chromium,mobile-webkit
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with: { name: node-browser-evidence, path: test-results, if-no-files-found: error }
+  python:
+    permissions:
+      contents: read
+    needs: [changes, resolve-vendor]
+    if: needs.changes.outputs.non_docs_changed == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with: { python-version: '3.13' }
+      - name: Fetch pinned shared vendor tool
+        uses: actions/checkout@v7
+        with:
+          repository: myon-bioinformatics/myon-bioinformatics
+          ref: 017f614c44cf841fc584ac78bd7d9e433a1ecc1f
+          path: .vendor-sync-tools
+          persist-credentials: false
+      - name: Download resolved vendor snapshot
+        uses: actions/download-artifact@v8
+        with:
+          name: vendor-snapshot
+          path: .
+      - name: Verify resolved vendor snapshot
+        shell: bash
+        run: |
+          python -S .vendor-sync-tools/vendor_sync.py check --manifest vendor.lock.json
+          python -S tool/sync_vendor_provenance.py
+      - run: python -m pip install -r requirements-test.txt
+      - run: python -m playwright install --with-deps chromium firefox webkit
+      - name: Run Python tests with JUnit
+        env:
+          BTK_FAILURE_EVIDENCE: test-results/controlled-failure
+        run: python -m pytest tests/python -q --junitxml=test-results/junit/python-3.13.xml
+      - name: Preserve junit-python-3.13
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: junit-python-3.13
+          path: test-results/junit/python-3.13.xml
+          if-no-files-found: error
+          retention-days: 14
+      - name: Preserve junit-controlled-python-3.13
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: junit-controlled-python-3.13
+          path: test-results/controlled-failure/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Validate Python API screenshots
+        if: always()
+        run: python scripts/check_evidence.py test-results/python --pattern '*.json' --expect chromium-desktop,chromium-mobile,firefox-desktop,firefox-mobile,webkit-desktop,webkit-mobile
+      - name: Python Playwright CLI screenshot
+        run: |
+          python -m playwright screenshot --browser=chromium --device="Desktop Chrome" --full-page "file://$GITHUB_WORKSPACE/fixtures/index.html" test-results/python-cli-chromium.png
+          python -m playwright screenshot --browser=webkit --device="iPhone 13" --full-page "file://$GITHUB_WORKSPACE/fixtures/index.html" test-results/python-cli-webkit-mobile.png
+          python scripts/check_png.py test-results/python-cli-chromium.png test-results/python-cli-webkit-mobile.png
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: python-browser-evidence
+          path: |
+            test-results
+            !test-results/junit/**
+            !test-results/controlled-failure/**
+          if-no-files-found: error
+      - name: Wrapper tests with btk-events plugin enabled
+        run: |
+          PYTHONPATH=scripts python -m pytest tests/python/test_terminal_browser_wrapper.py -p pytest_btk_events --btk-events test-results/btk-events.jsonl --btk-events-run-id "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+      - name: Evidence board
+        if: always()
+        run: python scripts/evidence_board.py test-results/btk-events.jsonl --step-summary
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with: { name: btk-events, path: test-results/btk-events.jsonl }
+      - name: Scripts install and run as modules (python -m)
+        run: |
+          python -m pip install .
+          cd "$RUNNER_TEMP"
+          python -m check_png --help
+
+      - name: Stage canonical vendor evidence
+        if: always()
+        env:
+          VENDOR_EVIDENCE_KIND: ${{ inputs.vendor-mode == 'locked' && 'locked' || 'candidate' }}
+        run: >-
+          python -S .vendor-sync-tools/vendor_stage.py
+          --kind "$VENDOR_EVIDENCE_KIND" --output build/vendor-evidence-test
+          --legacy-evidence scripts/git_inspector.provenance.json
+          --legacy-evidence tests/vendor/xprobe/provenance.json
+          --promotion-receipt vendor-promotion.json
+      - name: Preserve vendor lock used by this run
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: vendor-lock-py3.13
+          path: build/vendor-evidence-test
+          if-no-files-found: error
+          retention-days: 14
+
+  test-locked:
+    permissions:
+      contents: read
+    needs: changes
+    if: needs.changes.outputs.non_docs_changed == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
+    - uses: actions/setup-python@v7
+      with:
+        python-version: '3.13'
+    - name: Fetch pinned shared vendor tool
+      uses: actions/checkout@v7
+      with:
+        repository: myon-bioinformatics/myon-bioinformatics
+        ref: 017f614c44cf841fc584ac78bd7d9e433a1ecc1f
+        path: .vendor-sync-tools
+        persist-credentials: false
+    - name: Verify checked-in vendor copies
+      run: python -S .vendor-sync-tools/vendor_sync.py check --manifest vendor.lock.json
+    - name: Recreate locked vendor files from GitHub
+      shell: bash
+      run: |
+        python -S - <<'PY'
+        import json
+        from pathlib import Path
+        for entry in json.loads(Path('vendor.lock.json').read_text(encoding='utf-8'))['files']:
+            Path(entry['destination']).unlink()
+        PY
+        python -S .vendor-sync-tools/vendor_sync.py materialize --manifest vendor.lock.json
+        python -S .vendor-sync-tools/vendor_sync.py check --manifest vendor.lock.json
+    - name: Refresh legacy provenance from the verified lock
+      run: python -S tool/sync_vendor_provenance.py
+    - run: python -m pip install -r requirements-test.txt
+    - run: python -m playwright install --with-deps chromium firefox webkit
+    - run: python -m pytest tests/python -q
+    - name: Validate Python API screenshots
+      if: always()
+      run: python scripts/check_evidence.py test-results/python --pattern '*.json' --expect chromium-desktop,chromium-mobile,firefox-desktop,firefox-mobile,webkit-desktop,webkit-mobile
+    - name: Python Playwright CLI screenshot
+      run: |
+        python -m playwright screenshot --browser=chromium --device="Desktop Chrome" --full-page "file://$GITHUB_WORKSPACE/fixtures/index.html" test-results/python-cli-chromium.png
+        python -m playwright screenshot --browser=webkit --device="iPhone 13" --full-page "file://$GITHUB_WORKSPACE/fixtures/index.html" test-results/python-cli-webkit-mobile.png
+        python scripts/check_png.py test-results/python-cli-chromium.png test-results/python-cli-webkit-mobile.png
+    - uses: actions/upload-artifact@v7
+      if: always()
+      with:
+        name: locked-python-browser-evidence
+        path: test-results
+        if-no-files-found: error
+    - name: Wrapper tests with btk-events plugin enabled
+      run: |
+        PYTHONPATH=scripts python -m pytest tests/python/test_terminal_browser_wrapper.py -p pytest_btk_events --btk-events test-results/btk-events.jsonl --btk-events-run-id "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+    - name: Evidence board
+      if: always()
+      run: python scripts/evidence_board.py test-results/btk-events.jsonl --step-summary
+    - uses: actions/upload-artifact@v7
+      if: always()
+      with:
+        name: locked-btk-events
+        path: test-results/btk-events.jsonl
+        if-no-files-found: error
+    - name: Scripts install and run as modules (python -m)
+      run: |
+        python -m pip install .
+        cd "$RUNNER_TEMP"
+        python -m check_png --help
+    - name: Stage canonical vendor evidence
+      if: always()
+      run: >-
+        python -S .vendor-sync-tools/vendor_stage.py
+        --kind locked --output build/vendor-evidence-locked
+        --legacy-evidence scripts/git_inspector.provenance.json
+        --legacy-evidence tests/vendor/xprobe/provenance.json
+    - name: Preserve vendor lock used by this run
+      if: always()
+      uses: actions/upload-artifact@v7
+      with:
+        name: locked-vendor-lock-py3.13
+        path: build/vendor-evidence-locked
+        if-no-files-found: error
+        retention-days: 14
+    name: Locked baseline
+    timeout-minutes: 20
+
+
+  junit-identity:
+    needs: [changes, python]
+    if: always() && needs.changes.outputs.non_docs_changed == 'true'
+    permissions:
+      contents: read
+      actions: read
+    uses: myon-bioinformatics/myon-bioinformatics/.github/workflows/reusable-junit-identity.yml@4dfda95d6573250477f991a0421fa6acb9bc0258
+    with:
+      expected-reports: '["junit-python-3.13/python-3.13.xml", "junit-controlled-python-3.13/junit.xml"]'
