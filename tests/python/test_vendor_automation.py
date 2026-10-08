@@ -17,7 +17,8 @@ LOCK = json.loads((ROOT / 'vendor.lock.json').read_text())
 LEGACY = ['tests/vendor/xprobe/provenance.json', 'scripts/git_inspector.provenance.json']
 SNAPSHOT = ['vendor.lock.json'] + [e['destination'] for e in LOCK['files']] + LEGACY
 EXPECTED = {(e['repository'], e['source'], e['destination']) for e in LOCK['files']}
-PIN = next(e['commit'] for e in LOCK['files'] if e['source'] == 'gh_ops.py')
+# Bootstrap tool checkout stays pinned while candidate source commits advance.
+PIN = '017f614c44cf841fc584ac78bd7d9e433a1ecc1f'
 
 
 def _workflow():
