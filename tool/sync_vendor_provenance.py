@@ -19,9 +19,7 @@ BINDINGS = [['scripts/git_inspector.provenance.json',
    'upstream_path': 'source',
    'upstream_repository': 'repository',
    'vendored_path': 'destination'}]]
-EXPECTED = {('myon-bioinformatics/gh_identity', 'gh_identity.py', 'scripts/gh_identity.py'),
- ('myon-bioinformatics/gh_identity', 'LICENSE', 'scripts/gh_identity-LICENSE'),
- ('myon-bioinformatics/xprobe', 'xprobe.py', 'tests/vendor/xprobe/xprobe.py'),
+EXPECTED = {('myon-bioinformatics/xprobe', 'xprobe.py', 'tests/vendor/xprobe/xprobe.py'),
  ('myon-bioinformatics/xprobe', 'LICENSE', 'tests/vendor/xprobe/LICENSE'),
  ('myon-bioinformatics/myon-bioinformatics', 'LICENSE', 'scripts/myon-bioinformatics-LICENSE'),
  ('myon-bioinformatics/myon-bioinformatics', 'git_inspector.py', 'scripts/git_inspector.py')}
@@ -32,7 +30,9 @@ def records(root):
     if lock["schema"] != "vendor-lock/1":
         raise ValueError("unsupported vendor lock")
     files = lock["files"]
-    if len(files) != len(EXPECTED) or {(e["repository"], e["source"], e["destination"]) for e in files} != EXPECTED:
+    # Explicit legacy bindings are a subset, not a second canonical member list.
+    identities = {(e["repository"], e["source"], e["destination"]) for e in files}
+    if len({e["destination"].casefold() for e in files}) != len(files) or not EXPECTED <= identities:
         raise ValueError("unexpected source or destination")
     by_destination = {e["destination"]: e for e in files}
     for e in files:

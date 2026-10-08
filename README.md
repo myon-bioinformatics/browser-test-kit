@@ -191,6 +191,8 @@ an additional truncation note makes partial-history rankings explicit. The top-N
 file omission note remains independent. Missing/failed Git retains the existing
 `not a git work tree; skipping --churn` message.
 
-Write/network-capable `gh_ops.py` remains separate rollout work.
+`scripts/gh_ops.py` is a lock-managed copy of the parent canonical `gh_ops.py`.
+Generic behavior and its regression suite are maintained in the parent repository;
+this repository tests imports, CLI compatibility and vendor wiring.
 
 Public source placement and automatic Python CI updates: [vendor automation](docs/vendor-automation.md).

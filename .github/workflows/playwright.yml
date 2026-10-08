@@ -30,7 +30,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: myon-bioinformatics/myon-bioinformatics
-          ref: 08dc3757deeb930c950bdcc6bd55ec3112ba49fc
+          ref: 017f614c44cf841fc584ac78bd7d9e433a1ecc1f
           path: .vendor-sync-tools
           persist-credentials: false
       - name: Verify checked-in vendor copies
@@ -68,22 +68,22 @@ jobs:
           --summary-baseline .vendor-baseline.lock.json
           --summary-output "$GITHUB_STEP_SUMMARY"
           --update-outcome "$VENDOR_UPDATE_OUTCOME"
+      - name: Stage canonical vendor evidence
+        if: always()
+        env:
+          VENDOR_EVIDENCE_KIND: ${{ inputs.vendor-mode == 'locked' && 'locked' || 'candidate' }}
+        run: >-
+          python -S .vendor-sync-tools/vendor_stage.py
+          --kind "$VENDOR_EVIDENCE_KIND" --output build/vendor-evidence-candidate
+          --legacy-evidence scripts/git_inspector.provenance.json
+          --legacy-evidence tests/vendor/xprobe/provenance.json
+          --promotion-receipt vendor-promotion.json
       - name: Preserve resolved vendor snapshot
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: vendor-snapshot
-          path: |
-            vendor.lock.json
-            vendor-promotion.json
-            scripts/gh_identity.py
-            scripts/gh_identity-LICENSE
-            scripts/myon-bioinformatics-LICENSE
-            tests/vendor/xprobe/xprobe.py
-            tests/vendor/xprobe/LICENSE
-            tests/vendor/xprobe/provenance.json
-            scripts/git_inspector.py
-            scripts/git_inspector.provenance.json
+          path: build/vendor-evidence-candidate
           if-no-files-found: error
           retention-days: 14
 
@@ -124,7 +124,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: myon-bioinformatics/myon-bioinformatics
-          ref: 08dc3757deeb930c950bdcc6bd55ec3112ba49fc
+          ref: 017f614c44cf841fc584ac78bd7d9e433a1ecc1f
           path: .vendor-sync-tools
           persist-credentials: false
       - name: Download resolved vendor snapshot
@@ -191,21 +191,22 @@ jobs:
           cd "$RUNNER_TEMP"
           python -m check_png --help
 
+      - name: Stage canonical vendor evidence
+        if: always()
+        env:
+          VENDOR_EVIDENCE_KIND: ${{ inputs.vendor-mode == 'locked' && 'locked' || 'candidate' }}
+        run: >-
+          python -S .vendor-sync-tools/vendor_stage.py
+          --kind "$VENDOR_EVIDENCE_KIND" --output build/vendor-evidence-test
+          --legacy-evidence scripts/git_inspector.provenance.json
+          --legacy-evidence tests/vendor/xprobe/provenance.json
+          --promotion-receipt vendor-promotion.json
       - name: Preserve vendor lock used by this run
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: vendor-lock-py3.13
-          path: |
-            vendor.lock.json
-            scripts/gh_identity.py
-            scripts/gh_identity-LICENSE
-            scripts/myon-bioinformatics-LICENSE
-            tests/vendor/xprobe/xprobe.py
-            tests/vendor/xprobe/LICENSE
-            tests/vendor/xprobe/provenance.json
-            scripts/git_inspector.py
-            scripts/git_inspector.provenance.json
+          path: build/vendor-evidence-test
           if-no-files-found: error
           retention-days: 14
 
@@ -226,7 +227,7 @@ jobs:
       uses: actions/checkout@v7
       with:
         repository: myon-bioinformatics/myon-bioinformatics
-        ref: 08dc3757deeb930c950bdcc6bd55ec3112ba49fc
+        ref: 017f614c44cf841fc584ac78bd7d9e433a1ecc1f
         path: .vendor-sync-tools
         persist-credentials: false
     - name: Verify checked-in vendor copies
@@ -278,21 +279,19 @@ jobs:
         python -m pip install .
         cd "$RUNNER_TEMP"
         python -m check_png --help
+    - name: Stage canonical vendor evidence
+      if: always()
+      run: >-
+        python -S .vendor-sync-tools/vendor_stage.py
+        --kind locked --output build/vendor-evidence-locked
+        --legacy-evidence scripts/git_inspector.provenance.json
+        --legacy-evidence tests/vendor/xprobe/provenance.json
     - name: Preserve vendor lock used by this run
       if: always()
       uses: actions/upload-artifact@v7
       with:
         name: locked-vendor-lock-py3.13
-        path: |
-          vendor.lock.json
-          scripts/gh_identity.py
-          scripts/gh_identity-LICENSE
-          scripts/myon-bioinformatics-LICENSE
-          tests/vendor/xprobe/xprobe.py
-          tests/vendor/xprobe/LICENSE
-          tests/vendor/xprobe/provenance.json
-          scripts/git_inspector.py
-          scripts/git_inspector.provenance.json
+        path: build/vendor-evidence-locked
         if-no-files-found: error
         retention-days: 14
     name: Locked baseline

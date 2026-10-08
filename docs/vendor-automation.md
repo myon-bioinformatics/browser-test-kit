@@ -30,7 +30,7 @@ ALM agents can use the same mechanism in a disposable checkout:
 
 ```bash
 git clone https://github.com/myon-bioinformatics/myon-bioinformatics.git .vendor-sync-tools
-git -C .vendor-sync-tools checkout --detach 08dc3757deeb930c950bdcc6bd55ec3112ba49fc
+git -C .vendor-sync-tools checkout --detach 017f614c44cf841fc584ac78bd7d9e433a1ecc1f
 python -S .vendor-sync-tools/vendor_sync.py check --manifest vendor.lock.json
 python -S .vendor-sync-tools/vendor_sync.py materialize --manifest vendor.lock.json
 python -S .vendor-sync-tools/vendor_sync.py update --manifest vendor.lock.json
@@ -76,3 +76,17 @@ unifying projection needs an explicit schema contract rather than guessed aliase
 
 The shared profile MIT LICENSE is now explicitly locked at `443b8a94bbc6801332e0abd9f2e56da68173b38d`
 and included in resolved and locked evidence. Existing source pins and bytes are unchanged.
+
+## Canonical GitHub operations and evidence staging
+
+The parent owns `gh_ops.py` and its generic regression tests. `vendor.lock.json`
+records its exact source commit and verified bytes at `scripts/gh_ops.py`;
+GHI remains adjacent for installed-module compatibility. Consumer tests cover
+that wiring, while PR #48/#49 parity cases are maintained by the parent suite.
+
+All three vendor artifact uploads now use the pinned parent `vendor_stage.py`.
+Source members come from the lock, and the two legacy provenance projections
+are explicitly classified as legacy evidence. Candidate promotion receipts
+are optional runtime evidence. Locked artifacts never include them. The staged
+`vendor-evidence.json` records member digests; a receipt alone does not prove
+promotion or tests succeeded.

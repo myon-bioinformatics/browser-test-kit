@@ -54,6 +54,15 @@
       "destination": "scripts/gh_identity-LICENSE",
       "blob_sha": "4ec4989b801bf1a3df6184d21f79e6e7ed5931f6",
       "sha256": "15f66204c4a6a1ce0c94f0ed4319ff9400f872e85fd32c95f21695c2f231af59"
+    },
+    {
+      "repository": "myon-bioinformatics/myon-bioinformatics",
+      "ref": "refs/heads/main",
+      "commit": "017f614c44cf841fc584ac78bd7d9e433a1ecc1f",
+      "source": "gh_ops.py",
+      "destination": "scripts/gh_ops.py",
+      "blob_sha": "6e5470e1e9395f9f3dd0908d3ce5190e0294e807",
+      "sha256": "c1c9f415ea0171205fced19b9a0eda33cde9cc3ef53cef53e89362dd873d06f4"
     }
   ]
 }

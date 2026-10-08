@@ -13,13 +13,12 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = '.github/workflows/playwright.yml'
 TEST_JOB = 'python'
 HELPER = 'tool/sync_vendor_provenance.py'
-SNAPSHOT = ['scripts/gh_identity.py', 'scripts/gh_identity-LICENSE', 'tests/vendor/xprobe/xprobe.py', 'tests/vendor/xprobe/LICENSE', 'tests/vendor/xprobe/provenance.json', 'scripts/myon-bioinformatics-LICENSE', 'vendor.lock.json', 'scripts/git_inspector.py', 'scripts/git_inspector.provenance.json']
-EXPECTED = {('myon-bioinformatics/gh_identity', 'gh_identity.py', 'scripts/gh_identity.py'),
- ('myon-bioinformatics/gh_identity', 'LICENSE', 'scripts/gh_identity-LICENSE'),
- ('myon-bioinformatics/xprobe', 'xprobe.py', 'tests/vendor/xprobe/xprobe.py'),
- ('myon-bioinformatics/xprobe', 'LICENSE', 'tests/vendor/xprobe/LICENSE'),
- ('myon-bioinformatics/myon-bioinformatics', 'LICENSE', 'scripts/myon-bioinformatics-LICENSE'),
- ('myon-bioinformatics/myon-bioinformatics', 'git_inspector.py', 'scripts/git_inspector.py')}
+LOCK = json.loads((ROOT / 'vendor.lock.json').read_text())
+LEGACY = ['tests/vendor/xprobe/provenance.json', 'scripts/git_inspector.provenance.json']
+SNAPSHOT = ['vendor.lock.json'] + [e['destination'] for e in LOCK['files']] + LEGACY
+EXPECTED = {(e['repository'], e['source'], e['destination']) for e in LOCK['files']}
+# Bootstrap tool checkout stays pinned while candidate source commits advance.
+PIN = '017f614c44cf841fc584ac78bd7d9e433a1ecc1f'
 
 
 def _workflow():
@@ -104,13 +103,14 @@ def test_public_vendor_ci_updates_without_repository_writes():
         upload = next(s for s in steps if s.get('name') == name)
         assert upload['if'] == 'always()'
         assert upload['with']['if-no-files-found'] == 'error'
-        expected = set(SNAPSHOT)
-        if steps is resolve:
-            expected.add('vendor-promotion.json')
-        assert set(upload['with']['path'].splitlines()) == expected
+        stage = next(s for s in steps if s.get('name') == 'Stage canonical vendor evidence')
+        assert stage['if'] == 'always()'
+        assert '.vendor-sync-tools/vendor_stage.py' in stage['run']
+        assert '--promotion-receipt vendor-promotion.json' in stage['run']
+        assert upload['with']['path'] == ('build/vendor-evidence-candidate' if steps is resolve else 'build/vendor-evidence-test')
     pins = [s['with']['ref'] for steps in (resolve,test) for s in steps
             if s.get('with',{}).get('repository') == 'myon-bioinformatics/myon-bioinformatics']
-    assert pins == ['08dc3757deeb930c950bdcc6bd55ec3112ba49fc'] * 2
+    assert pins == [PIN] * 2
     for steps in (resolve,test):
         for step in steps:
             if step.get('uses','').startswith('actions/checkout@'):
@@ -267,7 +267,7 @@ def test_locked_baseline_runs_automatically_without_candidate_snapshot():
                     if s.get('name') == 'Recreate locked vendor files from GitHub')
     assert steps[recreate] == original
     tool = next(s for s in steps if s.get('name') == 'Fetch pinned shared vendor tool')
-    assert tool['with']['ref'] == '08dc3757deeb930c950bdcc6bd55ec3112ba49fc'
+    assert tool['with']['ref'] == PIN
     for step in steps:
         assert 'continue-on-error' not in step
         if step.get('uses', '').startswith('actions/checkout@'):
@@ -278,4 +278,52 @@ def test_locked_baseline_runs_automatically_without_candidate_snapshot():
                 assert step['if'] == 'always()'
             assert step['with']['if-no-files-found'] == 'error'
     lock = next(s for s in steps if s.get('name') == 'Preserve vendor lock used by this run')
-    assert set(lock['with']['path'].splitlines()) == set(SNAPSHOT)
+    assert lock['with']['path'] == 'build/vendor-evidence-locked'
+    stage = next(s for s in steps if s.get('name') == 'Stage canonical vendor evidence')
+    assert '--kind locked' in stage['run']
+    assert '--promotion-receipt' not in stage['run']
+
+
+@pytest.mark.parametrize('kind,receipt', [('locked', False), ('candidate', True), ('candidate', False)])
+def test_real_canonical_staging_preserves_locked_bytes_and_classifies_evidence(tmp_path, kind, receipt):
+    import hashlib
+    import os
+    _copy_snapshot(tmp_path)
+    # Set by local verification; CI uses the exact pinned parent checkout.
+    tool_root = Path(os.environ.get('BTK_CANONICAL_TOOLS', str(ROOT / '.vendor-sync-tools')))
+    if receipt:
+        (tmp_path / 'vendor-promotion.json').write_text('{"schema":"vendor-promotion/1"}')
+    result = subprocess.run([sys.executable, '-S', str(tool_root / 'vendor_stage.py'),
+        '--root', str(tmp_path), '--kind', kind, '--output', 'build/staged',
+        '--legacy-evidence', LEGACY[0], '--legacy-evidence', LEGACY[1],
+        '--promotion-receipt', 'vendor-promotion.json'], capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    output = tmp_path / 'build/staged'
+    meta = json.loads((output / 'vendor-evidence.json').read_text())
+    locked = {'vendor.lock.json'} | {e['destination'] for e in LOCK['files']}
+    assert set(meta[kind]) == locked
+    assert set(meta['legacy']) == set(LEGACY)
+    assert meta['runtime'] == (['vendor-promotion.json'] if receipt and kind == 'candidate' else [])
+    expected = locked | set(LEGACY) | set(meta['runtime'])
+    assert set(meta['sha256']) == expected
+    assert {p.relative_to(output).as_posix() for p in output.rglob('*') if p.is_file()} == expected | {'vendor-evidence.json'}
+    for name in expected:
+        data = (output / name).read_bytes()
+        assert data == (tmp_path / name).read_bytes()
+        assert hashlib.sha256(data).hexdigest() == meta['sha256'][name]
+
+
+def test_legacy_projector_accepts_other_verified_canonical_members(tmp_path):
+    import hashlib
+    _copy_snapshot(tmp_path)
+    lock_path = tmp_path / 'vendor.lock.json'
+    lock = json.loads(lock_path.read_text())
+    data = b'additional canonical tool\n'
+    (tmp_path / 'extra.py').write_bytes(data)
+    entry = dict(lock['files'][0], source='extra.py', destination='extra.py',
+                 blob_sha=hashlib.sha1(b'blob ' + str(len(data)).encode() + b'\0' + data).hexdigest(),
+                 sha256=hashlib.sha256(data).hexdigest())
+    lock['files'].append(entry)
+    lock_path.write_text(json.dumps(lock))
+    _projector().project(tmp_path)
+    assert 'extra.py' in _projector().records(tmp_path)
