@@ -1,6 +1,6 @@
 {
   "upstream_repository": "myon-bioinformatics/myon-bioinformatics",
-  "upstream_commit": "a06641024a782af31bdb51fb0e0d6a1ea21995d0",
+  "upstream_commit": "08dc3757deeb930c950bdcc6bd55ec3112ba49fc",
   "upstream_path": "git_inspector.py",
   "vendored_path": "scripts/git_inspector.py",
   "git_blob_sha1": "9f6d88101688e2578a3ca45e7eaf7c805fe6f1bd",
