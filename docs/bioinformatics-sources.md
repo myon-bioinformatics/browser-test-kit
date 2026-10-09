@@ -61,3 +61,6 @@ Browser launch/capture stays in browser-test-kit. GHI can consume explicit saved
 HTML when useful for GitHub-linked investigation; this list does not add site
 adapters, a second parser or browser dependencies to GHI. Shared fixtures should
 be referenced at a fixed revision rather than independently recreated per repo.
+
+See also [technologies observed in sibling repositories](repository-technology-sources.md)
+for project-backed candidates beyond the bioinformatics domain.
