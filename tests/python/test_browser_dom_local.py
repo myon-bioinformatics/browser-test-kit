@@ -9,7 +9,7 @@ import threading
 
 
 def test_dom_capture_local_page(tmp_path):
-    (tmp_path/'index.html').write_text('<main id="body"><h1>日本語</h1><p>Body &amp; text</p></main>',encoding='utf-8')
+    (tmp_path/'index.html').write_text('<!doctype html><meta charset="utf-8"><main id="body"><h1>日本語</h1><p>Body &amp; text</p></main>',encoding='utf-8')
     handler=functools.partial(SimpleHTTPRequestHandler,directory=str(tmp_path))
     server=ThreadingHTTPServer(('127.0.0.1',0),handler)
     thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()

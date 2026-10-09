@@ -23,3 +23,24 @@ import or vendor update is required here. Local fixture coverage runs in the
 existing Python Playwright CI lane; external sites are not core test fixtures.
 CLI preflight passed locally; real Chromium execution awaits that CI lane because
 the authoring environment has no installed Playwright/browser binaries.
+
+## Shared documentation evidence, separate extraction contracts
+
+`fixtures/page_text/python-method.html` is a small live DOM fragment from Python's
+HTMLParser.feed documentation, captured 2026-10-09 at
+https://docs.python.org/3/library/html.parser.html . Python documentation is under
+PSF License Version 2 (https://docs.python.org/3/license.html). The capture has a
+terminal newline added for storage. It covers definition lists, highlighted
+signature spans, nested inline code and relative documentation links.
+
+The recorded browser innerText did not show the `¶` permalink. Static page_text
+and GHI selected-body extraction both retain it because CSS hides it in the live
+page. Their token sequences matched in an optional local cross-check against GHI
+#24; this is not an assertion of browser-visible equivalence. No parser was copied
+between repositories. `test_documentation_dom.py` uses existing page_text and
+find_elements, and verifies link resolution. Consumers may adopt this fixture at
+an explicit revision for their own contract, without adopting a second parser.
+
+The first real-browser CI exposed an omitted charset in the local test fixture:
+UTF-8 bytes were displayed as mojibake. The fixture now declares UTF-8 explicitly;
+it does not force the browser's encoding or hide the problem in comparison logic.
