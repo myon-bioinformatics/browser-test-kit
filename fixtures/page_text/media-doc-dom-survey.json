@@ -1,0 +1,102 @@
+[
+  {
+    "name": "ffmpeg",
+    "heading_html": "<h1>\n            <a id=\"menu-toggle\" href=\"#\" class=\"btn btn-success\"><i class=\"fa fa-reorder\"></i></a>      ffmpeg Documentation\n          </h1>",
+    "inner_text": "ffmpeg Documentation",
+    "fragment_html": "<pre class=\"example-preformatted\">ffmpeg -i input.avi output.mp4\n</pre>",
+    "fragment_inner_text": "ffmpeg -i input.avi output.mp4\n",
+    "pre_count": 108,
+    "regions": [],
+    "http": {
+      "name": "ffmpeg",
+      "requested_url": "https://www.ffmpeg.org/ffmpeg.html",
+      "result": "200\thttps://www.ffmpeg.org/ffmpeg.html",
+      "error": "",
+      "exit": 0,
+      "bytes": 225502,
+      "sha256": "e04c69cd08537b9b9d8d16ecaab9f56d938455e54ef42c37a2019053df8495cb"
+    },
+    "final_url": "https://www.ffmpeg.org/ffmpeg.html",
+    "raw_h1": "<h1>\n            <a id=\"menu-toggle\" href=\"#\" class=\"btn btn-success\"><i class=\"fa fa-reorder\"></i></a>      ffmpeg Documentation\n          </h1>",
+    "static_text": "ffmpeg -i input.avi output.mp4",
+    "matches_inner_text": false
+  },
+  {
+    "name": "pillow",
+    "heading_html": "<h1><a class=\"reference internal\" href=\"#module-PIL.Image\" title=\"PIL.Image\"><code class=\"xref py py-mod docutils literal notranslate\"><span class=\"pre\">Image</span></code></a> module<a class=\"headerlink\" href=\"#image-module\" title=\"Link to this heading\">¶</a></h1>",
+    "inner_text": "Image module",
+    "fragment_html": "<pre id=\"codecell0\"><span></span><span class=\"kn\">from</span><span class=\"w\"> </span><span class=\"nn\">PIL</span><span class=\"w\"> </span><span class=\"kn\">import</span> <span class=\"n\">Image</span>\n<span class=\"k\">with</span> <span class=\"n\">Image</span><span class=\"o\">.</span><span class=\"n\">open</span><span class=\"p\">(</span><span class=\"s2\">\"hopper.jpg\"</span><span class=\"p\">)</span> <span class=\"k\">as</span> <span class=\"n\">im</span><span class=\"p\">:</span>\n    <span class=\"n\">im</span><span class=\"o\">.</span><span class=\"n\">rotate</span><span class=\"p\">(</span><span class=\"mi\">45</span><span class=\"p\">)</span><span class=\"o\">.</span><span class=\"n\">show</span><span class=\"p\">()</span>\n</pre>",
+    "fragment_inner_text": "from PIL import Image\nwith Image.open(\"hopper.jpg\") as im:\n    im.rotate(45).show()\n",
+    "pre_count": 25,
+    "regions": [
+      "article#furo-main-content"
+    ],
+    "http": {
+      "name": "pillow",
+      "requested_url": "https://pillow.readthedocs.io/en/stable/reference/Image.html",
+      "result": "200\thttps://pillow.readthedocs.io/en/stable/reference/Image.html",
+      "error": "",
+      "exit": 0,
+      "bytes": 402109,
+      "sha256": "78275b2854a3d8c259c34f1f6803433879cc899fd3ae4c4e9854e7ed29dfcd32"
+    },
+    "final_url": "https://pillow.readthedocs.io/en/stable/reference/Image.html",
+    "raw_h1": "<h1><a class=\"reference internal\" href=\"#module-PIL.Image\" title=\"PIL.Image\"><code class=\"xref py py-mod docutils literal notranslate\"><span class=\"pre\">Image</span></code></a> module<a class=\"headerlink\" href=\"#image-module\" title=\"Link to this heading\">¶</a></h1>",
+    "static_text": "from PIL import Image\nwith Image.open(\"hopper.jpg\") as im:\n    im.rotate(45).show()",
+    "matches_inner_text": false
+  },
+  {
+    "name": "remotion",
+    "heading_html": "<h1>The fundamentals</h1>",
+    "inner_text": "The fundamentals",
+    "fragment_html": "<div class=\"code-title\">MyComposition.tsx</div>",
+    "fragment_inner_text": "MyComposition.tsx",
+    "pre_count": 3,
+    "regions": [
+      "main.docMainContainer_BQl8",
+      "article"
+    ],
+    "notes": "pre children: div.code-title, code, button.copy-button. Nested data-lsp elements carry type information in attributes. Full code block not retained.",
+    "http": {
+      "name": "remotion",
+      "requested_url": "https://www.remotion.dev/docs/the-fundamentals",
+      "result": "200\thttps://www.remotion.dev/docs/the-fundamentals",
+      "error": "",
+      "exit": 0,
+      "bytes": 66767,
+      "sha256": "a081a9338cf08b9a1ec9a10742c348b80bb89b6da525c2af4da305445a83cc9f"
+    },
+    "final_url": "https://www.remotion.dev/docs/the-fundamentals",
+    "raw_h1": "<h1>The fundamentals</h1>",
+    "static_text": "MyComposition.tsx",
+    "matches_inner_text": true
+  },
+  {
+    "name": "tonejs",
+    "heading_html": "<h1>Class Player</h1>",
+    "inner_text": "Class Player",
+    "fragment_html": "<code class=\"language-ts\"><span class=\"hl-4\">const</span><span class=\"hl-1\"> </span><span class=\"hl-12\">player</span><span class=\"hl-1\"> = </span><span class=\"hl-4\">new</span><span class=\"hl-1\"> </span><span class=\"hl-5\">Tone</span><span class=\"hl-1\">.</span><span class=\"hl-0\">Player</span><span class=\"hl-1\">(</span><span class=\"hl-2\">\"https://tonejs.github.io/audio/berklee/gong_1.mp3\"</span><span class=\"hl-1\">).</span><span class=\"hl-0\">toDestination</span><span class=\"hl-1\">();</span><br><span class=\"hl-11\">// play as soon as the buffer is loaded</span><br><span class=\"hl-5\">player</span><span class=\"hl-1\">.</span><span class=\"hl-5\">autostart</span><span class=\"hl-1\"> = </span><span class=\"hl-4\">true</span><span class=\"hl-1\">;</span>\n</code>",
+    "pre_count": 25,
+    "regions": [],
+    "final_url": "https://tonejs.github.io/docs/14.9.17/classes/Player.html",
+    "notes": "First navigation sample had no h1; later observation showed the versioned TypeDoc page. Original HTTP response is a redirect shell; resolved body fetched separately.",
+    "http": {
+      "name": "tonejs",
+      "requested_url": "https://tonejs.github.io/docs/Player",
+      "result": "200\thttps://tonejs.github.io/docs/Player",
+      "error": "",
+      "exit": 0,
+      "bytes": 89,
+      "sha256": "9e0a7e490a4c6dcdc235165d6eb708124fb0c66f0c111b4038dbee34422f154d"
+    },
+    "resolved_http": {
+      "bytes": 143221,
+      "sha256": "6281626fe3d130b4542c4a8c549a0afea1ca25b817e1cc546e740c44c6e3cb30"
+    },
+    "fragment_inner_text": "const player = new Tone.Player(\"https://tonejs.github.io/audio/berklee/gong_1.mp3\").toDestination();\n// play as soon as the buffer is loaded\nplayer.autostart = true;\n",
+    "fragment_text_content": "const player = new Tone.Player(\"https://tonejs.github.io/audio/berklee/gong_1.mp3\").toDestination();// play as soon as the buffer is loadedplayer.autostart = true;\n",
+    "raw_h1": "<h1>Class Player</h1>",
+    "static_text": "const player = new Tone.Player(\"https://tonejs.github.io/audio/berklee/gong_1.mp3\").toDestination();\n// play as soon as the buffer is loaded\nplayer.autostart = true;",
+    "matches_inner_text": false
+  }
+]
