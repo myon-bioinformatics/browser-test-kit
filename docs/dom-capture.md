@@ -61,3 +61,11 @@ This is separate from the Markdown converter's round-trip extra-LF issue.
 
 web-ui PR #43 adds an optional real Gradio/Chromium host regression which imports
 this parser at an exact commit; acquisition and extraction remain owned here.
+
+Known-unusable output paths are rejected before Playwright import or browser
+launch: existing files/directories, dangling symlinks, and missing/non-directory
+parents. The final write still uses exclusive creation to reject a path created
+by another process during capture. Preflight does not certify later write access
+or prevent races; it avoids network work for a destination already known invalid.
+A local HTTP counter and import sentinel verify zero requests/browser imports
+and unchanged evidence for these rejected cases.

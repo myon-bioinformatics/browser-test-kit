@@ -46,6 +46,12 @@ def main(argv=None):
     if args.timeout_ms < 1 or args.max_bytes < 1:
         parser.error('limits must be positive')
     try:
+        # Reject known-unusable destinations before importing/launching a browser.
+        # is_symlink also catches dangling links, which exists() does not.
+        if args.output.exists() or args.output.is_symlink():
+            raise FileExistsError('output already exists: ' + str(args.output))
+        if not args.output.parent.is_dir():
+            raise NotADirectoryError('output parent is not a directory: ' + str(args.output.parent))
         from playwright.sync_api import sync_playwright
         with sync_playwright() as runtime:
             browser = runtime.chromium.launch(headless=not args.headed, timeout=args.timeout_ms)
