@@ -42,3 +42,33 @@ These are documentation references, not additions to web-ui's lightweight runtim
 Remotion's React/video toolchain must be evaluated separately from small JS
 helpers. Existing capture and extraction ownership stays in browser-test-kit;
 reuse fixtures offline rather than re-fetching each page for every consumer.
+
+## Revalidation after extraction fixes (2026-10-09)
+
+The unequal results above are the original observation, retained without rewriting
+history. PR #54 commit `2d4da483c30907bd7a392b009b73366421ee0c8d` fixed explicit
+hidden-copy exclusion and preformatted whitespace. Current offline regressions now
+match the saved FFmpeg and Pillow `innerText`, including the exact terminal LF.
+
+[Selected-code evidence](../fixtures/page_text/media-code-dom.json) supplements
+the incomplete Tone.js and Remotion samples with the first full live `pre`, its
+actual child `code`, exact code `innerText`, observed display/white-space values,
+and stored-byte hashes. Both pages were observed again at 05:22 UTC. Transfer
+checks in the fixture document how the serialized saved HTTP fragment was checked
+against the live DOM; this is bounded fragment evidence, not a full DOM archive.
+
+Both `pre` elements include a Copy button; Remotion also includes a filename.
+Select `pre > code` before extracting code. The offline test wraps that exact code
+fragment in a clearly modeled `pre` context and compares every character with
+live code `innerText`. Tone.js retains its two `br` breaks and final LF. Remotion
+retains blank lines, indentation and no final LF, while excluding filename, Copy
+and `data-lsp` tooltip attributes. Its `.line` spans are inline, with literal line
+breaks between them; no special site-specific line rule is needed for this sample.
+The complete original pre remains in evidence so selection does not discard proof
+of surrounding UI. Consumers can render that original pre locally and select its
+code; the modeled wrapper must not be described as an untouched original DOM.
+
+The inline-display reader also ignores semicolons in CSS strings/functions and
+comments, so custom-property data cannot impersonate `display:none`. It shares
+lexical regression cases with GHI but keeps its narrower display-only contract;
+this does not add a full CSS engine or change accessibility-only `aria-hidden`.

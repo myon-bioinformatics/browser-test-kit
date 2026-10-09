@@ -97,6 +97,59 @@ class PageTextError(Exception):
     """Input or network error (exit code 2)."""
 
 
+def _inline_display_none(style: str) -> bool:
+    """Limited inline declaration order, not computed CSS or inherited visibility."""
+    # Same lexical boundaries as GHI; this reader intentionally only handles display.
+    declarations: list[str] = []
+    quote = None
+    depth = 0
+    index = 0
+    clean: list[str] = []
+    while index < len(style):
+        char = style[index]
+        if quote:
+            clean.append(char)
+            if char == "\\" and index + 1 < len(style):
+                index += 1
+                clean.append(style[index])
+            elif char == quote:
+                quote = None
+        elif style.startswith("/*", index):
+            end = style.find("*/", index + 2)
+            if end < 0:
+                break
+            clean.append(" ")
+            index = end + 1
+        elif char in "\"'":
+            quote = char
+            clean.append(char)
+        elif char in "([{":
+            depth += 1
+            clean.append(char)
+        elif char in ")]}":
+            depth = max(0, depth - 1)
+            clean.append(char)
+        elif char == ";" and not depth:
+            declarations.append("".join(clean))
+            clean = []
+        else:
+            clean.append(char)
+        index += 1
+    declarations.append("".join(clean))
+    display = None
+    priority = False
+    for declaration in declarations:
+        name, sep, value = declaration.partition(":")
+        if not sep or name.strip().lower() != "display":
+            continue
+        value = value.strip().lower()
+        important = bool(re.search(r"!\s*important$", value))
+        value = re.sub(r"\s*!\s*important$", "", value).strip()
+        if value and (important or not priority):
+            display, priority = value, important
+    return display == "none"
+
+
 class _Sink:
     """innerText-style accumulator: adjacent block boundaries merge (max), text flushes them."""
 
@@ -200,18 +253,8 @@ class _PageParser(HTMLParser):
         for key, value in attrs_list:
             attrs.setdefault(key, value or "")
         # Deliberately limited static visibility: no CSS selector engine.
-        display = None
-        priority = False
-        for declaration in attrs.get("style", "").split(";"):
-            name, sep, value = declaration.partition(":")
-            if sep and name.strip().lower() == "display":
-                value = value.strip().lower()
-                important = bool(re.search(r"!\s*important$", value))
-                value = re.sub(r"\s*!\s*important$", "", value).strip()
-                if important or not priority:
-                    display, priority = value, important
         hidden = "hidden" in attrs and attrs["hidden"].lower() != "until-found"
-        if tag in EXCLUDED or hidden or display == "none":
+        if tag in EXCLUDED or hidden or _inline_display_none(attrs.get("style", "")):
             if tag not in VOID:
                 self.skip.append(tag)
             return

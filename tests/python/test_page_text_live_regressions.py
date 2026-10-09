@@ -38,3 +38,39 @@ def test_pre_preserves_content_not_print_formatting(code):
 
 def test_pre_br_is_a_preserved_line_break():
     assert text_of('<pre><code>x<br>y<br></code></pre>') == 'x\ny\n'
+
+
+@pytest.mark.parametrize('style', [
+    '--sample:";display:none;"', "--sample:';display:none;'",
+    '--sample:fn(;display:none;)', '/* ;display:none; */display:block',
+    'display:none;display:/* restored */inline',
+    'display:none;display:',
+])
+def test_css_data_and_comments_do_not_become_hiding_declarations(style):
+    from html import escape
+    expected = '' if style == 'display:none;display:' else 'visible'
+    assert text_of('<span style="'+escape(style, quote=True)+'">visible</span>') == expected
+
+
+@pytest.mark.parametrize('sample', json.loads(
+    (FIXTURES / 'media-code-dom.json').read_text())['samples'], ids=lambda s: s['id'])
+def test_selected_media_code_preserves_context_and_excludes_controls(sample):
+    import hashlib
+    assert hashlib.sha256(sample['pre_outer_html'].encode()).hexdigest() == sample['pre_sha256']
+    assert hashlib.sha256(sample['code_outer_html'].encode()).hexdigest() == sample['code_sha256']
+    assert sample['code_outer_html'] in sample['pre_outer_html']
+    assert '<button' in sample['pre_outer_html']
+    assert '<button' not in sample['code_outer_html']
+    # Explicit context model for the selected code, not the original complete pre.
+    assert text_of('<pre>'+sample['code_outer_html']+'</pre>') == sample['code_inner_text']
+    assert 'Copy' not in sample['code_inner_text']
+    assert 'MyComposition.tsx' not in sample['code_inner_text']
+    assert 'const frame: number' not in sample['code_inner_text']
+
+
+@pytest.mark.parametrize('name', ['ffmpeg', 'pillow'])
+def test_previously_recorded_media_newlines_now_match(name):
+    samples = json.loads((FIXTURES / 'media-doc-dom-survey.json').read_text())
+    # The historical comparisons stay unchanged; the current reader is checked here.
+    sample = next(s for s in samples if s['name'] == name)
+    assert text_of(sample['fragment_html']) == sample['fragment_inner_text']
