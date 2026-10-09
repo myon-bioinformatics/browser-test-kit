@@ -44,3 +44,20 @@ an explicit revision for their own contract, without adopting a second parser.
 The first real-browser CI exposed an omitted charset in the local test fixture:
 UTF-8 bytes were displayed as mojibake. The fixture now declares UTF-8 explicitly;
 it does not force the browser's encoding or hide the problem in comparison logic.
+
+## Static extraction regressions from saved DOM
+
+`tests/python/test_page_text_live_regressions.py` reuses saved Alpine and Deno
+DOM fragments. Explicit `hidden` and inline `display:none` subtrees are excluded
+without text deduplication; `aria-hidden` alone is not visual hiding. Hidden void
+and nested elements must neither leak text nor swallow following siblings.
+Stylesheet rules, CSS escapes/comments/variables and the full cascade are outside
+the stdlib reader's visibility model. `hidden=until-found` is not discarded.
+
+Preformatted spaces, tabs and literal linefeeds now survive normalization,
+including terminal and repeated linefeeds. Tests compare Python strings, not
+`print()` output, so a CLI output separator cannot conceal a content difference.
+This is separate from the Markdown converter's round-trip extra-LF issue.
+
+web-ui PR #43 adds an optional real Gradio/Chromium host regression which imports
+this parser at an exact commit; acquisition and extraction remain owned here.

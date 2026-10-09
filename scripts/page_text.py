@@ -22,14 +22,16 @@ Rules (v1):
   display of each element: a ``<p>`` is set off by a blank line, other block
   elements (``div``, ``li``, ``h1``-``h6``, ``tr``, ``section`` ...) and
   ``<br>`` start a new line, and table cells are separated by a tab. Runs of
-  blank lines collapse to one.
+  blank lines outside preformatted text collapse to one.
 * Runs of ASCII whitespace collapse to one space (``&nbsp;`` and the
   ideographic space U+3000 are text, not whitespace); ``<pre>`` keeps its
   line breaks and indentation. Character references are expanded.
 
 This is *static* extraction: text that JavaScript renders later is not seen
 (``PAGE_TEXT_AS_RENDERED_TEXT``), and visibility from CSS or the ``hidden``
-attribute is not evaluated.
+attribute is only evaluated for explicit hiding: hidden (except until-found) and
+inline display:none. Stylesheet rules and the CSS cascade are not evaluated;
+aria-hidden alone does not imply visual hiding.
 
 ``--find QUERY`` lists links (``a[href]``), buttons (``button``,
 ``input[type=submit|button]``), headings (``h1``-``h6``) and
@@ -77,8 +79,8 @@ MATCH_TEXT_MAX = 200
 
 _WS = re.compile(r"[ \t\n\r\f]+")
 # Unicode noncharacters used as private markers; any already in the input become U+FFFD.
-_PRE_SPACE, _PRE_TAB, _CELL = "﷐", "﷑", "﷒"
-_MARKERS = re.compile("[﷐-﷒]")
+_PRE_SPACE, _PRE_TAB, _CELL, _PRE_LF = "﷐", "﷑", "﷒", "﷓"
+_MARKERS = re.compile("[﷐-﷓]")
 _CELL_GAP = re.compile(" ?﷒ ?")
 _CONTENT_TYPE_CHARSET_RE = re.compile(r"charset\s*=\s*[\"']?([^\s;\"']+)", re.IGNORECASE)
 _META_CHARSET_RE = re.compile(rb"""<meta[^>]+charset\s*=\s*["']?\s*([A-Za-z0-9_.:-]+)""", re.IGNORECASE)
@@ -190,15 +192,28 @@ class _PageParser(HTMLParser):
     # -- parser callbacks -------------------------------------------------------
     def handle_starttag(self, tag: str, attrs_list: list[tuple[str, str | None]]) -> None:
         if self.skip:
-            if tag in EXCLUDED:
+            if tag not in VOID:
                 self.skip.append(tag)
             return
         self.pre_start = False
         attrs: dict[str, str] = {}
         for key, value in attrs_list:
             attrs.setdefault(key, value or "")
-        if tag in EXCLUDED:
-            self.skip.append(tag)
+        # Deliberately limited static visibility: no CSS selector engine.
+        display = None
+        priority = False
+        for declaration in attrs.get("style", "").split(";"):
+            name, sep, value = declaration.partition(":")
+            if sep and name.strip().lower() == "display":
+                value = value.strip().lower()
+                important = bool(re.search(r"!\s*important$", value))
+                value = re.sub(r"\s*!\s*important$", "", value).strip()
+                if important or not priority:
+                    display, priority = value, important
+        hidden = "hidden" in attrs and attrs["hidden"].lower() != "until-found"
+        if tag in EXCLUDED or hidden or display == "none":
+            if tag not in VOID:
+                self.skip.append(tag)
             return
         if tag == "title":
             self.titles += 1
@@ -226,7 +241,7 @@ class _PageParser(HTMLParser):
         if tag in PREFORMATTED:
             self.pre_start = True
         elif tag == "br":
-            self._write("\n")
+            self._write(_PRE_LF if any(t in PREFORMATTED for t in self.stack) else "\n")
             self._separate_candidates()
         elif tag == "tr":
             self.cells.append(0)
@@ -283,7 +298,7 @@ class _PageParser(HTMLParser):
         if any(tag in PREFORMATTED for tag in self.stack):
             if self.pre_start and data.startswith("\n"):
                 data = data[1:]  # the newline right after <pre> is not content
-            text = data.replace(" ", _PRE_SPACE).replace("\t", _PRE_TAB)
+            text = data.replace(" ", _PRE_SPACE).replace("\t", _PRE_TAB).replace("\n", _PRE_LF)
         else:
             text = _WS.sub(" ", data)
         self.pre_start = False
@@ -295,12 +310,11 @@ def _normalize(raw: str) -> str:
     lines: list[str] = []
     for line in raw.split("\n"):
         line = _CELL_GAP.sub("\t", _WS.sub(" ", line).strip(" "))
-        line = line.replace(_PRE_SPACE, " ").replace(_PRE_TAB, "\t").rstrip(" ")
         if line or (lines and lines[-1]):
             lines.append(line)
     while lines and not lines[-1]:
         lines.pop()
-    return "\n".join(lines)
+    return "\n".join(lines).replace(_PRE_SPACE, " ").replace(_PRE_TAB, "\t").replace(_PRE_LF, "\n")
 
 
 def _collapse(value: str) -> str:

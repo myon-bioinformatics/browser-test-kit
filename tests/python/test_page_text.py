@@ -76,7 +76,7 @@ def test_file_output_reports_the_file_url() -> None:
         ("<span>a</span> <span>b</span>", "a b"),
         ("<div>\n  lots   of \n\t spaces  </div>", "lots of spaces"),
         ("<table><tr><th>a</th><th></th><th>c</th></tr>\n<tr><td> d </td></tr></table>", "a\t\tc\nd"),
-        ("<pre>\n  x\n\n\n\ty  </pre>", "  x\n\n\ty"),
+        ("<pre>\n  x\n\n\n\ty  </pre>", "  x\n\n\n\ty  "),
         ("a<pre>\nx</pre>", "a\nx"),
         ("a<pre><code>\nx</code></pre>", "a\n\nx"),
         ("<p>x&nbsp;&nbsp;y　z</p>", "x\xa0\xa0y　z"),
