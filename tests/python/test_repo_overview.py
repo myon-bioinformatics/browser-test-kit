@@ -140,9 +140,11 @@ def test_non_git_walk_fallback_is_sorted_and_skips_dirs(tmp_path: Path) -> None:
 
 def test_missing_git_keeps_walk_fallback(tmp_path: Path, monkeypatch) -> None:
     make_tree(tmp_path)
-    def missing(*args, **kwargs):
-        raise FileNotFoundError("git")
-    monkeypatch.setattr(repo_overview.git_inspector, "_spawn", missing)
+    # Exercise the public observation with Git genuinely unavailable, without
+    # depending on the vendored inspector's private process implementation.
+    monkeypatch.setenv("PATH", "")
+    with pytest.raises(repo_overview.git_inspector.GitInspectionError, match="git executable not found"):
+        repo_overview.git_inspector.ls_files(tmp_path, include_untracked=True)
     assert "src/app.py" in repo_overview.list_files(tmp_path)
     assert not any(repo_overview._skipped(p) for p in repo_overview.list_files(tmp_path))
 
@@ -346,8 +348,11 @@ def test_churn_complete_commits_and_explicit_history_truncation(tmp_path: Path, 
         # This boundary includes the newest empty commit and the following
         # binary commit, then cuts the rename destination. Only complete commits
         # may contribute to the scanned count or ranking.
-        raw, _, _ = inspector._run(tmp_path, ['log', '--no-ext-diff', '--no-textconv', '--no-color',
-                                               '-z', '--numstat', '--format=%x00%H%x00%cs', '--'])
+        raw = subprocess.run(
+            ['git', '-C', str(tmp_path), 'log', '--no-ext-diff', '--no-textconv', '--no-color',
+             '-z', '--numstat', '--format=%x00%H%x00%cs', '--'],
+            check=True, capture_output=True, env=git_env(),
+        ).stdout
         kwargs = {'max_bytes': raw.index(b'new.txt') + 2}
     bounded = original(tmp_path, **kwargs)
     assert bounded['truncated'] and len(bounded['commits']) == 2
@@ -363,9 +368,9 @@ def test_churn_complete_commits_and_explicit_history_truncation(tmp_path: Path, 
 
 
 def test_churn_missing_git_keeps_message(tmp_path: Path, monkeypatch) -> None:
-    def missing(*args, **kwargs):
-        raise FileNotFoundError('git')
-    monkeypatch.setattr(repo_overview.git_inspector, '_spawn', missing)
+    monkeypatch.setenv('PATH', '')
+    with pytest.raises(repo_overview.git_inspector.GitInspectionError, match='git executable not found'):
+        repo_overview.git_inspector.log_numstat(tmp_path)
     assert repo_overview.churn(tmp_path, 5) == 'not a git work tree; skipping --churn'
 
 
