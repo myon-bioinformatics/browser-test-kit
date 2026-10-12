@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>hit probe fixture</title>
+<style>
+body{margin:0;font:14px system-ui,sans-serif}
+.t{position:absolute;width:120px;height:40px;border:0;padding:0;background:#4a7;color:#fff}
+#plain{left:40px;top:40px}
+#rounded{left:40px;top:120px;border-radius:20px}
+#covered{left:40px;top:200px}
+#blocker{position:absolute;left:120px;top:200px;width:60px;height:40px;background:rgba(200,60,60,.6)}
+#ghost{position:absolute;left:20px;top:190px;width:60px;height:60px;background:rgba(60,60,200,.3);pointer-events:none}
+#rotated{left:260px;top:100px;transform:rotate(30deg)}
+</style></head>
+<body>
+<button class="t" id="plain" type="button">plain</button>
+<button class="t" id="rounded" type="button">rounded</button>
+<button class="t" id="covered" type="button">covered</button>
+<div id="blocker"></div><div id="ghost"></div>
+<button class="t" id="rotated" type="button">rotated</button>
+<script>for(const b of document.querySelectorAll('.t')){b.dataset.clicks='0';b.addEventListener('click',()=>{b.dataset.clicks=String(+b.dataset.clicks+1)})}</script>
+</body></html>
