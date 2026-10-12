@@ -6,6 +6,7 @@ confidence. Observations are collected first and asserted at the end (assert-lat
 """
 import importlib.util
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -59,8 +60,25 @@ def observe(page, target):
             result["rows"] == reference, "batches": len(calls) - 1, "clicks": clicks}
 
 
+def annotate(capsys, browser_name, text):
+    """One GitHub Actions notice per browser, so CI shows the numbers without downloading artifacts."""
+    if os.environ.get("GITHUB_ACTIONS"):
+        with capsys.disabled():
+            print(f"\n::notice title=hit-probe {browser_name}::{text[:900]}", flush=True)
+
+
+def summary(observed):
+    rows = []
+    for target, obs in observed.items():
+        ev = obs["evidence"]
+        good = sum(c["clicked"] == c["predicted"] for c in obs["clicks"])
+        rows.append(f"{target}: probes={ev['probes']}/{ev['cells']} exact={obs['matches_exhaustive']} "
+                    f"clicks={good}/{len(obs['clicks'])} factors={len(ev['factors'])} residual={ev['residual']}")
+    return "; ".join(rows)
+
+
 @pytest.mark.parametrize("browser_name", BROWSERS)
-def test_hit_maps_need_few_probes_and_agree_with_clicks(browser_name):
+def test_hit_maps_need_few_probes_and_agree_with_clicks(browser_name, capsys):
     RESULTS.mkdir(parents=True, exist_ok=True)
     with sync_playwright() as pw:
         browser = getattr(pw, browser_name).launch()
@@ -68,9 +86,13 @@ def test_hit_maps_need_few_probes_and_agree_with_clicks(browser_name):
             page = browser.new_page(viewport={"width": 480, "height": 320})
             page.goto(FIXTURE)
             observed = {t: observe(page, t) for t in ("plain", "rounded", "covered", "rotated")}
+        except Exception as exc:
+            annotate(capsys, browser_name, f"observe failed: {type(exc).__name__}: {exc}")
+            raise
         finally:
             browser.close()
     (RESULTS / f"{browser_name}.json").write_text(json.dumps(observed, indent=1) + "\n", encoding="utf-8")
+    annotate(capsys, browser_name, summary(observed))
 
     for target, obs in observed.items():
         ev = obs["evidence"]
