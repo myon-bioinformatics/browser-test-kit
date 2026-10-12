@@ -42,6 +42,22 @@ def test_refine_matches_exhaustive_with_fewer_probes(name):
     assert len(calls) == result["rounds"]  # one batch per round, so a browser needs few round trips
 
 
+def test_random_rotated_boxes_match_exhaustive():
+    import random
+    rng = random.Random(7)
+    for _ in range(60):
+        a, cx, cy = rng.uniform(0, 3.14), rng.uniform(20, 44), rng.uniform(15, 33)
+        hw, hh = rng.uniform(8, 20), rng.uniform(5, 12)
+
+        def inside(x, y):
+            u = (x - cx) * math.cos(a) + (y - cy) * math.sin(a)
+            v = -(x - cx) * math.sin(a) + (y - cy) * math.cos(a)
+            return abs(u) <= hw and abs(v) <= hh
+        result = hit_probe.refine(W, H, shape_probe(inside))
+        assert result["rows"] == hit_probe.exhaustive(W, H, shape_probe(inside)), (a, cx, cy, hw, hh)
+        assert result["probes"] < result["cells"] * 0.4
+
+
 def test_plain_box_is_rank_one_and_others_leave_residual():
     box = hit_probe.refine(W, H, shape_probe(SHAPES["box"]))
     fact = hit_probe.factorize(box["rows"], rank=1, scores=box["scores"])

@@ -34,7 +34,8 @@ SUB = [[0, 0], [1, 0], [0, 1], [1, 1]]
 
 def observe(page, target):
     box = page.locator("#" + target).bounding_box()
-    x0, y0 = box["x"] - PAD, box["y"] - PAD
+    # Integer origin: engines round fractional hit-test and click coordinates differently.
+    x0, y0 = int(box["x"] - PAD), int(box["y"] - PAD)
     width, height = int((box["width"] + 2 * PAD) // CELL), int((box["height"] + 2 * PAD) // CELL)
     calls = []
 
