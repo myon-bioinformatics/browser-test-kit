@@ -45,6 +45,9 @@ Screenshots are visual evidence, not a selector strategy. Prefer DOM/accessibili
 | `SUCCESS_COUNT_VS_RETRY_ARTIFACTS` | Global artifact count is assumed to equal project count | Retries create extra attempt artifacts and cause false failures | Validate exact project identity from metadata and validate every discovered artifact |
 | `PAGE_TEXT_AS_RENDERED_TEXT` | Text extracted from static HTML is treated as the text a browser shows after rendering | An SPA shell yields an empty or partial body, and CSS-hidden text is counted as visible | Keep static extraction (`scripts/page_text.py`) and the Playwright lane's `inner_text()` as separate evidence; compare them when rendering matters |
 | `LOGIN_WALL_AS_404` | "Page not found" is treated as proof that a page does not exist | Sites such as GitHub answer 404 to clients without access, so an existing settings page looks missing to a signed-out browser or an unauthenticated fetch | Check the login/permission state first; report a 404 as "not found or not visible to this identity" |
+| `FRACTIONAL_HIT_COORDINATES` | Hit-testing or clicking at fractional CSS pixels (a cell at `x + 0.5`, a grid origin taken from a rotated element's bounding box) | Engines round differently, in `elementFromPoint` and in `mouse.click`: Chromium turned a 0.5 offset into half hits on a plain box, and WebKit clicked where `elementFromPoint` predicted a miss (PR #57) | Probe and click at integer pixels; floor the grid origin; record fractional behaviour per engine as evidence, not as an assertion |
+| `CORNER_POKES_BETWEEN_CORNERS` | Treating a sampled region as uniform because its four corners agree | A corner of a rotated or rounded target poking in between the corners is never probed; Firefox showed a map that differed from the exhaustive one (PR #57) | Also split blocks that touch a differently labelled probe (`scripts/hit_probe.py`: 4+ cells), and compare every sampled map with an exhaustive one in tests |
+| `CROSS_ENGINE_PIXEL_EQUALITY` | Expecting the same hit map, residual, or probe count from every engine | Curved and rotated edges are rasterized slightly differently (rounded target residual: Chromium 28, WebKit 32, Firefox 40), so a cross-engine equality check fails on correct behaviour | Compare each engine with its own exhaustive reference and with real clicks; assert shape properties (rank-1 box, residual > 0), not equal numbers |
 
 ## GitHub / CI operation anti-patterns
 
@@ -57,6 +60,8 @@ These come from PR/CI operation (`scripts/gh_ops.py`, #9) rather than from brows
 | `MERGE_SHA_AS_HEAD` | Treating `GITHUB_SHA` of a `pull_request` run as the PR head | The tested merge commit is confused with the reviewed head | Show `github.event.pull_request.head.sha` and the tested commit side by side |
 | `UNGUARDED_REMOTE_WRITE` | Merging or editing a PR body without re-checking preconditions | A moved head, a duplicated anchor, or a non-clean state gets written anyway | Verify head SHA, anchor uniqueness, and `mergeable_state` first; pin `sha` in the merge request; dry run unless `--write` |
 | `UNBOUNDED_TOOL_OUTPUT` | Dumping a whole API response (e.g. every comment of a 43-comment issue, ~92k characters) into a log or an agent context | The tool result is truncated or rejected, and the part that mattered is lost | Print a digest first (index, time, author, size, preview), save the full JSON to a file, and show selected items on demand (`issue-comments --save/--show`) |
+| `EVIDENCE_ONLY_IN_ARTIFACTS` | Keeping the numbers that explain a failure only in job logs or uploaded artifacts | An agent session (or a reader after the retention period) gets 403/expired downloads and sees only "exit code 1" | Print a one-line `::notice` per lane with the key numbers, so they are readable from check-run annotations; copy decisive numbers into the PR |
+| `KNOCK_ON_STEP_FAILURE` | Reporting every failed step of a job as its own problem | A later `if: always()` step fails only because an earlier step did not produce its input (PR #57: `btk-events.jsonl` missing after the pytest step failed) | Find the first failing step; treat missing inputs downstream as consequences until that step is green |
 
 ## Observed source patterns in this organization
 
@@ -73,6 +78,8 @@ These are intentionally generalized; copy the lesson, not necessarily the origin
 - `markdown`: existing anti-pattern documentation records stale element handles and swallowed cleanup exceptions as browser-debugging hazards.
 - `Ironmate`: a small screenshot lane shows the value of parameterizing Playwright version/browser rather than burying them in commands.
 - `browser-test-kit` #8: while repository Code security settings were being checked (2026-09-27), a built-in browser that was not signed in to GitHub showed the settings page as "Page not found". A 404 from a permission-checked site is not evidence that the page is absent (`LOGIN_WALL_AS_404`).
+
+- `browser-test-kit` PR #57 (`hit_probe`, `littlebit-approx`): the hit map of a rotated button was correct in Chromium but wrong in Firefox and WebKit. Firefox: the map differed from the exhaustive probe (`CORNER_POKES_BETWEEN_CORNERS`, an algorithm bug that only this engine's rasterization exposed). WebKit: real clicks disagreed with `elementFromPoint` at fractional pixels (`FRACTIONAL_HIT_COORDINATES`). The numbers were found from per-browser `::notice` lines because logs and artifacts could not be downloaded (`EVIDENCE_ONLY_IN_ARTIFACTS`). Portable lesson: a cross-browser hit test needs an exhaustive reference and a real click per engine, at integer coordinates.
 
 ## Failure record template
 
@@ -93,3 +100,41 @@ Portable lesson:
 ```
 
 Do not store secrets, transient tokens, or large binary artifacts in this document.
+
+### Recorded failures
+
+```text
+ID: CORNER_POKES_BETWEEN_CORNERS
+Repository / PR: browser-test-kit #57
+Runtime: python
+Browser: firefox
+Device/profile: desktop 480x320
+Stage: assert
+Observed: rotated target, refine() map != exhaustive map (exact=False); Chromium and WebKit happened to pass
+Root cause: a block was settled from its four agreeing corners while a corner of the target poked in between them
+Fix: blocks of 4+ cells next to a differently labelled probe are split (300 random rotated boxes: 62 misses -> 0, about 21% of cells probed)
+Regression guard: tests/python/test_hit_probe.py::test_random_rotated_boxes_match_exhaustive, test_old_corner_rule_misses_a_poking_corner; the browser test compares with an exhaustive map on every engine
+Portable lesson: sampling is only trustworthy next to a full reference; guard sampled maps with an exhaustive comparison
+
+ID: FRACTIONAL_HIT_COORDINATES
+Repository / PR: browser-test-kit #57
+Runtime: python
+Browser: webkit (also chromium for 0.5 sub-points)
+Device/profile: desktop 480x320
+Stage: interact
+Observed: rotated target, real clicks 8/12 matched elementFromPoint; a 0.5 sub-point offset gave half hits on a plain box in Chromium
+Root cause: the grid origin came from a fractional bounding box, and engines round fractional coordinates differently
+Fix: integer sub-points and an integer grid origin
+Regression guard: tests/python/test_hit_probe_browser.py::test_integer_edges_agree_and_fractional_edges_are_recorded (asserts integers, records fractional results per engine)
+Portable lesson: never assert on fractional-pixel hit tests across engines
+```
+
+Measured at the plain box's left edge (x = 40) in CI on PR #58, as `elementFromPoint` hit / real click:
+
+| x | Chromium | Firefox | WebKit |
+| --- | --- | --- | --- |
+| 39 | miss / no click | miss / no click | miss / no click |
+| 39.25, 39.5, 39.75 | hit / click | miss / no click | **hit / no click** |
+| 40 | hit / click | hit / click | hit / click |
+
+Chromium rounds fractional points up and Firefox down, each consistently; WebKit's `elementFromPoint` and its click disagree with each other, which is why WebKit failed first.
