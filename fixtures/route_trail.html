@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>route trail fixture</title></head>
+<body><main><h1 id="page"></h1><p id="visits">0</p></main>
+<script>
+// A hash router like Flutter web's: the page shown is chosen from location.hash.
+const pages = {"/": "🏠 Home", "/hub": "🗺️ Hub", "/screen1": "🌍 World", "/tools/time": "🕒 Time"};
+let visits = 0;
+function show() {
+  const route = decodeURI(location.hash.slice(1)) || "/";
+  document.getElementById("page").textContent = pages[route] || "404 " + route;
+  document.getElementById("visits").textContent = String(++visits);
+}
+addEventListener("hashchange", show); show();
+</script></body></html>

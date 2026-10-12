@@ -140,6 +140,21 @@ python -S scripts/hit_probe.py factorize test-results/hit-probe/map.json --rank 
   - Each run prints one `::notice` per browser (probes, exact match, clicks, factors, residual), so the numbers are readable from the check annotations without downloading artifacts.
 - Exit codes: 0 OK; 2 input error.
 
+### Emoji page trails to URLs (`scripts/route_trail.py`)
+
+Stdlib-only (`python -S`). Pages are named by their emoji identity, and a trail is walked in order: `A → B` goes to B, `A ↔ B` goes to B and back (ASCII `->` / `<->` also work). The registry is a JSON object or any source file with `'/route': '🏠'` pairs, such as flutter_navigation_basic's generated `page_identities.g.dart` (`--map pageEmojis`; values that are routes, i.e. alias maps, are skipped).
+
+```bash
+python -S scripts/route_trail.py '🏠 → 🗺 → 🌍 ↔ 🕶' --registry lib/shared/navigation/page_identities.g.dart \
+  --map pageEmojis --base https://myon-bioinformatics.github.io/flutter_navigation_basic/
+python -S scripts/route_trail.py '🏠 ↔ 🗺' --registry fixtures/route_trail_registry.json --json   # emoji, route, url
+```
+
+- Emoji are compared without variation selectors (`EMOJI_VARIATION_SELECTOR`); an emoji naming two routes after that is a registry error.
+- Hash routing (`BASE#/route`, as Flutter web) by default; `--path-routing` for `BASE/route`.
+- `tests/python/test_route_trail_browser.py` walks a trail on Chromium, Firefox, and WebKit against a hash-router fixture and checks each step shows its page.
+- Exit codes: 0 OK; 2 unknown emoji, malformed trail, or bad registry.
+
 ### Planned sequence
 
 1. Documentation/evidence contract.
