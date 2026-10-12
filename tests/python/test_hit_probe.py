@@ -58,6 +58,21 @@ def test_random_rotated_boxes_match_exhaustive():
         assert result["probes"] < result["cells"] * 0.4
 
 
+def test_old_corner_rule_misses_a_poking_corner():
+    """CORNER_POKES_BETWEEN_CORNERS in docs/antipatterns.md.
+
+    With this rotated box, settling a block from its four agreeing corners alone missed 3 cells
+    (a corner of the box pokes in between them). The neighbour check must find them.
+    """
+    a, cx, cy, hw, hh = 2.27, 25.5, 32.0, 18.8, 5.2
+
+    def inside(x, y):
+        u = (x - cx) * math.cos(a) + (y - cy) * math.sin(a)
+        v = -(x - cx) * math.sin(a) + (y - cy) * math.cos(a)
+        return abs(u) <= hw and abs(v) <= hh
+    assert hit_probe.refine(W, H, shape_probe(inside))["rows"] == hit_probe.exhaustive(W, H, shape_probe(inside))
+
+
 def test_plain_box_is_rank_one_and_others_leave_residual():
     box = hit_probe.refine(W, H, shape_probe(SHAPES["box"]))
     fact = hit_probe.factorize(box["rows"], rank=1, scores=box["scores"])

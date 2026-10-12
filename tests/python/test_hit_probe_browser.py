@@ -112,3 +112,38 @@ def test_hit_maps_need_few_probes_and_agree_with_clicks(browser_name, capsys):
     # The blocker takes the right part of the button away; the pointer-events:none ghost does not.
     assert covered["ones"] < observed["plain"]["evidence"]["ones"]
     assert covered["map"][PAD // CELL + 2][PAD // CELL + 2] == "1"
+
+
+EDGE_JS = """([x, y]) => { const e = document.elementFromPoint(x, y); return e ? (e.id || e.tagName) : null; }"""
+
+
+@pytest.mark.parametrize("browser_name", BROWSERS)
+def test_integer_edges_agree_and_fractional_edges_are_recorded(browser_name, capsys):
+    """FRACTIONAL_HIT_COORDINATES in docs/antipatterns.md.
+
+    At integer pixels around the plain box's left edge, elementFromPoint and a real click agree on
+    every engine (asserted). At fractional pixels engines may round differently, so those results
+    are only recorded, per engine, as evidence.
+    """
+    rows = []
+    with sync_playwright() as pw:
+        browser = getattr(pw, browser_name).launch()
+        try:
+            page = browser.new_page(viewport={"width": 480, "height": 320})
+            page.goto(FIXTURE)
+            box = page.locator("#plain").bounding_box()
+            edge, y = int(box["x"]), int(box["y"] + box["height"] / 2)
+            for x in (edge - 1, edge - 0.75, edge - 0.5, edge - 0.25, edge):
+                hit = page.evaluate(EDGE_JS, [x, y]) == "plain"
+                before = int(page.locator("#plain").get_attribute("data-clicks"))
+                page.mouse.click(x, y)
+                clicked = int(page.locator("#plain").get_attribute("data-clicks")) - before
+                rows.append({"x": x, "hit": hit, "clicked": clicked})
+        finally:
+            browser.close()
+    RESULTS.mkdir(parents=True, exist_ok=True)
+    (RESULTS / f"{browser_name}-fractional-edge.json").write_text(json.dumps(rows, indent=1) + "\n", encoding="utf-8")
+    annotate(capsys, browser_name + " fractional edge",
+             " ".join(f"x={r['x']}:hit={int(r['hit'])},click={r['clicked']}" for r in rows))
+    integer = [r for r in rows if float(r["x"]).is_integer()]
+    assert [(r["hit"], r["clicked"]) for r in integer] == [(False, 0), (True, 1)], integer
