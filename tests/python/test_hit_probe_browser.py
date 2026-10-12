@@ -53,9 +53,12 @@ def observe(page, target):
             continue  # the cell centre itself sits on the other side; not a clean edge pair
         for point, expect in zip(pts, (1, 0)):
             before = int(page.locator("#" + target).get_attribute("data-clicks"))
+            hit_before = page.evaluate("([x,y]) => { const e=document.elementFromPoint(x,y); return e && (e.id || e.tagName); }", list(point))
             page.mouse.click(*point)
+            hit_after = page.evaluate("([x,y]) => { const e=document.elementFromPoint(x,y); return e && (e.id || e.tagName); }", list(point))
             after = int(page.locator("#" + target).get_attribute("data-clicks"))
-            clicks.append({"point": point, "predicted": expect, "clicked": after - before})
+            clicks.append({"point": point, "predicted": expect, "clicked": after - before,
+                           "hit_before": hit_before, "hit_after": hit_after})
     return {"target": target, "evidence": hit_probe.to_json(result, rank=3), "matches_exhaustive":
             result["rows"] == reference, "batches": len(calls) - 1, "clicks": clicks}
 
