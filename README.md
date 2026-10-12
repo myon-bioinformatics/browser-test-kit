@@ -124,6 +124,18 @@ python scripts/page_text.py <URL> --find "status page"
 - JavaScript is not run and CSS is not evaluated, so an empty result on a single-page app is `PAGE_TEXT_AS_RENDERED_TEXT`, not an empty page. Core tests use only local fixtures and a local HTTP server.
 - Not implemented yet: an automatic comparison of this static text with the Playwright lane's `inner_text()` (or terminal-browser's rendered text). Run both side by side when rendering matters.
 
+### Hit maps with few probes (`scripts/hit_probe.py`, `littlebit-approx`)
+
+Stdlib-only (`python -S`) search for where a target really receives clicks, Minesweeper-style: probe a coarse lattice, infer blocks whose corners agree, and split and probe again only where they disagree or score near the threshold. Scores are 0..1 (in the browser test, the fraction of a cell's 2x2 sub-points that `elementFromPoint` lands on the target), so a near-threshold cell is treated like a low-confidence Jev decision. The map is then described LittleBit-style as a few binary row-mask x column-mask rectangles with a scale (mean probed score); a plain box is rank 1 with no residual, while rounded corners, rotation, or an overlay leave a residual or need more rank.
+
+```bash
+python -S scripts/hit_probe.py factorize test-results/hit-probe/map.json --rank 3
+```
+
+- `tests/python/test_hit_probe_browser.py` maps four targets in `fixtures/hit_probe.html` (plain, rounded, covered by a blocker plus a `pointer-events:none` ghost, rotated) on Chromium, Firefox, and WebKit. It asserts that the map equals an exhaustive probe, uses under half the probes, and that real clicks on cells either side of the boundary match the map. Evidence goes to `test-results/hit-probe/<browser>.json`.
+- Assumption: no feature thinner than the starting stride; the exhaustive comparison is what guards it. Only the computation is borrowed; there is no model or special runtime.
+- Exit codes: 0 OK; 2 input error.
+
 ### Planned sequence
 
 1. Documentation/evidence contract.
