@@ -128,3 +128,13 @@ Fix: integer sub-points and an integer grid origin
 Regression guard: tests/python/test_hit_probe_browser.py::test_integer_edges_agree_and_fractional_edges_are_recorded (asserts integers, records fractional results per engine)
 Portable lesson: never assert on fractional-pixel hit tests across engines
 ```
+
+Measured at the plain box's left edge (x = 40) in CI on PR #58, as `elementFromPoint` hit / real click:
+
+| x | Chromium | Firefox | WebKit |
+| --- | --- | --- | --- |
+| 39 | miss / no click | miss / no click | miss / no click |
+| 39.25, 39.5, 39.75 | hit / click | miss / no click | **hit / no click** |
+| 40 | hit / click | hit / click | hit / click |
+
+Chromium rounds fractional points up and Firefox down, each consistently; WebKit's `elementFromPoint` and its click disagree with each other, which is why WebKit failed first.
