@@ -144,3 +144,20 @@ def test_multicodepoint_emoji_is_a_whole_identity():
     assert [s['route'] for s in m.resolve('👩🏽‍💻 → 🇯🇵 → 1️⃣', registry)] == ['/coder','/flag','/key']
     with pytest.raises(ValueError, match='unknown'):
         m.resolve('👩‍💻', registry)  # Skin tone and ZWJ are not discarded.
+
+
+def test_node_helper_found_in_user_install(monkeypatch, tmp_path):
+    import site
+    helper = tmp_path / 'user/share/browser-test-kit/route_trail_node.mjs'
+    helper.parent.mkdir(parents=True)
+    helper.write_text('// installed asset')
+    monkeypatch.setattr(m, '__file__', str(tmp_path/'site-packages/route_trail.py'))
+    monkeypatch.setattr(m.sys, 'prefix', str(tmp_path/'environment'))
+    monkeypatch.setattr(site, 'getuserbase', lambda: str(tmp_path/'user'))
+    steps = m.resolve('🏠', LEGACY)
+    def run(cmd, **kwargs):
+        assert cmd == ['node', str(helper.resolve())]
+        rows = [{**steps[0], 'index':0, 'status':'passed', 'observed_url':steps[0]['url']}]
+        return SimpleNamespace(stdout=json.dumps(m._receipt(rows,1)), stderr='', returncode=0)
+    monkeypatch.setattr(subprocess, 'run', run)
+    assert m.run_plan(steps, backend='node')['ok']

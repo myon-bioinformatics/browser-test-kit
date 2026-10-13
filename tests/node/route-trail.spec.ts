@@ -1,5 +1,5 @@
 import {test, expect} from '@playwright/test';
-import {readFileSync} from 'node:fs';
+import {readFileSync, mkdirSync, symlinkSync} from 'node:fs';
 import {spawnSync} from 'node:child_process';
 import {resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
@@ -61,10 +61,14 @@ test('invalid later step never starts navigation', async ({page}) => {
   expect(page.url()).toBe('about:blank');
 });
 
-test('Python CLI executes one Node worker with the same receipt contract', async ({browserName}) => {
+test('Python CLI executes one Node worker with the same receipt contract', async ({browserName}, testInfo) => {
+  const consumer = testInfo.outputPath('isolated-consumer');
+  mkdirSync(resolve(consumer, 'node_modules/@playwright'), {recursive:true});
+  // No top-level playwright package: emulate a non-hoisted @playwright/test install.
+  symlinkSync(resolve('node_modules/@playwright/test'), resolve(consumer, 'node_modules/@playwright/test'), 'dir');
   const child = spawnSync('python', ['-S', 'scripts/route_trail.py', '🏠 ↔ 🌍',
     '--registry', 'fixtures/route_trail_execution.json', '--base', base,
-    '--run', '--backend', 'node', '--browser', browserName, '--json'],
+    '--run', '--backend', 'node', '--node-cwd', consumer, '--browser', browserName, '--json'],
     {encoding:'utf8',timeout:30000});
   expect(child.status, child.stdout + child.stderr).toBe(0);
   const result = JSON.parse(child.stdout);

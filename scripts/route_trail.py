@@ -260,10 +260,12 @@ def _walk_plan(page, steps, *, ready=None, check=None, navigate=None, timeout_ms
         yield copy.deepcopy(record)
 
 
-def walk(page, trail, registry, **kwargs):
+def walk(page, trail, registry, *, base='http://localhost:8080/', hash_routing=True,
+         ready=None, check=None, navigate=None, timeout_ms=10000):
     """One-call sync execution on an existing Page; no browser ownership transfer."""
-    done = list(walk_steps(page, trail, registry, **kwargs))
-    return _receipt(done, len(done))
+    steps = validate_steps(resolve(trail, registry, base=base, hash_routing=hash_routing), timeout_ms)
+    done = list(_walk_plan(page, steps, ready=ready, check=check, navigate=navigate, timeout_ms=timeout_ms))
+    return _receipt(done, len(steps))
 
 
 async def awalk_steps(page, trail, registry, *, base='http://localhost:8080/', hash_routing=True,
@@ -307,9 +309,12 @@ async def _awalk_plan(page, steps, *, ready=None, check=None, navigate=None, tim
         yield copy.deepcopy(record)
 
 
-async def awalk(page, trail, registry, **kwargs):
-    done = [record async for record in awalk_steps(page, trail, registry, **kwargs)]
-    return _receipt(done, len(done))
+async def awalk(page, trail, registry, *, base='http://localhost:8080/', hash_routing=True,
+                ready=None, check=None, navigate=None, timeout_ms=10000):
+    steps = validate_steps(resolve(trail, registry, base=base, hash_routing=hash_routing), timeout_ms)
+    done = [record async for record in _awalk_plan(page, steps, ready=ready, check=check,
+                                                 navigate=navigate, timeout_ms=timeout_ms)]
+    return _receipt(done, len(steps))
 
 
 def _close_result(result, close):
@@ -402,6 +407,9 @@ def run_plan(steps, *, backend='python', browser='chromium', timeout_ms=10000, r
         asset = Path(__file__).with_name('route_trail_node.mjs')
         if not asset.exists():
             asset = Path(sys.prefix) / 'share/browser-test-kit/route_trail_node.mjs'
+        if not asset.exists():
+            import site
+            asset = Path(site.getuserbase()) / 'share/browser-test-kit/route_trail_node.mjs'
         if not asset.exists():
             raise ValueError('Node helper is unavailable; reinstall the package including its shared asset')
         cmd = ['node', str(asset.resolve())]

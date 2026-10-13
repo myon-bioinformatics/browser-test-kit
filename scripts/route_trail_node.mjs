@@ -64,7 +64,13 @@ async function main(){
     request=JSON.parse(raw);validateSteps(request.steps,request.timeout_ms);
     if(!['chromium','firefox','webkit'].includes(request.browser))throw Error('invalid browser');
     const require=createRequire(resolve(process.cwd(),'package.json'));
-    const pw=require('playwright');browser=await pw[request.browser].launch();
+    let pw;
+    try{pw=require('playwright');}
+    catch(e){
+      if(e.code!=='MODULE_NOT_FOUND'||!e.message.startsWith("Cannot find module 'playwright'"))throw e;
+      pw=require('@playwright/test');
+    }
+    browser=await pw[request.browser].launch();
     const page=await browser.newPage();result=await walk(page,request.steps,{timeoutMs:request.timeout_ms});
   } catch(e){result=e instanceof TrailExecutionError?e.receipt:receipt([],Array.isArray(request?.steps)?request.steps.length:0,{phase:'setup',message:String(e.message||e).slice(0,2000),type:e.name||'Error'});}
   finally {if(browser){try{await browser.close();}catch(e){const detail=String(e.message||e).slice(0,2000);if(result?.ok){result.ok=false;result.error={phase:'cleanup',message:detail};}else if(result)result.cleanup_error=detail;}}}

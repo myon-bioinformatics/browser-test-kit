@@ -54,9 +54,12 @@ python -S scripts/route_trail.py '@home ↔ @world' --registry pages.json --base
 Execution starts **one worker, one browser and one Page for the entire trail**.
 Python workers use the same interpreter with site packages enabled; install the
 consumer's Playwright and browser binaries first. Node uses the consumer's existing
-`playwright` installation in `--node-cwd` (default current directory). No extra
+`playwright` installation in `--node-cwd` (default current directory), falling
+back to `@playwright/test` when the top-level `playwright` package is absent. No extra
 npm library, TypeScript compiler, Deno or Dart runtime is required. The `.mjs`
-helper ships in the Python wheel under `share/browser-test-kit`.
+helper ships in the Python wheel under `share/browser-test-kit`. Resolution
+checks the module sibling, environment prefix, then `site.getuserbase()` for
+`pip install --user` (including when the planner runs with `-S`).
 
 `--browser chromium|firefox|webkit`, `--timeout-ms` (per Playwright wait, default
 10000), `--run-timeout` (whole subprocess, default 120 seconds), `--path-routing`
