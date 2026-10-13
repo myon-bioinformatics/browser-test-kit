@@ -37,11 +37,18 @@ tests the click path that direct `goto` does not.
 
 ## inventory: what the page exposes, before choosing what to press
 
-`inventory(page)` lists each matching element's role, accessible name, text
+`inventory(page)` lists each matching element's role, `aria-label`, text
 (trimmed), identifier (`flt-semantics-identifier`, `id` or `data-testid`), box and
 whether it is in the viewport, as one `element-inventory/1` record (`total`,
 `truncated`). The default selector covers Flutter semantics nodes, `[role]` and
 native controls; pass `selector` / `limit` to narrow it.
+
+`aria_label` is the raw attribute, **not** the computed accessible name. A
+`<button>Submit</button>`, `aria-labelledby`, a native `<label>` or an image `alt`
+give a name to Playwright's `getByRole(role, {name})` while `aria_label` stays
+`null`; read `text` for those, and let Playwright's role/name locator do the
+actual matching. This record is for comparing boxes, not for re-implementing
+accessible-name computation.
 
 ```js
 import {inventory, press} from './scripts/interaction.mjs';

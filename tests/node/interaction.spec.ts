@@ -74,10 +74,14 @@ test('inventory exposes a merged card: its centre misses the field, the field it
   const touch = !!testInfo.project.use.hasTouch;
   await page.goto(url);
   const listed = await inventory(page, {selector: '[role="button"], [role="combobox"]'});
-  const card = listed.elements.find((e) => e.name === 'Door card');
+  const card = listed.elements.find((e) => e.aria_label === 'Door card');
   const field = listed.elements.find((e) => e.id === 'door-field');
   expect(listed).toMatchObject({schema: 'element-inventory/1', truncated: false});
   expect(card.box.height).toBeGreaterThan(field.box.height * 3);
+  // aria_label is the raw attribute: a text-named button has none, but Playwright still matches its name.
+  const quiet = (await inventory(page, {selector: '#quiet'})).elements[0];
+  expect(quiet).toMatchObject({role: null, aria_label: null, text: 'quiet'});
+  await expect(page.getByRole('button', {name: 'quiet'})).toHaveCount(1);
   await press(page, page.getByRole('button', {name: 'Door card'}), {touch});
   await expect(page.locator('#log')).toHaveText('card body');
   await press(page, page.getByTestId('door-field'), {touch});

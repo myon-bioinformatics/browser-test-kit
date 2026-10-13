@@ -93,7 +93,7 @@ export const INVENTORY_SELECTOR = 'flt-semantics, [role], button, a, input, sele
 // Same function text as _INVENTORY in interaction.py.
 export async function inventory(page, {selector = INVENTORY_SELECTOR, limit = 200} = {}) {
   const {total, elements} = await page.evaluate(([selector, limit]) => {
-  // Role, accessible name, text, identifier and box of each matching element:
+  // Role, aria-label, text, identifier and box of each matching element:
   // shows when a framework merged a control into a larger container.
   const all = document.querySelectorAll(selector), elements = [];
   for (const el of all) {
@@ -103,7 +103,7 @@ export async function inventory(page, {selector = INVENTORY_SELECTOR, limit = 20
     elements.push({
       tag: el.tagName.toLowerCase(),
       role: el.getAttribute('role'),
-      name: el.getAttribute('aria-label'),
+      aria_label: el.getAttribute('aria-label'),
       text: text.length > 120 ? text.slice(0, 119) + '…' : text,
       id: el.getAttribute('flt-semantics-identifier') || el.id || el.getAttribute('data-testid') || null,
       box: {x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height)},

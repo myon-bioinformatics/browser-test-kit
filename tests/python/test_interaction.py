@@ -151,9 +151,13 @@ def test_inventory_shows_merged_card_and_field_press(browser_name):
             listed = interaction.inventory(page, selector='[role="button"], [role="combobox"]', limit=1)
             assert listed["truncated"] is True and len(listed["elements"]) == 1
             listed = interaction.inventory(page, selector='[role="button"], [role="combobox"]')
-            card = next(e for e in listed["elements"] if e["name"] == "Door card")
+            card = next(e for e in listed["elements"] if e["aria_label"] == "Door card")
             field = next(e for e in listed["elements"] if e["id"] == "door-field")
             assert card["box"]["height"] > 3 * field["box"]["height"] and card["in_viewport"]
+            # Raw attribute, not the accessible name: Playwright still names this button "quiet".
+            quiet = interaction.inventory(page, selector="#quiet")["elements"][0]
+            assert (quiet["role"], quiet["aria_label"], quiet["text"]) == (None, None, "quiet")
+            assert page.get_by_role("button", name="quiet").count() == 1
             interaction.press(page, page.get_by_role("button", name="Door card"), touch=False)
             assert page.locator("#log").inner_text() == "card body"
             interaction.press(page, page.get_by_test_id("door-field"), touch=False)

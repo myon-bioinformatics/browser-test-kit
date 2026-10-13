@@ -6,7 +6,7 @@ Library (the caller owns Playwright, Page and Locator; nothing is imported from 
     record = press(page, page.get_by_text("Photo Studio"), touch=False)
     w = watch(page); ...; report = w.stop()          # sync API
     w = await awatch(page); ...; report = await w.stop()  # async API
-    listed = inventory(page)                         # role/name/text/id/box per element
+    listed = inventory(page)                         # role/aria-label/text/id/box per element
 
 press() scrolls the target into view, requires `ratio` of its box inside the
 viewport, and sends real mouse/touch input at the integer centre. Use it where
@@ -50,7 +50,7 @@ _STORAGE = """() => {
 INVENTORY_SELECTOR = "flt-semantics, [role], button, a, input, select, textarea"
 # Same function text as inventory() in interaction.mjs.
 _INVENTORY = r"""([selector, limit]) => {
-  // Role, accessible name, text, identifier and box of each matching element:
+  // Role, aria-label, text, identifier and box of each matching element:
   // shows when a framework merged a control into a larger container.
   const all = document.querySelectorAll(selector), elements = [];
   for (const el of all) {
@@ -60,7 +60,7 @@ _INVENTORY = r"""([selector, limit]) => {
     elements.push({
       tag: el.tagName.toLowerCase(),
       role: el.getAttribute('role'),
-      name: el.getAttribute('aria-label'),
+      aria_label: el.getAttribute('aria-label'),
       text: text.length > 120 ? text.slice(0, 119) + '…' : text,
       id: el.getAttribute('flt-semantics-identifier') || el.id || el.getAttribute('data-testid') || null,
       box: {x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height)},
@@ -132,7 +132,11 @@ def _inventory_record(selector, data):
 
 
 def inventory(page, *, selector=INVENTORY_SELECTOR, limit=200):
-    """Role, accessible name, text, identifier and box of matching elements (see interaction.mjs)."""
+    """Role, aria-label, text, identifier and box of matching elements (see interaction.mjs).
+
+    `aria_label` is the raw attribute, not the computed accessible name: a
+    `<button>Submit</button>` has `aria_label: None` and `text: "Submit"`.
+    """
     return _inventory_record(selector, page.evaluate(_INVENTORY, [selector, limit]))
 
 
