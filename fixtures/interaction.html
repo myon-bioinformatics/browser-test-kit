@@ -10,6 +10,9 @@ body{margin:0;height:2400px;font:16px system-ui,sans-serif}
 #quiet,#noisy{position:absolute;top:60px;z-index:2}
 #quiet{left:8px}#noisy{left:120px}
 #overwrite{position:absolute;top:60px;left:230px;z-index:2}
+/* Like a Flutter Door card: one button-role node around a smaller field. */
+#door-card{position:absolute;left:8px;top:120px;width:300px;height:130px;z-index:2;background:#eee}
+#door-field{position:absolute;left:20px;top:80px;width:160px;height:40px;background:#ccd}
 </style></head>
 <body>
 <div id="target" role="button">Press me</div>
@@ -18,6 +21,9 @@ body{margin:0;height:2400px;font:16px system-ui,sans-serif}
 <button id="quiet" type="button">quiet</button>
 <button id="noisy" type="button">noisy</button>
 <button id="overwrite" type="button">overwrite</button>
+<div id="door-card" role="button" aria-label="Door card">Door card
+  <div id="door-field" role="combobox" aria-label="Door field" data-testid="door-field">Choose</div>
+</div>
 <script>
 const target=document.getElementById('target'),log=document.getElementById('log');
 let hits=0;
@@ -32,6 +38,11 @@ document.getElementById('pane').addEventListener('pointerup',e=>{
 target.addEventListener('click',()=>{log.textContent='synthetic'});
 document.getElementById('overwrite').addEventListener('click',()=>{
   try{localStorage.setItem('seed','bbbb')}catch(e){}
+});
+document.getElementById('door-card').addEventListener('pointerup',e=>{
+  const r=document.getElementById('door-field').getBoundingClientRect();
+  const inside=e.clientX>=r.left&&e.clientX<r.right&&e.clientY>=r.top&&e.clientY<r.bottom;
+  log.textContent=inside?'field opened':'card body';
 });
 document.getElementById('quiet').addEventListener('click',()=>{log.textContent='quiet'});
 document.getElementById('noisy').addEventListener('click',()=>{

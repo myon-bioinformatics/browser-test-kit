@@ -134,5 +134,29 @@ def test_async_press_and_watch_chromium():
     asyncio.run(run())
 
 
-def test_node_and_python_share_the_storage_snapshot():
-    assert interaction._STORAGE in (ROOT / "scripts" / "interaction.mjs").read_text(encoding="utf-8")
+def test_node_and_python_share_the_page_functions():
+    mjs = (ROOT / "scripts" / "interaction.mjs").read_text(encoding="utf-8")
+    assert interaction._STORAGE in mjs and interaction._INVENTORY in mjs
+    assert f"INVENTORY_SELECTOR = '{interaction.INVENTORY_SELECTOR}'" in mjs
+
+
+@pytest.mark.parametrize("browser_name", ("chromium", "firefox", "webkit"))
+def test_inventory_shows_merged_card_and_field_press(browser_name):
+    from playwright.sync_api import sync_playwright
+    with sync_playwright() as pw:
+        browser = getattr(pw, browser_name).launch()
+        try:
+            page = browser.new_page(viewport=VIEW)
+            page.goto(URL)
+            listed = interaction.inventory(page, selector='[role="button"], [role="combobox"]', limit=1)
+            assert listed["truncated"] is True and len(listed["elements"]) == 1
+            listed = interaction.inventory(page, selector='[role="button"], [role="combobox"]')
+            card = next(e for e in listed["elements"] if e["name"] == "Door card")
+            field = next(e for e in listed["elements"] if e["id"] == "door-field")
+            assert card["box"]["height"] > 3 * field["box"]["height"] and card["in_viewport"]
+            interaction.press(page, page.get_by_role("button", name="Door card"), touch=False)
+            assert page.locator("#log").inner_text() == "card body"
+            interaction.press(page, page.get_by_test_id("door-field"), touch=False)
+            assert page.locator("#log").inner_text() == "field opened"
+        finally:
+            browser.close()

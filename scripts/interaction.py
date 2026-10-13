@@ -2,10 +2,11 @@
 
 Library (the caller owns Playwright, Page and Locator; nothing is imported from it here):
 
-    from interaction import press, apress, watch, awatch
+    from interaction import press, apress, watch, awatch, inventory, ainventory
     record = press(page, page.get_by_text("Photo Studio"), touch=False)
     w = watch(page); ...; report = w.stop()          # sync API
     w = await awatch(page); ...; report = await w.stop()  # async API
+    listed = inventory(page)                         # role/name/text/id/box per element
 
 press() scrolls the target into view, requires `ratio` of its box inside the
 viewport, and sends real mouse/touch input at the integer centre. Use it where
@@ -45,6 +46,28 @@ _STORAGE = """() => {
     } catch (e) { return null; }
   };
   return {local: snap('localStorage'), session: snap('sessionStorage')};
+}"""
+INVENTORY_SELECTOR = "flt-semantics, [role], button, a, input, select, textarea"
+# Same function text as inventory() in interaction.mjs.
+_INVENTORY = r"""([selector, limit]) => {
+  // Role, accessible name, text, identifier and box of each matching element:
+  // shows when a framework merged a control into a larger container.
+  const all = document.querySelectorAll(selector), elements = [];
+  for (const el of all) {
+    if (elements.length >= limit) break;
+    const r = el.getBoundingClientRect();
+    const text = (el.textContent || '').replace(/\s+/g, ' ').trim();
+    elements.push({
+      tag: el.tagName.toLowerCase(),
+      role: el.getAttribute('role'),
+      name: el.getAttribute('aria-label'),
+      text: text.length > 120 ? text.slice(0, 119) + '…' : text,
+      id: el.getAttribute('flt-semantics-identifier') || el.id || el.getAttribute('data-testid') || null,
+      box: {x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height)},
+      in_viewport: r.width > 0 && r.height > 0 && r.bottom > 0 && r.right > 0 && r.top < innerHeight && r.left < innerWidth,
+    });
+  }
+  return {total: all.length, elements};
 }"""
 _HIT = """(el, [x, y]) => { const top = document.elementFromPoint(x, y);
   return {tag: top ? top.tagName.toLowerCase() : null, self: !!top && (top === el || el.contains(top))}; }"""
@@ -101,6 +124,20 @@ async def apress(page, target, *, touch=None, ratio=0.9, timeout=10000):
         touch = await page.evaluate("() => navigator.maxTouchPoints > 0")
     await (page.touchscreen.tap if touch else page.mouse.click)(point["x"], point["y"])
     return _record(box, point, touch, source, hit)
+
+
+def _inventory_record(selector, data):
+    return {"schema": "element-inventory/1", "selector": selector, "total": data["total"],
+            "truncated": data["total"] > len(data["elements"]), "elements": data["elements"]}
+
+
+def inventory(page, *, selector=INVENTORY_SELECTOR, limit=200):
+    """Role, accessible name, text, identifier and box of matching elements (see interaction.mjs)."""
+    return _inventory_record(selector, page.evaluate(_INVENTORY, [selector, limit]))
+
+
+async def ainventory(page, *, selector=INVENTORY_SELECTOR, limit=200):
+    return _inventory_record(selector, await page.evaluate(_INVENTORY, [selector, limit]))
 
 
 class _Watch:

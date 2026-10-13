@@ -35,6 +35,32 @@ canvas UI: it is an observation, not a failure. As a `route_trail` hook,
 `navigate: (page, step) => press(page, page.getByText(step.title), {touch})`
 tests the click path that direct `goto` does not.
 
+## inventory: what the page exposes, before choosing what to press
+
+`inventory(page)` lists each matching element's role, accessible name, text
+(trimmed), identifier (`flt-semantics-identifier`, `id` or `data-testid`), box and
+whether it is in the viewport, as one `element-inventory/1` record (`total`,
+`truncated`). The default selector covers Flutter semantics nodes, `[role]` and
+native controls; pass `selector` / `limit` to narrow it.
+
+```js
+import {inventory, press} from './scripts/interaction.mjs';
+const listed = await inventory(page, {selector: 'flt-semantics'});
+```
+
+```python
+listed = inventory(page, selector="flt-semantics")
+```
+
+Measured on flutter_navigation_basic PR #182 (Door-to-Door journey): Flutter merged
+the dropdown into its card as one button-role node about 122–130px tall, so a press
+at that node's centre landed on the card, not the 40px field, and the menu never
+opened. Changing the locator's role did not help; giving the dropdown its own
+`Semantics` boundary and identifier, and pressing that, did (390px and 1280px).
+`fixtures/interaction.html` reproduces it with `#door-card` around `#door-field`
+(`MERGED_SEMANTICS_HIT_AREA`). Listing boxes first shows the mismatch before any
+coordinate is chosen.
+
 ## watch: what a page did while input was handled
 
 For tools that accept untrusted input (pasted HTML, files), record requests,
