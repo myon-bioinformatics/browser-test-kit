@@ -2,7 +2,12 @@ import {test, expect} from '@playwright/test';
 import {spawnSync} from 'node:child_process';
 import {resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
-import {walkSteps, walk, TrailExecutionError} from '../../scripts/route_trail_node.mjs';
+let walkSteps, walk, TrailExecutionError;
+test.beforeAll(async () => {
+  // Native import avoids the CommonJS test runner transforming the ESM asset.
+  ({walkSteps, walk, TrailExecutionError} = await new Function('url', 'return import(url)')(
+    pathToFileURL(resolve('scripts/route_trail_node.mjs')).href));
+});
 
 const base = pathToFileURL(resolve('fixtures/route_trail_delayed.html')).href;
 function plan(trail = '@home → @hub → @world → @home') {

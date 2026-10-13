@@ -14,6 +14,7 @@ export function validateSteps(steps,timeoutMs=10000){
     if(!step||typeof step!=='object'||Array.isArray(step)||Object.keys(step).some(k=>!['id','emoji','route','url','title','ready'].includes(k)))throw Error('invalid execution step');
     if(['emoji','route','url'].some(k=>typeof step[k]!=='string'))throw Error('step requires emoji, route and url strings');
     if(step.url.length>4096||/[\u0000-\u001f\\]/.test(step.url))throw Error('invalid execution URL');
+    if(!/^(https?:\/\/|file:\/\/)/.test(step.url))throw Error('execution URL must be absolute');
     const url=new URL(step.url);
     if(!['http:','https:','file:'].includes(url.protocol)||url.username||url.password)throw Error('execution URLs require HTTP(S) or local file without credentials');
     if(url.protocol==='file:' && url.hostname)throw Error('file URL must be local');
@@ -53,8 +54,8 @@ export async function* walkSteps(page,steps,{ready,check,navigate,timeoutMs=1000
   }
 }
 export async function walk(page,steps,options={}){
-  const done=[];for await(const step of walkSteps(page,steps,options))done.push(step);
-  return receipt(done,steps.length);
+  const total=steps.length;const done=[];for await(const step of walkSteps(page,steps,options))done.push(step);
+  return receipt(done,total);
 }
 async function main(){
   let request,result,browser;
