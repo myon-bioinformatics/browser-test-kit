@@ -52,6 +52,11 @@ w = watch(page); page.locator("#paste-load").click(); report = w.stop()
 w = await awatch(page); ...; report = await w.stop()
 ```
 
+Measured in CI (PR #61): Firefox records an `http://` beacon twice, once more as
+`https://` (HTTPS-first upgrade), so assert membership (`toContain` / `in`), not an
+exact request list. Chromium/WebKit/mobile profiles recorded one request, one
+dialog, one page error and `localStorage` 0 → 1 on `file://`.
+
 Storage is compared before/after the watch, not cleared. With
 `dismissDialogs: false` / `dismiss_dialogs=False` the caller must handle dialogs.
 
