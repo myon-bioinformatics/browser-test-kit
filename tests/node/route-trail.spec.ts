@@ -1,5 +1,7 @@
 import {test, expect} from '@playwright/test';
-import {readFileSync, mkdirSync, symlinkSync} from 'node:fs';
+import {readFileSync, mkdirSync, symlinkSync, mkdtempSync, rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {createRequire} from 'node:module';
 import {spawnSync} from 'node:child_process';
 import {resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
@@ -61,15 +63,19 @@ test('invalid later step never starts navigation', async ({page}) => {
   expect(page.url()).toBe('about:blank');
 });
 
-test('Python CLI executes one Node worker with the same receipt contract', async ({browserName}, testInfo) => {
-  const consumer = testInfo.outputPath('isolated-consumer');
+test('Python CLI executes one Node worker with the same receipt contract', async ({browserName}) => {
+  const consumer = mkdtempSync(resolve(tmpdir(), 'btk-consumer-'));
   mkdirSync(resolve(consumer, 'node_modules/@playwright'), {recursive:true});
   // No top-level playwright package: emulate a non-hoisted @playwright/test install.
   symlinkSync(resolve('node_modules/@playwright/test'), resolve(consumer, 'node_modules/@playwright/test'), 'dir');
-  const child = spawnSync('python', ['-S', 'scripts/route_trail.py', '🏠 ↔ 🌍',
+  const require = createRequire(resolve(consumer, 'package.json'));
+  expect(() => require.resolve('playwright')).toThrow();
+  let child;
+  try { child = spawnSync('python', ['-S', 'scripts/route_trail.py', '🏠 ↔ 🌍',
     '--registry', 'fixtures/route_trail_execution.json', '--base', base,
     '--run', '--backend', 'node', '--node-cwd', consumer, '--browser', browserName, '--json'],
-    {encoding:'utf8',timeout:30000});
+    {encoding:'utf8',timeout:30000}); }
+  finally { rmSync(consumer, {recursive:true,force:true}); }
   expect(child.status, child.stdout + child.stderr).toBe(0);
   const result = JSON.parse(child.stdout);
   expect(result).toMatchObject({ok:true,completed:3,backend:'node',browser:browserName});
