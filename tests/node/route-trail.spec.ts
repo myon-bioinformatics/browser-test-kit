@@ -33,7 +33,7 @@ test('shared plan waits for render and resumes on the same page', async ({page})
   expect(remaining).toHaveLength(3);
   expect(await page.evaluate(() => (window as any).retained)).toBe(42);
   expect(await page.locator('#visits').innerText()).toBe('4');
-  const displayedEmoji = (await page.locator('#page').innerText()).split(/\s+/)[0];
+  const displayedEmoji = (await page.title()).trim().split(/\s+/).at(-1);
   expect(plan(displayedEmoji)[0].url).toBe(page.url());
 });
 
