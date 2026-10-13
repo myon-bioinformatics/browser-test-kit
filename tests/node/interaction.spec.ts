@@ -55,3 +55,17 @@ test('watch records requests, dialogs, errors and storage while input is handled
   expect(report.page_errors).toHaveLength(1);
   expect(report.page_errors[0]).toContain('noisy error');
 });
+
+test('watch detects an overwrite of an existing storage key (same key count and length)', async ({page}) => {
+  await page.goto(url);
+  const w = await watch(page);
+  await page.locator('#overwrite').click();
+  const report = await w.stop();
+  const {before, after} = report.storage;
+  expect(before.local).not.toBeNull();
+  expect(after.local.keys).toBe(before.local.keys);
+  expect(after.local.fingerprint).not.toBe(before.local.fingerprint);
+  expect(after.session).toEqual(before.session);
+  expect(report.quiet).toBe(false);
+  expect(JSON.stringify(report)).not.toContain('bbbb');
+});

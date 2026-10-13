@@ -90,6 +90,17 @@ def test_press_reaches_coordinate_hit_target_and_watch_records(browser_name):
             assert report["dialogs"] == [{"type": "alert", "message": "noisy"}]
             assert "http://side-effect.invalid/beacon" in report["requests"]
             assert len(report["page_errors"]) == 1 and "noisy error" in report["page_errors"][0]
+
+            # Same key, same value length: only the content fingerprint can change.
+            page.goto(URL)
+            w = interaction.watch(page)
+            page.locator("#overwrite").click()
+            report = w.stop()
+            before, after = report["storage"]["before"], report["storage"]["after"]
+            assert before["local"] is not None and after["local"]["keys"] == before["local"]["keys"]
+            assert after["local"]["fingerprint"] != before["local"]["fingerprint"]
+            assert after["session"] == before["session"]
+            assert report["quiet"] is False and "bbbb" not in json.dumps(report)
         finally:
             browser.close()
 
@@ -112,7 +123,16 @@ def test_async_press_and_watch_chromium():
                 report = await w.stop()
                 assert report["dialogs"] == [{"type": "alert", "message": "noisy"}]
                 assert report["quiet"] is False
+                w = await interaction.awatch(page)
+                await page.locator("#overwrite").evaluate("el => el.click()")
+                report = await w.stop()
+                assert report["quiet"] is False
+                assert report["storage"]["after"]["local"]["fingerprint"] != report["storage"]["before"]["local"]["fingerprint"]
             finally:
                 await browser.close()
 
     asyncio.run(run())
+
+
+def test_node_and_python_share_the_storage_snapshot():
+    assert interaction._STORAGE in (ROOT / "scripts" / "interaction.mjs").read_text(encoding="utf-8")

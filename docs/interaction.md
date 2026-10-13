@@ -38,7 +38,7 @@ tests the click path that direct `goto` does not.
 ## watch: what a page did while input was handled
 
 For tools that accept untrusted input (pasted HTML, files), record requests,
-dialogs (dismissed), uncaught errors, popups and the Web Storage size change:
+dialogs (dismissed), uncaught errors, popups and Web Storage changes:
 
 ```js
 import {watch} from './scripts/interaction.mjs';
@@ -55,9 +55,14 @@ w = await awatch(page); ...; report = await w.stop()
 Measured in CI (PR #61): Firefox records an `http://` beacon twice, once more as
 `https://` (HTTPS-first upgrade), so assert membership (`toContain` / `in`), not an
 exact request list. Chromium/WebKit/mobile profiles recorded one request, one
-dialog, one page error and `localStorage` 0 → 1 on `file://`.
+dialog, one page error and a new `localStorage` key on `file://`.
 
-Storage is compared before/after the watch, not cleared. With
+Storage is compared before/after the watch, not cleared. Each area records
+`{keys, fingerprint}`: the key count and an FNV-1a hash of the sorted key/value
+pairs, so overwriting an existing key with a same-length value is a change
+(`#overwrite` in the fixture). Raw values are never put in the record. The hash
+detects change; it is not a security or integrity proof. `null` means the area
+could not be read (for example blocked storage). With
 `dismissDialogs: false` / `dismiss_dialogs=False` the caller must handle dialogs.
 
 ## Assert late

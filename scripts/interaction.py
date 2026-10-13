@@ -11,7 +11,9 @@ press() scrolls the target into view, requires `ratio` of its box inside the
 viewport, and sends real mouse/touch input at the integer centre. Use it where
 the DOM node is not the hit target (Flutter Web, canvas UIs, forwarding
 overlays). watch() records requests, dialogs (dismissed), uncaught errors,
-popups and the Web Storage size change while untrusted input is handled.
+popups and Web Storage changes (key count plus a fingerprint of the sorted
+key/value pairs, so overwriting an existing key counts; raw values are not
+recorded) while untrusted input is handled.
 Node twin: scripts/interaction.mjs (same records).
 
 CLI (offline, assert-late): check saved `pointer-press/1` / `side-effects/1` records.
@@ -27,8 +29,23 @@ import json
 import math
 import sys
 
-_STORAGE = """() => { const size = (n) => { try { return window[n].length; } catch (e) { return null; } };
-  return {local: size('localStorage'), session: size('sessionStorage')}; }"""
+# Same snapshot function text as storage() in interaction.mjs.
+_STORAGE = """() => {
+  // Per area: key count and an FNV-1a fingerprint of the sorted key/value pairs,
+  // so an overwrite of an existing key is detected without exposing raw values.
+  const snap = (name) => {
+    try {
+      const store = window[name], entries = [];
+      for (let i = 0; i < store.length; i++) { const k = store.key(i); entries.push([k, store.getItem(k)]); }
+      entries.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+      const text = JSON.stringify(entries);
+      let h = 0x811c9dc5;
+      for (let i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+      return {keys: entries.length, fingerprint: 'fnv1a32:' + (h >>> 0).toString(16).padStart(8, '0')};
+    } catch (e) { return null; }
+  };
+  return {local: snap('localStorage'), session: snap('sessionStorage')};
+}"""
 _HIT = """(el, [x, y]) => { const top = document.elementFromPoint(x, y);
   return {tag: top ? top.tagName.toLowerCase() : null, self: !!top && (top === el || el.contains(top))}; }"""
 

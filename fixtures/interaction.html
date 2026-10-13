@@ -9,6 +9,7 @@ body{margin:0;height:2400px;font:16px system-ui,sans-serif}
 #log{position:fixed;left:8px;top:8px;z-index:2}
 #quiet,#noisy{position:absolute;top:60px;z-index:2}
 #quiet{left:8px}#noisy{left:120px}
+#overwrite{position:absolute;top:60px;left:230px;z-index:2}
 </style></head>
 <body>
 <div id="target" role="button">Press me</div>
@@ -16,9 +17,12 @@ body{margin:0;height:2400px;font:16px system-ui,sans-serif}
 <output id="log">idle</output>
 <button id="quiet" type="button">quiet</button>
 <button id="noisy" type="button">noisy</button>
+<button id="overwrite" type="button">overwrite</button>
 <script>
 const target=document.getElementById('target'),log=document.getElementById('log');
 let hits=0;
+// Existing keys: #overwrite changes a value without changing key count or length.
+try{localStorage.setItem('seed','aaaa');sessionStorage.setItem('seed','aaaa')}catch(e){}
 document.getElementById('pane').addEventListener('pointerup',e=>{
   const r=target.getBoundingClientRect();
   if(e.clientX>=r.left&&e.clientX<r.right&&e.clientY>=r.top&&e.clientY<r.bottom)
@@ -26,6 +30,9 @@ document.getElementById('pane').addEventListener('pointerup',e=>{
 });
 // A synthetic DOM click reaches the node directly, which real input cannot.
 target.addEventListener('click',()=>{log.textContent='synthetic'});
+document.getElementById('overwrite').addEventListener('click',()=>{
+  try{localStorage.setItem('seed','bbbb')}catch(e){}
+});
 document.getElementById('quiet').addEventListener('click',()=>{log.textContent='quiet'});
 document.getElementById('noisy').addEventListener('click',()=>{
   new Image().src='http://side-effect.invalid/beacon';
