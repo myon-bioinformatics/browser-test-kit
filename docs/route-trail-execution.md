@@ -127,3 +127,53 @@ Node matrix also covers mobile Chromium/WebKit emulation. Node tests consume
 Python-generated plans and execute the Python → Node CLI bridge. Unit tests
 cover strict catalogs, whole-plan validation, hooks, prefix errors, bounded
 subprocesses and receipt validation. These execute in existing CI jobs.
+
+## Per-page screenshots without another execution layer
+
+Use the existing `check` hook to capture after navigation, readiness and URL
+verification, before the next transition. Repeated visits get distinct numeric
+filenames (emoji/route text does not become a file path). Create a fresh output
+directory in the consumer or use pytest `tmp_path` / Playwright `testInfo.outputPath`.
+Playwright may overwrite a screenshot path: directory selection and retention
+are caller-owned. An exception while capturing fails the current step; the
+completed prefix remains available in `TrailExecutionError.receipt`.
+
+One-liners on an existing Page (with `shots` a `pathlib.Path` directory):
+
+```python
+result = walk(page, '🏠 ↔ 🌍', registry, base=base, check=lambda p, s: p.screenshot(path=str(shots / f"{s['index']:03}.png"), full_page=True))
+result = await awalk(page, '🏠 ↔ 🌍', registry, base=base, check=lambda p, s: p.screenshot(path=str(shots / f"{s['index']:03}.png"), full_page=True))
+```
+
+```js
+const result = await walk(page, steps, {check: (p, s) => p.screenshot({path: `${shots}/${s.index}.png`, fullPage: true})});
+```
+
+A shell command using the Python API (install Playwright/browser binaries first):
+
+```sh
+PYTHONPATH=scripts python - pages.json https://example.test '🏠 ↔ 🌍' screenshots <<'PY'
+import json, sys
+from pathlib import Path
+from playwright.sync_api import sync_playwright
+from route_trail import load_registry, walk
+catalog, base, trail, output = sys.argv[1:]
+registry = load_registry(Path(catalog).read_text(encoding='utf-8'), name=catalog)
+shots = Path(output)
+shots.mkdir(parents=True, exist_ok=False)  # Choose a fresh directory for each run.
+with sync_playwright() as pw:
+    browser = pw.chromium.launch()
+    try:
+        result = walk(browser.new_page(), trail, registry, base=base,
+                      check=lambda p, s: p.screenshot(path=str(shots / f"{s['index']:03}.png"), full_page=True))
+        print(json.dumps(result, ensure_ascii=False))
+    finally:
+        browser.close()
+PY
+```
+
+The built-in `--run` currently emits receipts; screenshot capture uses these
+API hooks, not a new CLI screenshot flag. For an installed kit, omit
+`PYTHONPATH=scripts`. Existing sync/async Python and Node browser matrix tests
+capture each step and check that actual PNG files were produced; Node retains
+them in its CI artifact. This validates capture, not visual-baseline comparison.

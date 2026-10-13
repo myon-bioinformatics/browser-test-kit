@@ -1,4 +1,5 @@
 import {test, expect} from '@playwright/test';
+import {readFileSync} from 'node:fs';
 import {spawnSync} from 'node:child_process';
 import {resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
@@ -17,12 +18,13 @@ function plan(trail = '@home → @hub → @world → @home') {
   return JSON.parse(child.stdout);
 }
 
-test('shared plan waits for render and resumes on the same page', async ({page}) => {
+test('shared plan waits for render and resumes on the same page', async ({page}, testInfo) => {
   const steps = plan('🏠 → @hub → 🌍 → 🏠');
   expect(steps).toEqual(plan());
   const iterator = walkSteps(page, steps, {check: async (page, step) => {
     await Promise.resolve();
     expect(await page.locator('#visits').innerText()).toBe(String(step.index + 1));
+    await page.screenshot({path:testInfo.outputPath(`trail-${step.index}.png`),fullPage:true});
   }});
   expect((await iterator.next()).value.index).toBe(0);
   await page.evaluate(() => { (window as any).retained = 42; });
@@ -31,6 +33,10 @@ test('shared plan waits for render and resumes on the same page', async ({page})
   const remaining = [];
   for await (const step of iterator) remaining.push(step);
   expect(remaining).toHaveLength(3);
+  for (let index=0; index<4; index++) {
+    expect([...readFileSync(testInfo.outputPath(`trail-${index}.png`)).subarray(0,8)])
+      .toEqual([137,80,78,71,13,10,26,10]);
+  }
   expect(await page.evaluate(() => (window as any).retained)).toBe(42);
   expect(await page.locator('#visits').innerText()).toBe('4');
   const identities = [(await page.locator('#page').innerText()).trim().split(/\s+/)[0],

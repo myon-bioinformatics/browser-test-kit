@@ -22,17 +22,21 @@ def registry():
 
 
 @pytest.mark.parametrize("browser_name", ("chromium", "firefox", "webkit"))
-def test_walk_resume_and_failure(browser_name):
+def test_walk_resume_and_failure(browser_name, tmp_path):
     with sync_playwright() as pw:
         browser = getattr(pw, browser_name).launch()
         try:
             page = browser.new_page()
-            iterator = route_trail.walk_steps(page, "🏠 → @hub → 🌍 → 🏠", registry(), base=BASE)
+            iterator = route_trail.walk_steps(page, "🏠 → @hub → 🌍 → 🏠", registry(), base=BASE,
+                check=lambda page, step: page.screenshot(path=str(tmp_path / f"{step['index']:03}.png"), full_page=True))
             assert next(iterator)["index"] == 0
             page.evaluate("window.retained = 42")
             assert len(list(iterator)) == 3
             assert page.evaluate("window.retained") == 42
             assert page.locator("#visits").inner_text() == "4"
+            shots = sorted(tmp_path.glob("*.png"))
+            assert len(shots) == 4
+            assert all(p.read_bytes().startswith(b"\x89PNG\r\n\x1a\n") for p in shots)
             identities = [page.locator("#page").inner_text().split(maxsplit=1)[0],
                           page.title().rsplit(maxsplit=1)[-1]]
             for displayed_emoji in identities:  # Leading and trailing title conventions.
@@ -49,7 +53,7 @@ def test_walk_resume_and_failure(browser_name):
 
 
 @pytest.mark.parametrize("browser_name", ("chromium", "firefox", "webkit"))
-def test_async_walk(browser_name):
+def test_async_walk(browser_name, tmp_path):
     async def run():
         async with async_playwright() as pw:
             browser = await getattr(pw, browser_name).launch()
@@ -58,8 +62,10 @@ def test_async_walk(browser_name):
                 async def check(page, step):
                     await asyncio.sleep(0)
                     assert await page.locator("#visits").inner_text() == str(step["index"] + 1)
+                    await page.screenshot(path=str(tmp_path / f"{step['index']:03}.png"), full_page=True)
                 result = await route_trail.awalk(page, "🏠 ↔ 🗺️", registry(), base=BASE, check=check)
                 assert result["ok"] and result["completed"] == 3
+                assert len(list(tmp_path.glob("*.png"))) == 3
             finally:
                 await browser.close()
     asyncio.run(run())
