@@ -14,4 +14,4 @@ requires-python = ">=3.9"
 package-dir = { "" = "scripts" }
 
 [tool.setuptools.data-files]
-"share/browser-test-kit" = ["scripts/route_trail_node.mjs"]
+"share/browser-test-kit" = ["scripts/route_trail_node.mjs", "scripts/interaction.mjs"]

@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>interaction fixture</title>
+<style>
+body{margin:0;height:2400px;font:16px system-ui,sans-serif}
+/* Like Flutter Web: the visible control is a DOM node, but a full-page pane on top
+   receives real input and hit-tests by coordinates. */
+#target{position:absolute;left:40px;top:1500px;width:161px;height:47px;background:#4a7;color:#fff}
+#pane{position:fixed;inset:0;z-index:1}
+#log{position:fixed;left:8px;top:8px;z-index:2}
+#quiet,#noisy{position:absolute;top:60px;z-index:2}
+#quiet{left:8px}#noisy{left:120px}
+#overwrite{position:absolute;top:60px;left:230px;z-index:2}
+</style></head>
+<body>
+<div id="target" role="button">Press me</div>
+<div id="pane"></div>
+<output id="log">idle</output>
+<button id="quiet" type="button">quiet</button>
+<button id="noisy" type="button">noisy</button>
+<button id="overwrite" type="button">overwrite</button>
+<script>
+const target=document.getElementById('target'),log=document.getElementById('log');
+let hits=0;
+// Existing keys: #overwrite changes a value without changing key count or length.
+try{localStorage.setItem('seed','aaaa');sessionStorage.setItem('seed','aaaa')}catch(e){}
+document.getElementById('pane').addEventListener('pointerup',e=>{
+  const r=target.getBoundingClientRect();
+  if(e.clientX>=r.left&&e.clientX<r.right&&e.clientY>=r.top&&e.clientY<r.bottom)
+    log.textContent=`pressed ${++hits} ${e.pointerType}`;
+});
+// A synthetic DOM click reaches the node directly, which real input cannot.
+target.addEventListener('click',()=>{log.textContent='synthetic'});
+document.getElementById('overwrite').addEventListener('click',()=>{
+  try{localStorage.setItem('seed','bbbb')}catch(e){}
+});
+document.getElementById('quiet').addEventListener('click',()=>{log.textContent='quiet'});
+document.getElementById('noisy').addEventListener('click',()=>{
+  new Image().src='http://side-effect.invalid/beacon';
+  try{localStorage.setItem('leak','1')}catch(e){}
+  alert('noisy');
+  setTimeout(()=>{throw new Error('noisy error')});
+});
+</script>
+</body></html>
