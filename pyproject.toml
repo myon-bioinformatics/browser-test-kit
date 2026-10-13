@@ -12,3 +12,6 @@ requires-python = ">=3.9"
 # Every scripts/*.py becomes a top-level module (src-layout discovery), so
 # `python -m check_png ...` works from any directory after installation.
 package-dir = { "" = "scripts" }
+
+[tool.setuptools.data-files]
+"share/browser-test-kit" = ["scripts/route_trail_node.mjs"]

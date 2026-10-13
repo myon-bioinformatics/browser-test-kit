@@ -155,6 +155,10 @@ python -S scripts/route_trail.py '🏠 ↔ 🗺' --registry fixtures/route_trail
 - `tests/python/test_route_trail_browser.py` walks a trail on Chromium, Firefox, and WebKit against a hash-router fixture and checks each step shows its page.
 - Exit codes: 0 OK; 2 unknown emoji, malformed trail, or bad registry.
 
+Execution APIs and CLI (`--run`) are documented in [route trail execution](docs/route-trail-execution.md).
+The same JSON catalog supports stable `@id` names and readiness markers; Python
+sync/async and dependency-light Node execution reuse one Page for the whole trail.
+
 ### Planned sequence
 
 1. Documentation/evidence contract.

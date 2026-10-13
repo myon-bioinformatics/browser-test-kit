@@ -1,0 +1,9 @@
+{
+  "schema": "route-trail/1",
+  "pages": [
+    {"id":"home", "emoji":"🏠", "title":"Home", "route":"/", "ready":{"selector":"#page", "text":"🏠 Home"}},
+    {"id":"hub", "emoji":"🗺️", "title":"Hub", "route":"/hub", "ready":{"selector":"#page", "text":"🗺️ Hub"}},
+    {"id":"world", "emoji":"🌍", "title":"World", "route":"/screen1", "ready":{"selector":"#page", "text":"🌍 World"}},
+    {"id":"time", "emoji":"🕒", "title":"Time", "route":"/tools/time", "ready":{"selector":"#page", "text":"🕒 Time"}}
+  ]
+}
