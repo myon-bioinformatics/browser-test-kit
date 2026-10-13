@@ -156,6 +156,8 @@ python -S scripts/route_trail.py '🏠 ↔ 🗺' --registry fixtures/route_trail
 - Exit codes: 0 OK; 2 unknown emoji, malformed trail, or bad registry.
 
 Execution APIs and CLI (`--run`) are documented in [route trail execution](docs/route-trail-execution.md).
+
+Measured mouse/touch `press` for canvas-painted UIs (Flutter Web) and a `watch` that records requests, dialogs, errors and storage while untrusted input is handled: [interaction](docs/interaction.md) (`scripts/interaction.mjs` / `scripts/interaction.py`).
 The same JSON catalog supports stable `@id` names and readiness markers; Python
 sync/async and dependency-light Node execution reuse one Page for the whole trail.
 
