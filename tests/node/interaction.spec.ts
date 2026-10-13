@@ -3,10 +3,10 @@ import {writeFileSync} from 'node:fs';
 import {spawnSync} from 'node:child_process';
 import {resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
-let press, watch;
+let press, watch, inventory;
 test.beforeAll(async () => {
   // Native import avoids the CommonJS test runner transforming the ESM asset.
-  ({press, watch} = await new Function('url', 'return import(url)')(
+  ({press, watch, inventory} = await new Function('url', 'return import(url)')(
     pathToFileURL(resolve('scripts/interaction.mjs')).href));
 });
 const url = pathToFileURL(resolve('fixtures/interaction.html')).href;
@@ -68,4 +68,22 @@ test('watch detects an overwrite of an existing storage key (same key count and 
   expect(after.session).toEqual(before.session);
   expect(report.quiet).toBe(false);
   expect(JSON.stringify(report)).not.toContain('bbbb');
+});
+
+test('inventory exposes a merged card: its centre misses the field, the field itself works', async ({page}, testInfo) => {
+  const touch = !!testInfo.project.use.hasTouch;
+  await page.goto(url);
+  const listed = await inventory(page, {selector: '[role="button"], [role="combobox"]'});
+  const card = listed.elements.find((e) => e.aria_label === 'Door card');
+  const field = listed.elements.find((e) => e.id === 'door-field');
+  expect(listed).toMatchObject({schema: 'element-inventory/1', truncated: false});
+  expect(card.box.height).toBeGreaterThan(field.box.height * 3);
+  // aria_label is the raw attribute: a text-named button has none, but Playwright still matches its name.
+  const quiet = (await inventory(page, {selector: '#quiet'})).elements[0];
+  expect(quiet).toMatchObject({role: null, aria_label: null, text: 'quiet'});
+  await expect(page.getByRole('button', {name: 'quiet'})).toHaveCount(1);
+  await press(page, page.getByRole('button', {name: 'Door card'}), {touch});
+  await expect(page.locator('#log')).toHaveText('card body');
+  await press(page, page.getByTestId('door-field'), {touch});
+  await expect(page.locator('#log')).toHaveText('field opened');
 });
