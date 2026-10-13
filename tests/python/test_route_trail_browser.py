@@ -27,12 +27,14 @@ def test_walk_resume_and_failure(browser_name):
         browser = getattr(pw, browser_name).launch()
         try:
             page = browser.new_page()
-            iterator = route_trail.walk_steps(page, "@home → @hub → @world → @home", registry(), base=BASE)
+            iterator = route_trail.walk_steps(page, "🏠 → @hub → 🌍 → 🏠", registry(), base=BASE)
             assert next(iterator)["index"] == 0
             page.evaluate("window.retained = 42")
             assert len(list(iterator)) == 3
             assert page.evaluate("window.retained") == 42
             assert page.locator("#visits").inner_text() == "4"
+            displayed_emoji = page.locator("#page").inner_text().split()[0]
+            assert route_trail.resolve(displayed_emoji, registry(), base=BASE)[0]["url"] == page.url
             bad = registry()
             bad["@hub"]["ready"]["text"] = "Never rendered"
             with pytest.raises(route_trail.TrailExecutionError) as err:
@@ -54,7 +56,7 @@ def test_async_walk(browser_name):
                 async def check(page, step):
                     await asyncio.sleep(0)
                     assert await page.locator("#visits").inner_text() == str(step["index"] + 1)
-                result = await route_trail.awalk(page, "@home ↔ @hub", registry(), base=BASE, check=check)
+                result = await route_trail.awalk(page, "🏠 ↔ 🗺️", registry(), base=BASE, check=check)
                 assert result["ok"] and result["completed"] == 3
             finally:
                 await browser.close()
@@ -63,7 +65,7 @@ def test_async_walk(browser_name):
 
 @pytest.mark.parametrize("backend", ("python", "python-async"))
 def test_cli_run_from_stdlib_parent(backend):
-    args = [sys.executable, "-S", str(ROOT / "scripts/route_trail.py"), "@home ↔ @hub",
+    args = [sys.executable, "-S", str(ROOT / "scripts/route_trail.py"), "🏠 ↔ 🌍",
             "--registry", str(ROOT / "fixtures/route_trail_execution.json"), "--base", BASE,
             "--run", "--backend", backend, "--json"]
     child = subprocess.run(args, capture_output=True, text=True, timeout=30)

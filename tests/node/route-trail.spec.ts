@@ -18,7 +18,8 @@ function plan(trail = '@home → @hub → @world → @home') {
 }
 
 test('shared plan waits for render and resumes on the same page', async ({page}) => {
-  const steps = plan();
+  const steps = plan('🏠 → @hub → 🌍 → 🏠');
+  expect(steps).toEqual(plan());
   const iterator = walkSteps(page, steps, {check: async (page, step) => {
     await Promise.resolve();
     expect(await page.locator('#visits').innerText()).toBe(String(step.index + 1));
@@ -32,6 +33,8 @@ test('shared plan waits for render and resumes on the same page', async ({page})
   expect(remaining).toHaveLength(3);
   expect(await page.evaluate(() => (window as any).retained)).toBe(42);
   expect(await page.locator('#visits').innerText()).toBe('4');
+  const displayedEmoji = (await page.locator('#page').innerText()).split(/\s+/)[0];
+  expect(plan(displayedEmoji)[0].url).toBe(page.url());
 });
 
 test('failed readiness stops with completed prefix', async ({page}) => {
@@ -52,12 +55,12 @@ test('invalid later step never starts navigation', async ({page}) => {
 });
 
 test('Python CLI executes one Node worker with the same receipt contract', async ({browserName}) => {
-  const child = spawnSync('python', ['-S', 'scripts/route_trail.py', '@home ↔ @hub',
+  const child = spawnSync('python', ['-S', 'scripts/route_trail.py', '🏠 ↔ 🌍',
     '--registry', 'fixtures/route_trail_execution.json', '--base', base,
     '--run', '--backend', 'node', '--browser', browserName, '--json'],
     {encoding:'utf8',timeout:30000});
   expect(child.status, child.stdout + child.stderr).toBe(0);
   const result = JSON.parse(child.stdout);
   expect(result).toMatchObject({ok:true,completed:3,backend:'node',browser:browserName});
-  expect(result.steps.map(s=>s.url)).toEqual(plan('@home ↔ @hub').map(s=>s.url));
+  expect(result.steps.map(s=>s.url)).toEqual(plan('@home ↔ @world').map(s=>s.url));
 });

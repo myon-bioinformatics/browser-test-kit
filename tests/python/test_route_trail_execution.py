@@ -125,3 +125,22 @@ def test_overall_deadline_and_cli_failure_are_reported(monkeypatch,capsys):
     monkeypatch.setattr(subprocess,'run',timeout)
     assert m.main(['@home','--registry',str(ROOT/'fixtures/route_trail_execution.json'),'--run','--json'])==1
     r=json.loads(capsys.readouterr().out);assert not r['ok'] and r['error']['phase']=='process'
+
+
+@pytest.mark.parametrize('trail', ['🏠 ↔ 🌍', '🏠 ↔ @world', '@home ↔ 🌍', '🏠→@world→🏠'])
+def test_emoji_and_id_arguments_are_interchangeable(trail, capsys):
+    assert m.main([trail, '--registry', str(ROOT/'fixtures/route_trail_execution.json'), '--json']) == 0
+    rows = json.loads(capsys.readouterr().out)
+    assert rows == m.resolve('@home ↔ @world', REG)
+
+
+def test_multicodepoint_emoji_is_a_whole_identity():
+    catalog = {'schema':'route-trail/1','pages':[
+        {'id':'coder','emoji':'👩🏽‍💻','route':'/coder'},
+        {'id':'flag','emoji':'🇯🇵','route':'/flag'},
+        {'id':'key','emoji':'1️⃣','route':'/key'},
+    ]}
+    registry = m.load_registry(json.dumps(catalog))
+    assert [s['route'] for s in m.resolve('👩🏽‍💻 → 🇯🇵 → 1️⃣', registry)] == ['/coder','/flag','/key']
+    with pytest.raises(ValueError, match='unknown'):
+        m.resolve('👩‍💻', registry)  # Skin tone and ZWJ are not discarded.

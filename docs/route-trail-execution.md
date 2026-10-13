@@ -10,7 +10,24 @@ It accepts legacy emoji → route JSON or Dart string maps, and a portable JSON 
 ]}
 ```
 
-Use emoji or `@id` in a trail. `→` visits each listed page; `↔` expands to
+Use emoji or `@id` in a trail; they can be mixed:
+
+```sh
+python -S scripts/route_trail.py '🏠 ↔ 🌍' --registry pages.json --base https://example.test --run --json
+python -S scripts/route_trail.py '🏠 ↔ @world' --registry pages.json --base https://example.test --run --json
+```
+
+An emoji is matched as a complete registry identity, including ZWJ sequences,
+skin tones, flags and keycaps. Only whitespace and variation selectors are
+normalized; skin tones and ZWJ are retained. Emoji alone selects a registered
+page, not an arbitrary emoji substring of a title. If an application consistently
+puts its unique identity first in each page heading, a consumer can read that
+identity and pass it to `resolve`; display-language changes do not alter lookup.
+There is no automatic scan of all title/body emojis or fuzzy title matching.
+Duplicate normalized identities are errors, and unknown emojis fail before any
+navigation. Registration is required; aliases resolve to the canonical page.
+
+ `→` visits each listed page; `↔` expands to
 outbound and return visits. IDs are stable ASCII names, independent of display
 emoji/title. IDs, normalized emoji and routes must be unique. Variation selectors
 are ignored only for emoji lookup; readiness text retains the original text.
