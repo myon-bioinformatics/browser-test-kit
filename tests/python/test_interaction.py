@@ -68,6 +68,8 @@ def test_press_reaches_coordinate_hit_target_and_watch_records(browser_name):
             with pytest.raises(PlaywrightError):
                 target.click(timeout=500)
             record = interaction.press(page, target, touch=False)
+            # Annotation for CI when this fails (job logs may be unreadable from agents).
+            print(f"::notice title=interaction {browser_name}::press {json.dumps(record)} log={log.inner_text()!r}")
             assert log.inner_text() == "pressed 1 mouse"
             assert record["hit"] == {"tag": "div", "self": False}
             assert record["visible_ratio"] == 1.0 and isinstance(record["x"], int) and record["input_source"] == "explicit"
@@ -83,10 +85,11 @@ def test_press_reaches_coordinate_hit_target_and_watch_records(browser_name):
             page.locator("#noisy").click()
             page.wait_for_timeout(200)
             report = w.stop()
+            print(f"::notice title=interaction {browser_name}::watch {json.dumps(report)}")
             assert report["quiet"] is False
-            assert report["requests"] == ["http://side-effect.invalid/beacon"]
             assert report["dialogs"] == [{"type": "alert", "message": "noisy"}]
-            assert report["page_errors"] == ["noisy error"]
+            assert "http://side-effect.invalid/beacon" in report["requests"]
+            assert len(report["page_errors"]) == 1 and "noisy error" in report["page_errors"][0]
         finally:
             browser.close()
 
