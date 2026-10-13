@@ -1,0 +1,7 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>delayed route fixture</title></head>
+<body><main><h1 id="page"></h1><p id="visits">0</p></main><script>
+const pages={"/":"🏠 Home","/hub":"🗺️ Hub","/screen1":"🌍 World","/tools/time":"🕒 Time"};
+let revision=0,visits=0;
+function show(){const own=++revision,route=location.hash.slice(1)||'/';document.querySelector('#page').textContent='Loading';setTimeout(()=>{if(own!==revision)return;document.querySelector('#page').textContent=pages[route]||'404';document.title=(pages[route]||'404').split(' ').reverse().join(' ');document.querySelector('#visits').textContent=String(++visits);},30);}
+addEventListener('hashchange',show);show();
+</script></body></html>
