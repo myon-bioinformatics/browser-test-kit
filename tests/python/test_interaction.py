@@ -164,3 +164,82 @@ def test_inventory_shows_merged_card_and_field_press(browser_name):
             assert page.locator("#log").inner_text() == "field opened"
         finally:
             browser.close()
+
+
+NAME_CASES = json.loads((ROOT / "fixtures" / "inventory-names.json").read_text(encoding="utf-8"))
+NAMES_URL = (ROOT / "fixtures" / "inventory-names.html").as_uri()
+
+
+@pytest.mark.parametrize("browser_name", ("chromium", "firefox", "webkit"))
+@pytest.mark.parametrize("touch", (False, True))
+def test_inventory_raw_labels_and_accessible_names(browser_name, touch):
+    from playwright.sync_api import sync_playwright
+    with sync_playwright() as pw:
+        browser = getattr(pw, browser_name).launch()
+        try:
+            page = browser.new_page(viewport=VIEW, has_touch=touch)
+            page.goto(NAMES_URL)
+            for case in NAME_CASES:
+                record = interaction.inventory(page, selector=case["selector"])
+                assert record["total"] == 1
+                element = record["elements"][0]
+                assert element["aria_label"] == case["aria_label"]
+                assert element["text"] == case["text"]
+                assert "name" not in element
+                assert page.get_by_role(case["role"], name=case["accessible_name"], exact=True).count() == 1
+                if case["aria_label"] and case["aria_label"] != case["accessible_name"]:
+                    assert page.get_by_role(case["role"], name=case["aria_label"], exact=True).count() == 0
+            merged = interaction.inventory(page, selector="#merged-card")["elements"][0]
+            assert merged["id"] == "door-card" and merged["box"]["height"] == 130
+            # Python's Playwright distribution already bundles a Node driver and
+            # JS API. Use those for a real second Page: no npm install is required
+            # by the Python CI lanes, and both APIs run the same browser revision.
+            import playwright
+            driver = Path(playwright.__file__).parent / "driver"
+            node = driver / ("node.exe" if sys.platform == "win32" else "node")
+            selector = ", ".join(case["selector"] for case in NAME_CASES)
+            payload = {"package": str(driver / "package"),
+                       "module": (ROOT / "scripts" / "interaction.mjs").as_uri(),
+                       "browser": browser_name, "touch": touch, "viewport": VIEW,
+                       "url": NAMES_URL, "selector": selector}
+            script = r"""
+const fs = require('node:fs');
+const args = JSON.parse(fs.readFileSync(0, 'utf8'));
+(async () => {
+  const pw = require(args.package);
+  const {inventory} = await import(args.module);
+  const browser = await pw[args.browser].launch();
+  try {
+    const page = await browser.newPage({viewport: args.viewport, hasTouch: args.touch});
+    await page.goto(args.url);
+    console.log(JSON.stringify(await inventory(page, {selector: args.selector})));
+  } finally { await browser.close(); }
+})().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+            result = subprocess.run([str(node), "-e", script], input=json.dumps(payload),
+                                    capture_output=True, text=True, timeout=60)
+            assert result.returncode == 0, result.stderr
+            assert json.loads(result.stdout) == interaction.inventory(page, selector=selector)
+        finally:
+            browser.close()
+
+
+def test_async_inventory_names():
+    from playwright.async_api import async_playwright
+
+    async def run():
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch()
+            try:
+                page = await browser.new_page(viewport=VIEW)
+                await page.goto(NAMES_URL)
+                for case in NAME_CASES:
+                    record = await interaction.ainventory(page, selector=case["selector"])
+                    element = record["elements"][0]
+                    assert element["aria_label"] == case["aria_label"]
+                    assert element["text"] == case["text"] and "name" not in element
+                    assert await page.get_by_role(case["role"], name=case["accessible_name"], exact=True).count() == 1
+            finally:
+                await browser.close()
+
+    asyncio.run(run())

@@ -46,8 +46,11 @@ native controls; pass `selector` / `limit` to narrow it.
 `aria_label` is the raw attribute, **not** the computed accessible name. A
 `<button>Submit</button>`, `aria-labelledby`, a native `<label>` or an image `alt`
 give a name to Playwright's `getByRole(role, {name})` while `aria_label` stays
-`null`; read `text` for those, and let Playwright's role/name locator do the
-actual matching. This record is for comparing boxes, not for re-implementing
+`null`. `aria-labelledby` takes precedence over `aria-label`, so even a
+non-null raw label may differ from the accessible name. `text` is only the
+element's own text content: a labelled input can have empty `text` while its
+accessible name comes from an external label. Let Playwright's role/name locator
+do the actual matching. This record is for comparing boxes, not for re-implementing
 accessible-name computation.
 
 ```js
@@ -138,3 +141,10 @@ Extracted from intermediate work that did not reach a shared place:
 Dart/Flutter widget tests stay with Flutter; this kit covers the browser side.
 Tests: `tests/python/test_interaction.py` (Chromium/Firefox/WebKit, sync and async)
 and `tests/node/interaction.spec.ts` (all Node projects including mobile).
+
+The shared `fixtures/inventory-names.json` cases compare Node, Python sync and
+Python async results against Playwright role/name matching: button text,
+`aria-labelledby` overriding a raw label, a native external label, and a
+Flutter-shaped merged semantics node. This fixture models the DOM shape, not
+the full Flutter runtime. The existing interaction fixture continues to verify
+real mouse/touch input at the card centre and the smaller field.
