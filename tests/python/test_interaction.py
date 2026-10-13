@@ -191,6 +191,35 @@ def test_inventory_raw_labels_and_accessible_names(browser_name, touch):
                     assert page.get_by_role(case["role"], name=case["aria_label"], exact=True).count() == 0
             merged = interaction.inventory(page, selector="#merged-card")["elements"][0]
             assert merged["id"] == "door-card" and merged["box"]["height"] == 130
+            # Python's Playwright distribution already bundles a Node driver and
+            # JS API. Use those for a real second Page: no npm install is required
+            # by the Python CI lanes, and both APIs run the same browser revision.
+            import playwright
+            driver = Path(playwright.__file__).parent / "driver"
+            node = driver / ("node.exe" if sys.platform == "win32" else "node")
+            selector = ", ".join(case["selector"] for case in NAME_CASES)
+            payload = {"package": str(driver / "package"),
+                       "module": (ROOT / "scripts" / "interaction.mjs").as_uri(),
+                       "browser": browser_name, "touch": touch, "viewport": VIEW,
+                       "url": NAMES_URL, "selector": selector}
+            script = r"""
+const fs = require('node:fs');
+const args = JSON.parse(fs.readFileSync(0, 'utf8'));
+(async () => {
+  const pw = require(args.package);
+  const {inventory} = await import(args.module);
+  const browser = await pw[args.browser].launch();
+  try {
+    const page = await browser.newPage({viewport: args.viewport, hasTouch: args.touch});
+    await page.goto(args.url);
+    console.log(JSON.stringify(await inventory(page, {selector: args.selector})));
+  } finally { await browser.close(); }
+})().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+            result = subprocess.run([str(node), "-e", script], input=json.dumps(payload),
+                                    capture_output=True, text=True, timeout=60)
+            assert result.returncode == 0, result.stderr
+            assert json.loads(result.stdout) == interaction.inventory(page, selector=selector)
         finally:
             browser.close()
 
