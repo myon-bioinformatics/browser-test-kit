@@ -1,0 +1,6 @@
+[
+  {"selector":"#text-button","role":"button","accessible_name":"Submit","aria_label":null,"text":"Submit"},
+  {"selector":"#referenced-button","role":"button","accessible_name":"Referenced action","aria_label":"Ignored raw label","text":"Different text"},
+  {"selector":"#native-input","role":"textbox","accessible_name":"Account name","aria_label":null,"text":""},
+  {"selector":"#merged-card","role":"button","accessible_name":"Destination card","aria_label":"Destination card","text":"Visible destination Choose"}
+]

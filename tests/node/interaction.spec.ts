@@ -1,5 +1,5 @@
 import {test, expect} from '@playwright/test';
-import {writeFileSync} from 'node:fs';
+import {writeFileSync, readFileSync} from 'node:fs';
 import {spawnSync} from 'node:child_process';
 import {resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
@@ -86,4 +86,24 @@ test('inventory exposes a merged card: its centre misses the field, the field it
   await expect(page.locator('#log')).toHaveText('card body');
   await press(page, page.getByTestId('door-field'), {touch});
   await expect(page.locator('#log')).toHaveText('field opened');
+});
+
+// Node and Python assert the same cases, including label precedence and empty input text.
+const nameCases = JSON.parse(readFileSync(resolve('fixtures/inventory-names.json'), 'utf8'));
+test('inventory raw labels differ from Playwright accessible names', async ({page}) => {
+  await page.goto(pathToFileURL(resolve('fixtures/inventory-names.html')).href);
+  for (const c of nameCases) {
+    const record = await inventory(page, {selector: c.selector});
+    expect(record.total).toBe(1);
+    const element = record.elements[0];
+    expect(element.aria_label).toBe(c.aria_label);
+    expect(element.text).toBe(c.text);
+    expect(element).not.toHaveProperty('name');
+    await expect(page.getByRole(c.role, {name: c.accessible_name, exact: true})).toHaveCount(1);
+    if (c.aria_label && c.aria_label !== c.accessible_name)
+      await expect(page.getByRole(c.role, {name: c.aria_label, exact: true})).toHaveCount(0);
+  }
+  const merged = (await inventory(page, {selector: '#merged-card'})).elements[0];
+  expect(merged.id).toBe('door-card');
+  expect(merged.box.height).toBe(130);
 });
