@@ -33,8 +33,10 @@ def test_walk_resume_and_failure(browser_name):
             assert len(list(iterator)) == 3
             assert page.evaluate("window.retained") == 42
             assert page.locator("#visits").inner_text() == "4"
-            displayed_emoji = page.title().rsplit(maxsplit=1)[-1]  # Flutter uses a trailing identity.
-            assert route_trail.resolve(displayed_emoji, registry(), base=BASE)[0]["url"] == page.url
+            identities = [page.locator("#page").inner_text().split(maxsplit=1)[0],
+                          page.title().rsplit(maxsplit=1)[-1]]
+            for displayed_emoji in identities:  # Leading and trailing title conventions.
+                assert route_trail.resolve(displayed_emoji, registry(), base=BASE)[0]["url"] == page.url
             bad = registry()
             bad["@hub"]["ready"]["text"] = "Never rendered"
             with pytest.raises(route_trail.TrailExecutionError) as err:

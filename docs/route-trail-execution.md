@@ -23,9 +23,11 @@ normalized; skin tones and ZWJ are retained. Emoji alone selects a registered
 page, not an arbitrary emoji substring of a title. If an application consistently
 puts its unique identity at a known title position, a consumer can read that
 identity and pass it to `resolve`; display-language changes do not alter lookup.
-Flutter Navigation Basic appends it (`Home 🏠`); for that contract, use
-`title.rsplit(maxsplit=1)[-1]` in Python. The shared browser fixture tests this
-trailing-title identity lookup in both runtimes.
+Both leading (`🏠 Home`) and trailing (`Home 🏠`) conventions are supported
+by passing the extracted identity. In Python use `title.split(maxsplit=1)[0]`
+for a leading identity or `title.rsplit(maxsplit=1)[-1]` for a trailing one.
+Flutter Navigation Basic uses the trailing convention. The shared browser
+fixture tests both positions in Python and Node.
 There is no automatic scan of all title/body emojis or fuzzy title matching.
 Duplicate normalized identities are errors, and unknown emojis fail before any
 navigation. Registration is required; aliases resolve to the canonical page.
