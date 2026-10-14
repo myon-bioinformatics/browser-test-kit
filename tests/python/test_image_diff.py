@@ -216,3 +216,51 @@ def _png_bytes(image: Image.Image) -> bytes:
     buf = BytesIO()
     image.save(buf, format="PNG")
     return buf.getvalue()
+
+
+@pytest.mark.parametrize("flag,value", [
+    ("--viewport-width", "nan"), ("--viewport-width", "inf"),
+    ("--viewport-width", "-inf"), ("--clip", "nan,0,1,1"),
+    ("--clip", "0,inf,1,1"), ("--clip", "0,0,inf,1"),
+    ("--clip", "0,0,1,nan"), ("--clip", "1e308,0,1e308,1"),
+])
+def test_nonfinite_and_overflow_input_exit_two(tmp_path, flag, value):
+    path = tmp_path / "ok.png"
+    write_png(path, solid_rgba((10, 10), (0, 0, 0, 255)))
+    proc = run_image_diff(str(path), str(path), flag, value)
+    assert proc.returncode == 2
+    assert "Traceback" not in proc.stderr
+
+
+def test_regular_file_over_limit_exit_two(tmp_path, monkeypatch):
+    path = tmp_path / "ok.png"
+    write_png(path, solid_rgba((10, 10), (0, 0, 0, 255)))
+    monkeypatch.setattr(image_diff, "MAX_INPUT_BYTES", 16)
+    with pytest.raises(ValueError, match="size limit"):
+        image_diff.load(str(path))
+
+
+def test_compressed_zip_member_over_limit_exit_two(tmp_path, monkeypatch):
+    archive = tmp_path / "compressed.zip"
+    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("huge.png", b"0" * 8192)
+    monkeypatch.setattr(image_diff, "MAX_INPUT_BYTES", 1024)
+    with pytest.raises(ValueError, match="size limit"):
+        image_diff.load(f"{archive}::huge.png")
+
+
+def test_normal_zip_and_file_within_limit(tmp_path):
+    path = tmp_path / "ok.png"
+    write_png(path, solid_rgba((8, 8), (1, 2, 3, 255)))
+    archive = tmp_path / "ok.zip"
+    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.write(path, "ok.png")
+    assert run_image_diff(str(path), f"{archive}::ok.png").returncode == 0
+
+
+def test_negative_clip_coordinate_exit_two(tmp_path):
+    path = tmp_path / "ok.png"
+    write_png(path, solid_rgba((10, 10), (0, 0, 0, 255)))
+    proc = run_image_diff(str(path), str(path), "--clip", "-1,0,5,5")
+    assert proc.returncode == 2
+    assert "Traceback" not in proc.stderr
