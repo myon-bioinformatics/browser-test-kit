@@ -32,4 +32,5 @@ def test_gh_ops_is_a_locked_parent_dependency():
     assert len(entries) == 1
     assert entries[0]['repository'] == 'myon-bioinformatics/myon-bioinformatics'
     assert entries[0]['source'] == 'gh_ops.py'
-    assert entries[0]['ref'] == 'refs/heads/main'
+    assert entries[0]['ref'] == entries[0]['commit']
+    assert len(entries[0]['ref']) == 40
