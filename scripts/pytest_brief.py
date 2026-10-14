@@ -5,7 +5,7 @@ Replaces the re-typed one-liner
 ``pip install -q --break-system-packages pytest-cov | tail -1; python -m pytest -q ... --cov... | tail -N``:
 
 * requirements (``--requirements``, default ``tests/requirements.txt`` if present) are
-  checked with ``importlib.metadata`` in the target interpreter; only the missing names are installed, quietly, with
+  resolved by pip >=23.0 in the target interpreter, preserving versions, markers and extras;\n  installation is skipped when the dry-run report is empty, with
   ``--break-system-packages`` only when the interpreter is marked EXTERNALLY-MANAGED;
 * pytest runs in this interpreter as ``python -m pytest -q -rfE -p no:cacheprovider [ARGS]``;
 * printed: the installed names (if any), ``FAILED``/``ERROR`` lines, the coverage ``TOTAL``
@@ -22,42 +22,47 @@ Exit code: pytest's own (0 passed, 1 failed, ...); 3 = installing a requirement 
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import subprocess
 import sys
-import sysconfig
+import tempfile
+from pathlib import Path
 
 KEEP = re.compile(r"^(FAILED|ERROR) |^TOTAL\s|Required test coverage|^=+ .*\b(passed|failed|error|errors|skipped|deselected|no tests ran)\b.* =+$|^\d+ (passed|failed)")
 
 
-def requirement_names(text: str) -> list[str]:
-    """Distribution names from a requirements file (options, URLs and markers ignored)."""
-    names = []
-    for line in text.splitlines():
-        line = line.split("#", 1)[0].strip()
-        if not line or line.startswith("-"):
-            continue
-        match = re.match(r"[A-Za-z0-9][A-Za-z0-9._-]*", line)
-        if match:
-            names.append(match.group(0))
-    return names
+_MANAGED_PROBE = """import os, sys, sysconfig
+print(int(sys.prefix == sys.base_prefix and os.path.isfile(
+    os.path.join(sysconfig.get_path("stdlib"), "EXTERNALLY-MANAGED"))))
+"""
 
 
-_PROBE = ("import sys\nfrom importlib import metadata\nfor n in sys.argv[1:]:\n"
-          "    try: metadata.version(n)\n    except metadata.PackageNotFoundError: print(n)\n")
+def externally_managed(python: str = sys.executable) -> bool:
+    """Ask the target interpreter; virtual environments are exempt (PEP 668)."""
+    done = subprocess.run([python, "-c", _MANAGED_PROBE],
+                          capture_output=True, text=True, check=True)
+    value = done.stdout.strip()
+    if value not in ("0", "1"):
+        raise ValueError("invalid target interpreter environment probe")
+    return value == "1"
 
 
-def missing(names: list[str], python: str = sys.executable) -> list[str]:
-    """Names not installed for *python* (asked in a child, so ``-S`` here does not hide site-packages)."""
-    if not names:
-        return []
-    done = subprocess.run([python, "-c", _PROBE, *names], capture_output=True, text=True, check=True)
-    return done.stdout.split()
+def resolve(pip: list[str], requirements: list[str]) -> list[str]:
+    """Return pip's proposed installs without changing the target environment.
 
-
-def externally_managed() -> bool:
-    return os.path.exists(os.path.join(sysconfig.get_path("stdlib"), "EXTERNALLY-MANAGED"))
+    Pass files unchanged: pip owns version, extras, marker, include and constraint
+    semantics. Requires pip >=23.0 (stable installation report version 1).
+    """
+    with tempfile.TemporaryDirectory(prefix="pytest-brief-") as directory:
+        report = Path(directory) / "report.json"
+        subprocess.run(pip + ["--dry-run", "--report", str(report), *requirements],
+                       capture_output=True, text=True, check=True)
+        data = json.loads(report.read_text(encoding="utf-8"))
+    if data.get("version") != "1" or not isinstance(data.get("install"), list):
+        raise ValueError("unsupported pip installation report")
+    return [entry["metadata"]["name"] for entry in data["install"]]
 
 
 def brief(output: str, returncode: int, tail: int) -> list[str]:
@@ -78,23 +83,24 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--python", default=sys.executable, help="interpreter for pip and pytest")
     args = parser.parse_args(own)
     req = args.requirements or ("tests/requirements.txt" if os.path.exists("tests/requirements.txt") else None)
+    if args.tail < 1:
+        parser.error("--tail must be at least 1")
     if req:
         try:
-            with open(req, encoding="utf-8") as handle:
-                need = missing(requirement_names(handle.read()), args.python)
-        except OSError as exc:
-            print(f"pytest_brief: {exc}", file=sys.stderr)
-            return 3
-        if need:
             pip = [args.python, "-m", "pip", "install", "-q", "--disable-pip-version-check"]
-            if externally_managed():
+            if externally_managed(args.python):
                 pip.append("--break-system-packages")
-            done = subprocess.run(pip + need, capture_output=True, text=True)
-            if done.returncode:
-                print(f"pytest_brief: pip install {' '.join(need)} failed", file=sys.stderr)
-                print("\n".join(done.stderr.strip().splitlines()[-args.tail:]), file=sys.stderr)
-                return 3
-            print("installed: " + ", ".join(need))
+            requirements = ["-r", req]
+            need = resolve(pip, requirements)
+            if need:
+                subprocess.run(pip + requirements, capture_output=True, text=True, check=True)
+                print("installed: " + ", ".join(need))
+        except (OSError, subprocess.CalledProcessError, ValueError, KeyError, TypeError) as exc:
+            print(f"pytest_brief: dependency resolution/install failed: {exc}", file=sys.stderr)
+            if isinstance(exc, subprocess.CalledProcessError):
+                print("\n".join((exc.stdout + exc.stderr).strip().splitlines()[-args.tail:]),
+                      file=sys.stderr)
+            return 3
     env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
     done = subprocess.run([args.python, "-m", "pytest", "-q", "-rfE", "-p", "no:cacheprovider", *pytest_args],
                           capture_output=True, text=True, env=env)
