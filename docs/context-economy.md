@@ -20,6 +20,7 @@ When an MCP result exceeds the limit ("result (92,458 characters) exceeds maximu
 
 ## 4. Logs, tests, CI
 - Keep the summary line: `pytest -q -p no:cacheprovider | tail -1`, `py_matrix.py 3.9 3.13` (#13) gives one line per Python version.
+- In an unfamiliar repo, `pytest_brief.py -- --cov=PKG --cov-fail-under=90` installs only the missing `tests/requirements.txt` names (quietly, `--break-system-packages` only when needed), then prints just the `FAILED`/`ERROR` lines, coverage `TOTAL`/`Required` lines and pytest's summary. It replaces the `pip install ... | tail -1; pytest ... | tail -N` one-liner, whose `tail` count either cut the failure or printed the coverage table.
 - CI: read check runs as name + conclusion. Fetch job logs with a tail (`tail_lines`) and only for the failing job. Search for the failing test's name instead of scrolling.
 - The same check name appears once per workflow run. Judge each name by its newest run, and treat zero checks as not green (`ZERO_CHECKS_AS_GREEN`).
 
