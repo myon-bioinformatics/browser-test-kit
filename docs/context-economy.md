@@ -30,6 +30,8 @@ When an MCP result exceeds the limit ("result (92,458 characters) exceeds maximu
 - Make runs classifiable from one line: emit a machine-readable terminal event (for example `terminal_browser_exit` with `returncode`/`interrupted`) rather than relying on prose in the transcript.
 - To summarize an LLM/MCP test run, give pass/fail counts, the first failure with its stage, and the exact IDs (run, job, test). Do not paste the transcript.
 
+- Many records, one outcome (which presses missed?): `condition_search.py records.json --target hit.self=false --id label` ranks the simple conditions (`box.height > 81`, `[A] and [B]`, `[A] or [B]`) by MCC and lists the counterexample ids, instead of reading the records one by one. It describes the given sample only; apply the found condition to fresh records before trusting it.
+
 ## 6. Decide with exit codes, not prose
 `pr-for-branch` (is there a PR, and was it merged?), `open-prs`, and `checks-wait` (#10) return 0/1/2. A shell `if` or `&&` makes the decision without the agent reading anything.
 
