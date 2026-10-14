@@ -9,8 +9,23 @@ from __future__ import annotations
 
 import argparse
 import io
+import math
+import os
 import sys
 import zipfile
+
+
+MAX_INPUT_BYTES = 64 * 1024 * 1024
+
+
+def finite_positive(value: str) -> float:
+    try:
+        number = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError('value must be numeric') from None
+    if not math.isfinite(number) or number <= 0:
+        raise argparse.ArgumentTypeError('value must be finite and positive')
+    return number
 
 
 def _require_pillow_import():
@@ -29,6 +44,8 @@ def parse_clip(value: str) -> tuple[float, float, float, float]:
         x, y, w, h = (float(part.strip()) for part in parts)
     except ValueError:
         raise argparse.ArgumentTypeError("clip values must be numeric") from None
+    if not all(math.isfinite(v) for v in (x, y, w, h)):
+        raise argparse.ArgumentTypeError('clip values must be finite')
     if w <= 0 or h <= 0:
         raise argparse.ArgumentTypeError("clip width and height must be positive")
     return x, y, w, h
@@ -43,8 +60,21 @@ def load(spec: str):
         if not member:
             raise ValueError(f"zip member path is empty in {spec!r}")
         with zipfile.ZipFile(archive_path) as archive:
-            return Image.open(io.BytesIO(archive.read(member))).convert("RGBA")
-    return Image.open(spec).convert("RGBA")
+            info = archive.getinfo(member)
+            if info.file_size > MAX_INPUT_BYTES:
+                raise ValueError('image input exceeds size limit')
+            with archive.open(info) as stream:
+                data = stream.read(MAX_INPUT_BYTES + 1)
+            if len(data) > MAX_INPUT_BYTES:
+                raise ValueError('image input exceeds size limit')
+            return Image.open(io.BytesIO(data)).convert('RGBA')
+    if os.path.getsize(spec) > MAX_INPUT_BYTES:
+        raise ValueError('image input exceeds size limit')
+    with open(spec, 'rb') as stream:
+        data = stream.read(MAX_INPUT_BYTES + 1)
+    if len(data) > MAX_INPUT_BYTES:
+        raise ValueError('image input exceeds size limit')
+    return Image.open(io.BytesIO(data)).convert('RGBA')
 
 
 def scaled_clip_box(
@@ -55,6 +85,9 @@ def scaled_clip_box(
 ) -> tuple[int, int, int, int]:
     x, y, w, h = clip
     scale = image_width / viewport_width if viewport_width is not None else 1.0
+    values = (scale, x * scale, y * scale, (x + w) * scale, (y + h) * scale)
+    if not all(math.isfinite(value) for value in values):
+        raise ValueError('clip coordinates must remain finite after scaling')
     left = round(x * scale)
     top = round(y * scale)
     right = round((x + w) * scale)
@@ -109,7 +142,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("a")
     parser.add_argument("b")
     parser.add_argument("--clip", type=parse_clip, metavar="X,Y,W,H")
-    parser.add_argument("--viewport-width", type=float)
+    parser.add_argument("--viewport-width", type=finite_positive)
     parser.add_argument("--tolerance", type=int, default=0)
     args = parser.parse_args(argv)
 
