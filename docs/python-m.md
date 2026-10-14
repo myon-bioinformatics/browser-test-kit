@@ -1,6 +1,8 @@
 # Running the scripts with `python -m`
 
-Every `scripts/*.py` is a stdlib-only tool. `pyproject.toml` installs each one as a top-level module, so after installation it runs from any directory, like `python -m zipfile`, with no clone or file path:
+Every `scripts/*.py` is a stdlib-only tool except `image_diff`, which lazily imports
+optional Pillow for pixel diffs (`pip install browser-test-kit-tools[image]`). `pyproject.toml`
+installs each one as a top-level module, so after installation it runs from any directory, like `python -m zipfile`, with no clone or file path:
 
 ```sh
 # one-off: nothing cloned, uv caches the build
