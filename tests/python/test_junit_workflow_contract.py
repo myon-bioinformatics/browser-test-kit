@@ -55,7 +55,7 @@ def _assert_contract(workflow):
     collector = workflow["jobs"]["junit-identity"]
     assert collector["needs"] == ["changes", "python"]
     assert collector["if"] == (
-        "always() && needs.changes.outputs.non_docs_changed == 'true'"
+        "always() && needs.changes.outputs.product_changed == 'true'"
     )
     assert collector.get("continue-on-error", False) is False
     assert collector["uses"] == COLLECTOR
