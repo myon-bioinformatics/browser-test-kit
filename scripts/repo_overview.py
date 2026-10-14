@@ -42,10 +42,10 @@ from pathlib import Path
 
 # Load the vendored sibling independently of site-packages/sys.path. This also
 # supports direct file imports and the installed top-level module entry point.
-_spec = importlib.util.spec_from_file_location("_btk_git_inspector", Path(__file__).with_name("git_inspector.py"))
-git_inspector = importlib.util.module_from_spec(_spec)
+_spec = importlib.util.spec_from_file_location("_btk_gh_identity", Path(__file__).with_name("gh_identity.py"))
+gh_identity = importlib.util.module_from_spec(_spec)
 assert _spec.loader
-_spec.loader.exec_module(git_inspector)
+_spec.loader.exec_module(gh_identity)
 
 KEY_FILES = (
     "README*", "CLAUDE.md", "AGENTS.md", "CONTRIBUTING*",
@@ -146,8 +146,8 @@ def about(root: Path) -> str | None:
 def list_files(root: Path) -> list[str]:
     """Repository files relative to ``root``, sorted, without dependency/cache/result directories."""
     try:
-        inventory = git_inspector.ls_files(root, include_untracked=True)
-    except git_inspector.GitInspectionError:
+        inventory = gh_identity.git_ls_files(root, include_untracked=True)
+    except gh_identity.GitInspectionError:
         files = set()
         for directory, subdirs, names in os.walk(root):
             subdirs[:] = [name for name in subdirs if name not in SKIP_DIRS]
@@ -240,8 +240,8 @@ def _churn_path(path: str) -> str:
 def churn(root: Path, top: int, *, since: str | None = None) -> str:
     """The ``=== churn ===`` section, or a one-line note outside a git work tree."""
     try:
-        history = git_inspector.log_numstat(root, since=since or None)
-    except git_inspector.GitInspectionError:
+        history = gh_identity.git_log_numstat(root, since=since or None)
+    except gh_identity.GitInspectionError:
         return "not a git work tree; skipping --churn"
     per_file: dict[str, dict[str, object]] = {}
     total_commits = len(history["commits"])

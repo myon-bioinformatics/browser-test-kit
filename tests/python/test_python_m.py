@@ -8,9 +8,7 @@ import pytest
 SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
 
 
-# The byte-identical vendored inspector is an import-only API, not a CLI.
-@pytest.mark.parametrize("module", sorted(path.stem for path in SCRIPTS.glob("*.py")
-                                         if path.stem != "git_inspector"))
+@pytest.mark.parametrize("module", sorted(path.stem for path in SCRIPTS.glob("*.py")))
 def test_every_script_runs_as_a_module(module: str, tmp_path: Path) -> None:
     """pyproject.toml installs each scripts/*.py as a top-level module; each must support `python -m NAME --help`."""
     env = dict(os.environ, PYTHONPATH=str(SCRIPTS), PYTHONDONTWRITEBYTECODE="1")

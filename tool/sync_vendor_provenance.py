@@ -11,18 +11,10 @@ import re
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-BINDINGS = [['scripts/git_inspector.provenance.json',
-  'scripts/git_inspector.py',
-  {'git_blob_sha1': 'blob_sha',
-   'sha256': 'sha256',
-   'upstream_commit': 'commit',
-   'upstream_path': 'source',
-   'upstream_repository': 'repository',
-   'vendored_path': 'destination'}]]
+BINDINGS = []
 EXPECTED = {('myon-bioinformatics/xprobe', 'xprobe.py', 'tests/vendor/xprobe/xprobe.py'),
  ('myon-bioinformatics/xprobe', 'LICENSE', 'tests/vendor/xprobe/LICENSE'),
- ('myon-bioinformatics/myon-bioinformatics', 'LICENSE', 'scripts/myon-bioinformatics-LICENSE'),
- ('myon-bioinformatics/myon-bioinformatics', 'git_inspector.py', 'scripts/git_inspector.py')}
+ ('myon-bioinformatics/myon-bioinformatics', 'LICENSE', 'scripts/myon-bioinformatics-LICENSE')}
 
 
 def records(root):

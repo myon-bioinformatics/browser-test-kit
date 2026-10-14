@@ -143,8 +143,8 @@ def test_missing_git_keeps_walk_fallback(tmp_path: Path, monkeypatch) -> None:
     # Exercise the public observation with Git genuinely unavailable, without
     # depending on the vendored inspector's private process implementation.
     monkeypatch.setenv("PATH", "")
-    with pytest.raises(repo_overview.git_inspector.GitInspectionError, match="git executable not found"):
-        repo_overview.git_inspector.ls_files(tmp_path, include_untracked=True)
+    with pytest.raises(repo_overview.gh_identity.GitInspectionError, match="git executable not found"):
+        repo_overview.gh_identity.git_ls_files(tmp_path, include_untracked=True)
     assert "src/app.py" in repo_overview.list_files(tmp_path)
     assert not any(repo_overview._skipped(p) for p in repo_overview.list_files(tmp_path))
 
@@ -155,21 +155,19 @@ def test_shared_inventory_sort_and_truncation_are_not_hidden(tmp_path: Path, mon
     def inventory(root, *, include_untracked):
         assert root == tmp_path and include_untracked is True
         return {"paths": ["z.txt", "a.txt", "z.txt"], "truncated": False}
-    monkeypatch.setattr(repo_overview.git_inspector, "ls_files", inventory)
+    monkeypatch.setattr(repo_overview.gh_identity, "git_ls_files", inventory)
     assert repo_overview.list_files(tmp_path) == ["a.txt", "z.txt"]
-    monkeypatch.setattr(repo_overview.git_inspector, "ls_files",
+    monkeypatch.setattr(repo_overview.gh_identity, "git_ls_files",
                         lambda *args, **kwargs: {"paths": ["z.txt"], "truncated": True})
     with pytest.raises(RuntimeError, match="inventory exceeds"):
         repo_overview.list_files(tmp_path)
 
 
-def test_vendored_inspector_matches_pinned_provenance() -> None:
-    record = json.loads((ROOT / "scripts/git_inspector.provenance.json").read_text(encoding="utf-8"))
-    data = (ROOT / record["vendored_path"]).read_bytes()
-    assert record["upstream_commit"] == _locked('scripts/git_inspector.py')['commit']
-    assert record["git_blob_sha1"] == _locked('scripts/git_inspector.py')['blob_sha']
-    assert hashlib.sha1(b"blob " + str(len(data)).encode() + b"\0" + data).hexdigest() == record["git_blob_sha1"]
-    assert hashlib.sha256(data).hexdigest() == record["sha256"]
+def test_vendored_gh_identity_matches_pinned_lock() -> None:
+    entry = _locked('scripts/gh_identity.py')
+    data = (ROOT / entry['destination']).read_bytes()
+    assert hashlib.sha1(b"blob " + str(len(data)).encode() + b"\0" + data).hexdigest() == entry['blob_sha']
+    assert hashlib.sha256(data).hexdigest() == entry['sha256']
 
 
 # --- about --------------------------------------------------------------
@@ -328,7 +326,7 @@ def test_churn_before_after_migration_fixture(tmp_path: Path) -> None:
         for row in case['before'].splitlines()[1:]:
             if row.endswith(('  a.txt', '  z.txt', '  old.txt')):
                 assert row in after.splitlines()
-    observation = repo_overview.git_inspector.log_numstat(tmp_path)
+    observation = repo_overview.gh_identity.git_log_numstat(tmp_path)
     renamed = [f for c in observation['commits'] for f in c['files'] if f['orig_path']]
     assert renamed == [{'path': 'new.txt', 'orig_path': 'old.txt', 'added': 0, 'deleted': 0}]
     binary = [f for c in observation['commits'] for f in c['files'] if f['path'] == 'binary.bin']
@@ -340,8 +338,8 @@ def test_churn_before_after_migration_fixture(tmp_path: Path) -> None:
 @pytest.mark.parametrize('limit', ['count', 'byte'])
 def test_churn_complete_commits_and_explicit_history_truncation(tmp_path: Path, monkeypatch, limit: str) -> None:
     make_churn_migration_fixture(tmp_path)
-    inspector = repo_overview.git_inspector
-    original = inspector.log_numstat
+    identity = repo_overview.gh_identity
+    original = identity.git_log_numstat
     if limit == 'count':
         kwargs = {'max_count': 2}
     else:
@@ -358,7 +356,7 @@ def test_churn_complete_commits_and_explicit_history_truncation(tmp_path: Path, 
     assert bounded['truncated'] and len(bounded['commits']) == 2
     def limited(root, *, since):
         return original(root, since=since, **kwargs)
-    monkeypatch.setattr(inspector, 'log_numstat', limited)
+    monkeypatch.setattr(identity, 'git_log_numstat', limited)
     out = repo_overview.churn(tmp_path, 20)
     assert out.splitlines() == [
         '=== churn (2 commits scanned) ===',
@@ -369,8 +367,8 @@ def test_churn_complete_commits_and_explicit_history_truncation(tmp_path: Path, 
 
 def test_churn_missing_git_keeps_message(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv('PATH', '')
-    with pytest.raises(repo_overview.git_inspector.GitInspectionError, match='git executable not found'):
-        repo_overview.git_inspector.log_numstat(tmp_path)
+    with pytest.raises(repo_overview.gh_identity.GitInspectionError, match='git executable not found'):
+        repo_overview.gh_identity.git_log_numstat(tmp_path)
     assert repo_overview.churn(tmp_path, 5) == 'not a git work tree; skipping --churn'
 
 
@@ -379,7 +377,7 @@ def test_churn_delegates_since_and_keeps_top_note_with_history_note(tmp_path: Pa
         assert root == tmp_path and since == '3 months ago'
         return {'commits': [{'date': '2026-01-01', 'files': [
             {'path': path, 'added': 1, 'deleted': 0} for path in ['z.txt', 'a.txt']]}], 'truncated': True}
-    monkeypatch.setattr(repo_overview.git_inspector, 'log_numstat', observe)
+    monkeypatch.setattr(repo_overview.gh_identity, 'git_log_numstat', observe)
     out = repo_overview.churn(tmp_path, 1, since='3 months ago')
     assert out.splitlines()[1] == '  1 commit  +1/-0  2026-01-01  a.txt'
     assert out.splitlines()[2] == '[... 1 more files (--churn 1 shows the top 1)]'

@@ -196,11 +196,9 @@ with `pytest -p pytest_btk_events --btk-events PATH`.
 
 ### Shared Git inventory and churn
 
-`repo_overview.list_files()` uses the stdlib-only `scripts/git_inspector.py`
-from `myon-bioinformatics/myon-bioinformatics` at
-`a06641024a782af31bdb51fb0e0d6a1ea21995d0`. The sibling
-`git_inspector.provenance.json` records its source path, Git blob SHA-1 and
-SHA-256; the vendored Python file is unchanged from upstream.
+`repo_overview.list_files()` uses `git_ls_files()` from the stdlib-only
+`scripts/gh_identity.py` vendored from `myon-bioinformatics/gh_identity`
+(recorded in `vendor.lock.json`).
 
 The combined inventory includes tracked and untracked-but-not-ignored files.
 The consumer deduplicates, filters dependency/cache/result directories and
@@ -210,10 +208,10 @@ fallback (which does not interpret `.gitignore`). A truncated successful
 observation raises an explicit error rather than publishing a partial list or
 walking ignored files: the shared bounds are 10,000 paths and 1,000,000 bytes.
 Direct invocation and installed `python -m repo_overview` still work with
-`python -S`; `git_inspector` itself is an import-only shared API.
+`python -S`.
 
 `repo_overview.churn()` delegates Git execution and numstat parsing to
-`log_numstat()`. Commit scanned counts include empty/merge/binary-only commits;
+`git_log_numstat()`. Commit scanned counts include empty/merge/binary-only commits;
 binary file counts remain excluded from ranking. Ranking is still commit count
 descending, then raw path ascending, with committer dates and `--since` retained.
 

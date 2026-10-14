@@ -75,7 +75,6 @@ jobs:
         run: >-
           python -S .vendor-sync-tools/vendor_stage.py
           --kind "$VENDOR_EVIDENCE_KIND" --output build/vendor-evidence-candidate
-          --legacy-evidence scripts/git_inspector.provenance.json
           --legacy-evidence tests/vendor/xprobe/provenance.json
           --promotion-receipt vendor-promotion.json
       - name: Preserve resolved vendor snapshot
@@ -198,7 +197,6 @@ jobs:
         run: >-
           python -S .vendor-sync-tools/vendor_stage.py
           --kind "$VENDOR_EVIDENCE_KIND" --output build/vendor-evidence-test
-          --legacy-evidence scripts/git_inspector.provenance.json
           --legacy-evidence tests/vendor/xprobe/provenance.json
           --promotion-receipt vendor-promotion.json
       - name: Preserve vendor lock used by this run
@@ -284,7 +282,6 @@ jobs:
       run: >-
         python -S .vendor-sync-tools/vendor_stage.py
         --kind locked --output build/vendor-evidence-locked
-        --legacy-evidence scripts/git_inspector.provenance.json
         --legacy-evidence tests/vendor/xprobe/provenance.json
     - name: Preserve vendor lock used by this run
       if: always()

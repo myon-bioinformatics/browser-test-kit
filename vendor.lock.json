@@ -5,15 +5,6 @@
       "repository": "myon-bioinformatics/myon-bioinformatics",
       "ref": "refs/heads/main",
       "commit": "08dc3757deeb930c950bdcc6bd55ec3112ba49fc",
-      "source": "git_inspector.py",
-      "destination": "scripts/git_inspector.py",
-      "blob_sha": "9f6d88101688e2578a3ca45e7eaf7c805fe6f1bd",
-      "sha256": "7b960e0851b23ca7ca64d8f917dd8e56aa0509ca6332d191309a7895cf382641"
-    },
-    {
-      "repository": "myon-bioinformatics/myon-bioinformatics",
-      "ref": "refs/heads/main",
-      "commit": "08dc3757deeb930c950bdcc6bd55ec3112ba49fc",
       "source": "LICENSE",
       "destination": "scripts/myon-bioinformatics-LICENSE",
       "blob_sha": "4ec4989b801bf1a3df6184d21f79e6e7ed5931f6",
@@ -40,16 +31,16 @@
     {
       "repository": "myon-bioinformatics/gh_identity",
       "ref": "refs/heads/main",
-      "commit": "fc2c527257b12eb99c00637bbae74f8988fd6bf4",
+      "commit": "c6b52a29d8cd1dce0ebe0c4288cd16b0e4b84b96",
       "source": "gh_identity.py",
       "destination": "scripts/gh_identity.py",
-      "blob_sha": "57f96181fecaef0a6f19bf5052b93d9bdcab69c5",
-      "sha256": "864c63af6f68d4d2baeb076bbcad0905f1973d3b0092f8f8b3f776f3ecd5ad95"
+      "blob_sha": "1a88e4147a93ca293218a2c2a5d1c4ae1801a839",
+      "sha256": "fa560589b132893d2bab4859aee14b781e54aa170b53092d28ab3554abc550c1"
     },
     {
       "repository": "myon-bioinformatics/gh_identity",
       "ref": "refs/heads/main",
-      "commit": "fc2c527257b12eb99c00637bbae74f8988fd6bf4",
+      "commit": "c6b52a29d8cd1dce0ebe0c4288cd16b0e4b84b96",
       "source": "LICENSE",
       "destination": "scripts/gh_identity-LICENSE",
       "blob_sha": "4ec4989b801bf1a3df6184d21f79e6e7ed5931f6",
@@ -58,11 +49,11 @@
     {
       "repository": "myon-bioinformatics/myon-bioinformatics",
       "ref": "refs/heads/main",
-      "commit": "017f614c44cf841fc584ac78bd7d9e433a1ecc1f",
+      "commit": "7f45f52ae677e879de49db01008d8ddf4ce5a54d",
       "source": "gh_ops.py",
       "destination": "scripts/gh_ops.py",
-      "blob_sha": "6e5470e1e9395f9f3dd0908d3ce5190e0294e807",
-      "sha256": "c1c9f415ea0171205fced19b9a0eda33cde9cc3ef53cef53e89362dd873d06f4"
+      "blob_sha": "73c34b26c0f0cfa1be544e7885dcfae0e518c985",
+      "sha256": "f9508a5a662225d3a2243b93c203b5a57664381c7e2315cc20b7480ca85f8749"
     }
   ]
 }

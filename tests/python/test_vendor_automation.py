@@ -14,7 +14,7 @@ WORKFLOW = '.github/workflows/playwright.yml'
 TEST_JOB = 'python'
 HELPER = 'tool/sync_vendor_provenance.py'
 LOCK = json.loads((ROOT / 'vendor.lock.json').read_text())
-LEGACY = ['tests/vendor/xprobe/provenance.json', 'scripts/git_inspector.provenance.json']
+LEGACY = ['tests/vendor/xprobe/provenance.json']
 SNAPSHOT = ['vendor.lock.json'] + [e['destination'] for e in LOCK['files']] + LEGACY
 EXPECTED = {(e['repository'], e['source'], e['destination']) for e in LOCK['files']}
 # Bootstrap tool checkout stays pinned while candidate source commits advance.
@@ -163,7 +163,7 @@ def test_updated_lock_projects_exact_identity_and_keeps_reader_formats(tmp_path)
 
 
 @pytest.mark.parametrize('destination', [
-    'scripts/git_inspector.py', 'scripts/myon-bioinformatics-LICENSE',
+    'scripts/myon-bioinformatics-LICENSE',
     'tests/vendor/xprobe/xprobe.py', 'tests/vendor/xprobe/LICENSE'])
 def test_invalid_source_or_license_does_not_rewrite_any_provenance(tmp_path, destination):
     _copy_snapshot(tmp_path)
@@ -293,10 +293,12 @@ def test_real_canonical_staging_preserves_locked_bytes_and_classifies_evidence(t
     tool_root = Path(os.environ.get('BTK_CANONICAL_TOOLS', str(ROOT / '.vendor-sync-tools')))
     if receipt:
         (tmp_path / 'vendor-promotion.json').write_text('{"schema":"vendor-promotion/1"}')
-    result = subprocess.run([sys.executable, '-S', str(tool_root / 'vendor_stage.py'),
-        '--root', str(tmp_path), '--kind', kind, '--output', 'build/staged',
-        '--legacy-evidence', LEGACY[0], '--legacy-evidence', LEGACY[1],
-        '--promotion-receipt', 'vendor-promotion.json'], capture_output=True, text=True, timeout=30)
+    stage_argv = [sys.executable, '-S', str(tool_root / 'vendor_stage.py'),
+                  '--root', str(tmp_path), '--kind', kind, '--output', 'build/staged']
+    for legacy_path in LEGACY:
+        stage_argv += ['--legacy-evidence', legacy_path]
+    stage_argv += ['--promotion-receipt', 'vendor-promotion.json']
+    result = subprocess.run(stage_argv, capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stderr
     output = tmp_path / 'build/staged'
     meta = json.loads((output / 'vendor-evidence.json').read_text())
