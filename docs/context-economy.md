@@ -21,6 +21,7 @@ When an MCP result exceeds the limit ("result (92,458 characters) exceeds maximu
 ## 4. Logs, tests, CI
 - Keep the summary line: `pytest -q -p no:cacheprovider | tail -1`, `py_matrix.py 3.9 3.13` (#13) gives one line per Python version.
 - CI: read check runs as name + conclusion. Fetch job logs with a tail (`tail_lines`) and only for the failing job. Search for the failing test's name instead of scrolling.
+- A downloaded artifact zip (JUnit XML, `route-audit.json`/receipt JSON, screenshots) is digested in place: `artifact_digest.py artifacts.zip` prints one counts line per XML, one `FAIL class::name: message` line per failing testcase (`--limit`, `--width`), the chosen receipt fields (`--keys stage,failed_step`), and only the extension counts of the rest. Exit 1 means a failing testcase. It replaces the ad-hoc `python - <<PY` zip/ElementTree loops that were re-pasted in every session.
 - The same check name appears once per workflow run. Judge each name by its newest run, and treat zero checks as not green (`ZERO_CHECKS_AS_GREEN`).
 
 ## 5. JSONL events and LLM/MCP test transcripts
