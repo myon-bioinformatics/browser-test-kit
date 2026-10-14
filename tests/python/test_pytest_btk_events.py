@@ -170,17 +170,15 @@ def _run_pytest(test_file, events_path, env, extra_args=()):
 def test_same_child_junit_xprobe_and_btk_bridge(tmp_path):
     """JUnit compact identity complements native phase evidence; neither is input."""
     vendor = ROOT / "tests" / "vendor" / "xprobe"
-    provenance = json.loads((vendor / "provenance.json").read_text(encoding="utf-8"))
-    assert provenance["repository"] == "myon-bioinformatics/xprobe"
     lock = json.loads((ROOT / "vendor.lock.json").read_text(encoding="utf-8"))
     entries = {entry["destination"]: entry for entry in lock["files"]}
-    assert provenance["commit"] == entries["tests/vendor/xprobe/xprobe.py"]["commit"]
+    xprobe = entries["tests/vendor/xprobe/xprobe.py"]
+    assert xprobe["repository"] == "myon-bioinformatics/xprobe"
     for name in ("xprobe.py", "LICENSE"):
         entry = entries["tests/vendor/xprobe/" + name]
         data = (vendor / name).read_bytes()
-        assert provenance["files"][name]["blob"] == entry["blob_sha"]
         assert hashlib.sha1(b"blob " + str(len(data)).encode() + b"\0" + data).hexdigest() == entry["blob_sha"]
-        assert hashlib.sha256(data).hexdigest() == provenance["files"][name]["sha256"] == entry["sha256"]
+        assert hashlib.sha256(data).hexdigest() == entry["sha256"]
     spec = importlib.util.spec_from_file_location("bridge_xprobe", vendor / "xprobe.py")
     xprobe = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(xprobe)
