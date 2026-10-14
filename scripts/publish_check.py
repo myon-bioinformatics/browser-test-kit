@@ -20,8 +20,9 @@ runs under ``python -S``::
         tools/lab/pixiv-panel.js tools/lab/index.html --local-root . \\
         --contains 'pixiv-panel.js' --repo OWNER/OWNER.github.io --wait 600
 
-Exit codes: 0 = all checks ok; 1 = a check failed or is stale; 3 = the site could not be
-reached at all (DNS/proxy) and nothing else failed, i.e. use other evidence (``deploy``);
+Exit codes: 0 = all checks ok; 1 = a check failed, is stale, or deployment evidence is
+unavailable; 3 = at least one HTTP target is unreachable (DNS/proxy) and all other
+checks are ok. Check each independent evidence line; deploy alone cannot prove delivery.
 2 = usage error.
 """
 from __future__ import annotations
@@ -70,14 +71,23 @@ def deploy_check(repo: str, commit: str | None, api=github_json) -> tuple[str, s
     """Newest github-pages deployment: (state, line)."""
     try:
         deployments = api(f"repos/{repo}/deployments?environment=github-pages&per_page=1")
+        if not isinstance(deployments, list):
+            raise ValueError("invalid deployments response: expected a list")
         if not deployments:
             return "fail", "fail deploy: no github-pages deployment"
         dep = deployments[0]
+        if not isinstance(dep, dict) or not isinstance(dep.get("id"), int) or not isinstance(dep.get("sha"), str) or not dep["sha"]:
+            raise ValueError("invalid deployment: expected id and sha")
         statuses = api(f"repos/{repo}/deployments/{dep['id']}/statuses?per_page=1")
+        if not isinstance(statuses, list):
+            raise ValueError("invalid statuses response: expected a list")
+        if statuses and (not isinstance(statuses[0], dict) or statuses[0].get("state") not in
+                         ("error", "failure", "inactive", "pending", "queued", "in_progress", "success")):
+            raise ValueError("invalid deployment status")
+        state = statuses[0]["state"] if statuses else "pending"
+        sha = dep["sha"]
     except Exception as exc:  # noqa: BLE001 - any API failure is reported, not raised
-        return "unreachable", f"unreachable deploy: {str(exc)[:120]}"
-    state = statuses[0]["state"] if statuses else "pending"
-    sha = dep.get("sha", "")
+        return "deploy-unavailable", f"deploy-unavailable deploy: {str(exc)[:120]}"
     if commit and not sha.startswith(commit):
         return "stale", f"stale deploy: newest {sha[:7]} {state}, want {commit[:7]}"
     if state != "success":

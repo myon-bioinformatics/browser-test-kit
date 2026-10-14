@@ -2,7 +2,10 @@
 import functools
 import http.server
 import importlib.util
+import json
+import subprocess
 import threading
+import urllib.error
 from pathlib import Path
 
 import pytest
@@ -69,7 +72,7 @@ def test_404_and_deploy_states(site, capsys):
     assert pc.deploy_check("o/r", None, lambda p: [])[0] == "fail"
     def boom(path):
         raise RuntimeError("403 proxy")
-    assert pc.deploy_check("o/r", None, boom)[0] == "unreachable"
+    assert pc.deploy_check("o/r", None, boom)[0] == "deploy-unavailable"
 
 
 def test_wait_retries_until_ok():
@@ -99,3 +102,77 @@ def test_usage_errors():
         pc.main([])
     with pytest.raises(SystemExit):
         pc.main(["relative/path.js"])
+
+
+@pytest.mark.parametrize("error", [
+    urllib.error.HTTPError("https://api.github.com", 401, "Bad credentials", {}, None),
+    urllib.error.HTTPError("https://api.github.com", 403, "rate limit", {}, None),
+    urllib.error.HTTPError("https://api.github.com", 429, "rate limit", {}, None),
+    json.JSONDecodeError("invalid JSON", "x", 0),
+    subprocess.TimeoutExpired(["gh", "api"], 60),
+    RuntimeError("gh: authentication failed"),
+])
+def test_http_success_with_api_failure_keeps_independent_evidence(site, capsys, error):
+    base, served = site
+    def api(path):
+        raise error
+    code = run(["--site", base, "", "--local-root", str(served), "--contains", "panel.js",
+                "--repo", "o/r", "--commit", "abc1234"], api=api)
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "deploy-unavailable deploy:" in out
+    assert "ok http 200:" in out and "ok bytes:" in out and "ok text:" in out
+    assert "verdict=unreachable" not in out
+    # API-only and combined API/HTTP failures cannot claim a successful check.
+    assert run(["--repo", "o/r", "--commit", "abc1234"], api=api) == 1
+    assert run([base, "--repo", "o/r", "--commit", "abc1234"], api=api,
+               get=lambda url: (None, b"", "proxy refused")) == 1
+
+
+@pytest.mark.parametrize("payload", [None, {}, "bad", [None], [{}],
+                                    [{"id": 7, "sha": None}]])
+def test_malformed_deployments_are_unavailable(payload):
+    result = pc.deploy_check("o/r", "abc1234", lambda path: payload)
+    assert result[0] == "deploy-unavailable"
+    assert pc.verdict([result]) == 1
+
+
+@pytest.mark.parametrize("payload", [None, {}, "bad", [None], [{}],
+                                    [{"state": None}], [{"state": "unknown"}]])
+def test_malformed_statuses_are_unavailable(payload):
+    def api(path):
+        return payload if "/statuses?" in path else [{"id": 7, "sha": "abc1234def"}]
+    assert pc.deploy_check("o/r", "abc1234", api)[0] == "deploy-unavailable"
+
+
+@pytest.mark.parametrize("state", ["pending", "queued", "in_progress"])
+def test_http_success_with_unfinished_deploy_is_not_published(state, capsys):
+    assert run(["https://example.invalid/", "--repo", "o/r", "--commit", "abc1234"],
+               api=api_for(state=state), get=lambda url: (200, b"ok", "")) == 1
+    assert "stale deploy:" in capsys.readouterr().out
+
+
+def test_api_failure_and_pending_deploy_retry_until_published(capsys):
+    calls = []
+    def api(path):
+        if "/statuses?" in path:
+            return [{"state": "pending" if len(calls) == 2 else "success"}]
+        calls.append(path)
+        if len(calls) == 1:
+            raise RuntimeError("rate limit")
+        return [{"id": 7, "sha": "abc1234def"}]
+    sleeps = []
+    code = run(["https://example.invalid/", "--repo", "o/r", "--commit", "abc1234",
+                "--wait", "100", "--interval", "1"], api=api,
+               get=lambda url: (200, b"ok", ""), sleep=sleeps.append)
+    assert code == 0 and sleeps == [1, 1] and len(calls) == 3
+    assert "attempts=3 verdict=ok" in capsys.readouterr().out
+
+
+def test_http_unreachable_with_successful_deploy_stops_early(capsys):
+    sleeps = []
+    code = run(["https://example.invalid/", "--repo", "o/r", "--commit", "abc1234",
+                "--wait", "100"], get=lambda url: (None, b"", "proxy refused"), sleep=sleeps.append)
+    out = capsys.readouterr().out
+    assert code == 3 and sleeps == []
+    assert "ok deploy:" in out and "unreachable http:" in out
