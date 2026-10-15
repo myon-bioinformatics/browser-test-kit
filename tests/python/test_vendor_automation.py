@@ -13,7 +13,7 @@ WORKFLOW = '.github/workflows/playwright.yml'
 TEST_JOB = 'python'
 LOCK = json.loads((ROOT / 'vendor.lock.json').read_text())
 SNAPSHOT = ['vendor.lock.json'] + [e['destination'] for e in LOCK['files']]
-PIN = 'f907560c2b9b3f7a0f78f4434f547f91cb2ef954'
+PIN = 'ab17b409d82f95abc81116af7ff0d3e7bdc4158c'
 
 
 def _workflow():
