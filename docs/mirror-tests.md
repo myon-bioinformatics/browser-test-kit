@@ -63,7 +63,9 @@ npx playwright install --with-deps --only-shell chromium
 ```
 
 and skip the unused 597 MB. `--headed` local runs still need the full build.
-Firefox/WebKit are unaffected.
+Firefox/WebKit are unaffected. `npx playwright screenshot` / `pdf` also launch the
+headless shell. The opposite case: a config with `channel: 'chromium'` (new headless)
+launches the full build only, so install it with `--no-shell` and skip the 323 MB shell.
 
 ## Mirror candidates elsewhere
 
