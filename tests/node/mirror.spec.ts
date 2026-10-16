@@ -24,6 +24,23 @@ test('markdown-it and marked agree on the CommonMark fixture', async ({}, testIn
   expect(result.status, result.stdout).toBe(0);
 });
 
+test('HTML reader emits complete facts accepted by compare', async ({}, testInfo) => {
+  const html = testInfo.outputPath('page.html');
+  writeFileSync(html, '<!doctype html><html><body><h1>Title</h1><a href="https://example.org">link</a>' +
+    '<img src="a.png" alt="A"><pre><code class="language-js">x\n</code></pre></body></html>');
+  const out = node('html', html);
+  expect(out.status, out.stderr).toBe(0);
+  const expected = {schema: 'mirror-facts/1', kind: 'html', headings: [[1, 'Title']],
+    links: ['https://example.org'], images: [['a.png', 'A']], code: [['js', 'x']]};
+  expect(JSON.parse(out.stdout)).toMatchObject(expected);
+  const actualFile = testInfo.outputPath('linkedom.json');
+  const expectedFile = testInfo.outputPath('expected.json');
+  writeFileSync(actualFile, out.stdout);
+  writeFileSync(expectedFile, JSON.stringify({...expected, reader: 'fixture-contract'}));
+  const result = check(actualFile, expectedFile);
+  expect(result.status, result.stderr).toBe(0);
+});
+
 test('ExcelJS writes, ExcelJS and the stdlib OOXML reader read the same cells', async ({}, testInfo) => {
   const ExcelJS = createRequire(resolve('package.json'))('exceljs');
   const book = new ExcelJS.Workbook();

@@ -19,7 +19,16 @@ python -S scripts/mirror_check.py compare exceljs.json stdlib.json
 
 `compare` prints one `diff KEY READER vs CONSENSUS` line per deviating reader (what only
 it has, what it lacks), or `split` lines when every reader answers differently.
-Exit 0 = all agree, 1 = deviation, 2 = input error.
+Exit 0 = all agree, 1 = deviation, 2 = input error / cannot compare.
+Before comparing, every input must be a JSON object with `schema: "mirror-facts/1"`,
+the same supported `kind` (`markdown`, `html`, or `xlsx`), and **all** list keys for
+that kind in the table below. Missing/non-list keys and mixed kinds return 2 with
+`cannot compare`, never `all agree`. `compare()` raises `ValueError` for these inputs.
+At least two documents and at least one fact in their required lists are needed;
+fully empty outputs return 2. An empty individual list is valid (e.g. no images);
+an empty list versus a populated list is a deviation (exit 1).
+Additional list keys are compared only when all readers provide them as lists;
+a partial extension is also an input error. Other metadata is ignored.
 
 ## Facts (`mirror-facts/1`)
 

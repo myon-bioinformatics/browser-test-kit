@@ -6,6 +6,8 @@ import sys
 import zipfile
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "mirror_check.py"
 spec = importlib.util.spec_from_file_location("mirror_check", SCRIPT)
@@ -13,15 +15,17 @@ mc = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mc)
 
 
-def doc(reader, **keys):
-    return {"schema": "mirror-facts/1", "reader": reader, **keys}
+def doc(reader, kind="markdown", **keys):
+    required = ("sheets", "cells", "formulas", "merges") if kind == "xlsx" else ("headings", "links", "images", "code")
+    return {"schema": "mirror-facts/1", "kind": kind, "reader": reader,
+            **{key: [] for key in required}, **keys}
 
 
 def test_normalization_lets_different_renderings_agree():
     ours = doc("ours", headings=[[2, "Section *two*"], [3, "Third `level`"]], links=["<https://x>"],
-               images=[["a.png", "A [b](c)"]], cells=[["S", "A1", 2.0], ["S", "B1", 0.1 + 0.2]])
+               images=[["a.png", "A [b](c)"]])
     theirs = doc("theirs", headings=[[2, "Section two"], [3, "Third level"]], links=["https://x"],
-                 images=[["a.png", "A b"]], cells=[["S", "B1", 0.3], ["S", "A1", 2]])
+                 images=[["a.png", "A b"]])
     assert mc.compare([ours, theirs]) == []
 
 
@@ -34,8 +38,8 @@ def test_majority_names_the_deviating_reader():
                      "only": [(1, "not a heading")], "missing": []}]
 
 
-def test_split_when_every_reader_differs_and_partial_keys():
-    rows = mc.compare([doc("a", links=["x"]), doc("b", links=["x", "y"]), doc("c", links=["x", "z"], code=[])])
+def test_split_when_every_reader_differs():
+    rows = mc.compare([doc("a", links=["x"]), doc("b", links=["x", "y"]), doc("c", links=["x", "z"])])
     assert [(r["index"], r["only"]) for r in rows] == [(0, []), (1, ["y"]), (2, ["z"])]
     assert all(r["consensus"] == [] for r in rows)
 
@@ -77,3 +81,73 @@ def test_cli(tmp_path):
     write_xlsx(tmp_path / "b.xlsx")
     facts = run("facts", "xlsx", str(tmp_path / "b.xlsx"))
     assert facts.returncode == 0 and json.loads(facts.stdout)["reader"] == "python-stdlib-ooxml"
+
+
+@pytest.mark.parametrize("kind", ["markdown", "html", "xlsx"])
+def test_complete_multiple_readers_agree(kind):
+    keys = {"cells": [["S", "A1", 2.0], ["S", "B1", 0.1 + 0.2]]} if kind == "xlsx" else {"links": ["x"]}
+    a, b, c = [doc(reader, kind, **keys) for reader in ("a", "b", "c")]
+    if kind == "xlsx":
+        c["cells"] = [["S", "B1", 0.3], ["S", "A1", 2]]
+    assert mc.compare([a, b, c]) == []
+
+
+def invalid_inputs():
+    valid = doc("a", links=["x"])
+    yield "zero-documents", []
+    yield "one-document", [valid]
+    yield "empty-object", [valid, {}]
+    yield "non-object", [valid, []]
+    yield "null-object", [valid, None]
+    for schema in (None, "mirror-facts/2"):
+        yield f"schema-{schema}", [valid, {**valid, "schema": schema}]
+    missing = dict(valid)
+    del missing["schema"]
+    yield "missing-schema", [valid, missing]
+    missing = dict(valid)
+    del missing["kind"]
+    yield "missing-kind", [valid, missing]
+    for kind in (None, [], "unknown", "html", "xlsx"):
+        yield f"kind-{kind}", [valid, {**valid, "kind": kind}]
+    yield "disjoint-partial-keys", [
+        {"schema": "mirror-facts/1", "kind": "markdown", "headings": [[1, "T"]]},
+        {"schema": "mirror-facts/1", "kind": "xlsx", "cells": [["S", "A1", 1]]}]
+    for kind, keys in (("markdown", ("headings", "links", "images", "code")),
+                       ("html", ("headings", "links", "images", "code")),
+                       ("xlsx", ("sheets", "cells", "formulas", "merges"))):
+        a = doc("a", kind, **({"sheets": ["S"]} if kind == "xlsx" else {"links": ["x"]}))
+        for key in keys:
+            b = dict(a)
+            del b[key]
+            yield f"missing-{kind}-{key}", [a, b]
+            yield f"nonlist-{kind}-{key}", [a, {**a, key: None}]
+        yield f"empty-{kind}", [doc("a", kind), doc("b", kind)]
+    yield "partial-extension", [valid, {**valid, "extra": ["x"]}]
+    yield "malformed-item", [valid, {**valid, "headings": [[]]}]
+
+
+@pytest.mark.parametrize("case,documents", list(invalid_inputs()))
+def test_incomparable_inputs_raise_and_cli_returns_2(case, documents, tmp_path):
+    with pytest.raises(ValueError):
+        mc.compare(documents)
+    files = []
+    for i, document in enumerate(documents):
+        path = tmp_path / f"{i}.json"
+        path.write_text(json.dumps(document), encoding="utf-8")
+        files.append(str(path))
+    result = subprocess.run([sys.executable, "-S", str(SCRIPT), "compare", *files],
+                            capture_output=True, text=True)
+    assert result.returncode == 2, (case, result.stdout, result.stderr)
+    assert "all agree" not in result.stdout
+    assert "Traceback" not in result.stderr
+
+
+def test_empty_list_in_one_reader_is_a_deviation():
+    rows = mc.compare([doc("a", links=["x"]), doc("b")])
+    assert rows and all(row["key"] == "links" for row in rows)
+
+
+def test_shared_extension_lists_are_still_compared():
+    a = doc("a", links=["x"], extra=["left"])
+    b = doc("b", links=["x"], extra=["right"])
+    assert {row["key"] for row in mc.compare([a, b])} == {"extra"}

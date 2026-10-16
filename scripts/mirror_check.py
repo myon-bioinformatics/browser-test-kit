@@ -16,8 +16,9 @@ inline Markdown and tags; ``<url>`` loses brackets; numbers are rounded to 9 dig
 integral floats become ints), compares each key as a multiset, and takes the most
 common answer as the consensus. One ``diff`` line per (key, implementation) that
 deviates, with what only it has and what it lacks; when every reader answers
-differently, one ``split`` line per reader with the items not shared by all. Keys present in only some inputs are
-compared among those inputs.
+differently, one ``split`` line per reader with the items not shared by all.
+Inputs must share the schema, kind and complete list keys; an empty comparison
+is an input error, never evidence of agreement.
 
 Stdlib only. Exit codes: 0 = all agree; 1 = some implementation deviates; 2 = input error.
 """
@@ -33,6 +34,11 @@ import zipfile
 
 _LINK = re.compile(r"!?\[([^\]]*)\]\([^)]*\)")
 _TAG = re.compile(r"<[^>]+>")
+_REQUIRED = {
+    "markdown": ("headings", "links", "images", "code"),
+    "html": ("headings", "links", "images", "code"),
+    "xlsx": ("sheets", "cells", "formulas", "merges"),
+}
 _NS = {"m": "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
        "r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
        "p": "http://schemas.openxmlformats.org/package/2006/relationships"}
@@ -68,16 +74,42 @@ def normalize(key: str, item):
 
 
 def compare(documents: list[dict]) -> list[dict]:
-    """Rows for each (key, document index) that deviates from the consensus."""
+    """Return deviations; raise ValueError for incomplete/incomparable inputs."""
+    if len(documents) < 2:
+        raise ValueError("compare needs at least two fact documents")
+    kind = None
     keys = []
-    for doc in documents:
-        keys += [k for k, v in doc.items() if isinstance(v, list) and k not in keys]
+    for index, doc in enumerate(documents):
+        if not isinstance(doc, dict):
+            raise ValueError(f"document {index}: expected a fact object")
+        if doc.get("schema") != "mirror-facts/1":
+            raise ValueError(f"document {index}: schema must be mirror-facts/1")
+        current = doc.get("kind")
+        if not isinstance(current, str) or current not in _REQUIRED:
+            raise ValueError(f"document {index}: unsupported kind {current!r}")
+        if kind is None:
+            kind = current
+            keys.extend(_REQUIRED[kind])
+        elif current != kind:
+            raise ValueError(f"document {index}: kind {current!r} differs from {kind!r}")
+        keys.extend(k for k, v in doc.items() if isinstance(v, list) and k not in keys)
+    # Additional list keys remain supported, but cannot silently compare a subset
+    # of the readers. Empty individual lists are valid (e.g. no images).
+    for index, doc in enumerate(documents):
+        for key in keys:
+            if not isinstance(doc.get(key), list):
+                raise ValueError(f"document {index}: {key} must be present as a list")
+    if not any(doc[key] for doc in documents for key in _REQUIRED[kind]):
+        raise ValueError("no facts to compare in the required lists")
     rows = []
     for key in keys:
-        present = [(i, collections.Counter(normalize(key, x) for x in d[key]))
-                   for i, d in enumerate(documents) if isinstance(d.get(key), list)]
-        if len(present) < 2:
-            continue
+        present = []
+        for index, doc in enumerate(documents):
+            try:
+                counter = collections.Counter(normalize(key, x) for x in doc[key])
+            except (ValueError, TypeError, IndexError, AttributeError, OverflowError) as exc:
+                raise ValueError(f"document {index}: invalid {key} item: {exc}") from exc
+            present.append((index, counter))
         groups: list[tuple[collections.Counter, list[int]]] = []
         for index, counter in present:
             for group in groups:
@@ -180,7 +212,7 @@ def main(argv=None) -> int:
                 documents.append(json.load(handle))
         rows = compare(documents)
     except (OSError, ValueError, KeyError, TypeError, zipfile.BadZipFile, ET.ParseError) as exc:
-        print(f"mirror_check: {exc}", file=sys.stderr)
+        print(f"mirror_check: cannot compare: {exc}", file=sys.stderr)
         return 2
     names = [d.get("reader") or f for d, f in zip(documents, args.files)]
     for row in rows:
