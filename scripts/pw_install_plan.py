@@ -130,11 +130,10 @@ def plan(root):
 
 
 def main(argv=None) -> int:
-    argv = sys.argv[1:] if argv is None else argv
-    if len(argv) > 1 or (argv and argv[0].startswith("-")):
-        print(__doc__.split("\n\n")[0] + "\nusage: pw_install_plan.py [ROOT]", file=sys.stderr)
-        return 2
-    root = argv[0] if argv else "."
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("root", nargs="?", default=".", help="checkout to inspect (default: .)")
+    root = parser.parse_args(argv).root
     if not os.path.isdir(root):
         print(f"pw_install_plan: not a directory: {root}", file=sys.stderr)
         return 2
