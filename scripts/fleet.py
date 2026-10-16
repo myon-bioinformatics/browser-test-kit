@@ -14,7 +14,7 @@ state "unpushed / no remote branch" hooks complain about even after a push);
 ``--fix-tracking`` sets ``branch.<b>.remote/merge`` and adds the fetch refspec that
 shallow clones lack, then fetches. ``checks`` reads the check runs of each clone's
 HEAD (``--ignore`` names to disregard; default: copilot-pull-request-reviewer) and,
-with ``--steps``, the failed steps and annotations of each failed run (job logs are
+with ``--steps``, the failed steps and the failure/warning annotations of each failed run (job logs are
 often not downloadable, annotations are). ``pr`` opens a PR for each clone's current
 branch, or prints the existing one. GitHub access: ``gh api`` if available, else
 ``GITHUB_TOKEN``/``GH_TOKEN``. Stdlib only; runs under ``python -S``.
@@ -119,7 +119,7 @@ def check_report(repo: str, ignore: set[str], steps: bool, call=api) -> tuple[st
                 pass
             for note in call(f"repos/{name}/check-runs/{run['id']}/annotations") or []:
                 message = " ".join((note.get("message") or "").split())
-                if not NOISE.search(message):
+                if note.get("annotation_level") != "notice" and not NOISE.search(message):
                     lines.append(f"     {note.get('annotation_level')}: {note.get('path')}:{note.get('start_line')} {message[:200]}")
     return state, lines
 

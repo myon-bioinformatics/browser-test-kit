@@ -67,11 +67,12 @@ def test_checks_reports_failed_steps_and_annotations(tmp_path, capsys):
     call = fake_api({"/check-runs?": runs, "actions/jobs/1": {"steps": [{"name": "Run pytest", "conclusion": "failure"}]},
                      "check-runs/1/annotations": [
                          {"annotation_level": "failure", "path": ".github", "start_line": 9, "message": "Process completed with exit code 1."},
-                         {"annotation_level": "failure", "path": "tests/x.py", "start_line": 3, "message": "assert  1 == 2"}]})
+                         {"annotation_level": "failure", "path": "tests/x.py", "start_line": 3, "message": "assert  1 == 2"},
+                         {"annotation_level": "notice", "path": ".github", "start_line": 1, "message": "probe summary"}]})
     assert fleet.main(["checks", str(work), "--steps"], call=call) == 1
     out = capsys.readouterr().out
     assert "failed  o/r@" in out and "runs=2" in out and "x python (failure)" in out
-    assert "step: Run pytest" in out and "tests/x.py:3 assert 1 == 2" in out and "exit code" not in out
+    assert "step: Run pytest" in out and "tests/x.py:3 assert 1 == 2" in out and "exit code" not in out and "probe summary" not in out
 
 
 def test_checks_wait_until_green(tmp_path, capsys):
