@@ -17,4 +17,4 @@ image = ["pillow>=10"]
 package-dir = { "" = "scripts" }
 
 [tool.setuptools.data-files]
-"share/browser-test-kit" = ["scripts/route_trail_node.mjs", "scripts/interaction.mjs"]
+"share/browser-test-kit" = ["scripts/route_trail_node.mjs", "scripts/interaction.mjs", "scripts/mirror_facts.mjs"]

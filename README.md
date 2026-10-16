@@ -158,6 +158,8 @@ python -S scripts/route_trail.py '🏠 ↔ 🗺' --registry fixtures/route_trail
 Execution APIs and CLI (`--run`) are documented in [route trail execution](docs/route-trail-execution.md).
 
 Measured mouse/touch `press` for canvas-painted UIs (Flutter Web) and a `watch` that records requests, dialogs, errors and storage while untrusted input is handled: [interaction](docs/interaction.md) (`scripts/interaction.mjs` / `scripts/interaction.py`).
+
+Browserless mirror tests — several independent implementations (markdown-it / marked, ExcelJS / SheetJS / a stdlib OOXML reader, your own code) must agree on one artifact: [mirror tests](docs/mirror-tests.md) (`scripts/mirror_facts.mjs` / `scripts/mirror_check.py`).
 The same JSON catalog supports stable `@id` names and readiness markers; Python
 sync/async and dependency-light Node execution reuse one Page for the whole trail.
 
