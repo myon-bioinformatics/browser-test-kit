@@ -93,3 +93,43 @@ launches the full build only, so install it with `--no-shell` and skip the 323 M
 Keep libraries as pinned npm devDependencies for tests. Vendor a `*.min.js` (with
 commit/sha256 in `vendor.lock.json`) only for code a published page loads on every
 visit; anything else stays a devDependency or a version-pinned CDN URL.
+
+## Separate browserless execution
+
+The existing mirror tests now run once in a dedicated runner configuration, without
+installing any Chromium, Firefox or WebKit executable:
+
+```sh
+npm ci --ignore-scripts
+npm run test:browserless
+```
+
+The Playwright **test runner package** is reused; these tests request no browser
+fixtures. This changes execution, not the document readers or comparison contract.
+The normal `npm run test:node` retains the real browser projects.
+
+Python rules and CLI tests can run without even the Python Playwright package:
+
+```sh
+python -m pip install -r requirements-test-core.txt
+python -m pytest tests/python -q -m 'not browser'
+```
+
+Tests that launch browsers, including CLI subprocesses, carry `@pytest.mark.browser`.
+Imports of Playwright are inside those tests, so collecting the fast lane needs no
+browser package. A regular unfiltered pytest run still collects both lanes.
+For actual browser integration, install `requirements-test.txt` and the documented
+browser engines, then use `python -m pytest tests/python -q -m browser`.
+
+CI runs the existing Python rules, reconstructed-vendor baseline and Node mirrors
+first. Only after all three pass do the Node and Python browser jobs install their
+engines. The reconstructed-vendor job runs the non-browser suite, rather than
+installing all three engines and repeating the same browser assertions. The checked-in
+vendor files are still exercised by the complete browser matrix. Shared change
+detection, locked provenance and the parent's JUnit collector remain in use.
+JUnit from the Python core, controlled failures, browser integration and Node mirrors
+is preserved separately. No browser test has been removed or turned into a skip.
+Full browser checks still run on eligible PRs and main pushes after the fast gates;
+this change does not add a schedule or infer that a browser is unnecessary from a
+filename alone. Mark future real-browser tests explicitly, including browser launches
+hidden behind subprocess helpers.

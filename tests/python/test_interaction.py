@@ -55,6 +55,7 @@ def test_cli_check_is_assert_late(tmp_path):
     assert run(str(junk)).returncode == 2
 
 
+@pytest.mark.browser
 @pytest.mark.parametrize("browser_name", ("chromium", "firefox", "webkit"))
 def test_press_reaches_coordinate_hit_target_and_watch_records(browser_name):
     from playwright.sync_api import sync_playwright, Error as PlaywrightError
@@ -105,6 +106,7 @@ def test_press_reaches_coordinate_hit_target_and_watch_records(browser_name):
             browser.close()
 
 
+@pytest.mark.browser
 def test_async_press_and_watch_chromium():
     from playwright.async_api import async_playwright
 
@@ -140,6 +142,7 @@ def test_node_and_python_share_the_page_functions():
     assert f"INVENTORY_SELECTOR = '{interaction.INVENTORY_SELECTOR}'" in mjs
 
 
+@pytest.mark.browser
 @pytest.mark.parametrize("browser_name", ("chromium", "firefox", "webkit"))
 def test_inventory_shows_merged_card_and_field_press(browser_name):
     from playwright.sync_api import sync_playwright
@@ -170,6 +173,7 @@ NAME_CASES = json.loads((ROOT / "fixtures" / "inventory-names.json").read_text(e
 NAMES_URL = (ROOT / "fixtures" / "inventory-names.html").as_uri()
 
 
+@pytest.mark.browser
 @pytest.mark.parametrize("browser_name", ("chromium", "firefox", "webkit"))
 @pytest.mark.parametrize("touch", (False, True))
 def test_inventory_raw_labels_and_accessible_names(browser_name, touch):
@@ -224,6 +228,7 @@ const args = JSON.parse(fs.readFileSync(0, 'utf8'));
             browser.close()
 
 
+@pytest.mark.browser
 def test_async_inventory_names():
     from playwright.async_api import async_playwright
 

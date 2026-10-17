@@ -7,8 +7,6 @@ import sys
 from pathlib import Path
 
 import pytest
-from playwright.sync_api import sync_playwright
-from playwright.async_api import async_playwright
 
 ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location("route_trail", ROOT / "scripts" / "route_trail.py")
@@ -21,8 +19,10 @@ def registry():
     return route_trail.load_registry((ROOT / "fixtures" / "route_trail_execution.json").read_text())
 
 
+@pytest.mark.browser
 @pytest.mark.parametrize("browser_name", ("chromium", "firefox", "webkit"))
 def test_walk_resume_and_failure(browser_name, tmp_path):
+    from playwright.sync_api import sync_playwright
     with sync_playwright() as pw:
         browser = getattr(pw, browser_name).launch()
         try:
@@ -52,8 +52,10 @@ def test_walk_resume_and_failure(browser_name, tmp_path):
             browser.close()
 
 
+@pytest.mark.browser
 @pytest.mark.parametrize("browser_name", ("chromium", "firefox", "webkit"))
 def test_async_walk(browser_name, tmp_path):
+    from playwright.async_api import async_playwright
     async def run():
         async with async_playwright() as pw:
             browser = await getattr(pw, browser_name).launch()
@@ -71,6 +73,7 @@ def test_async_walk(browser_name, tmp_path):
     asyncio.run(run())
 
 
+@pytest.mark.browser
 @pytest.mark.parametrize("backend", ("python", "python-async"))
 def test_cli_run_from_stdlib_parent(backend):
     args = [sys.executable, "-S", str(ROOT / "scripts/route_trail.py"), "🏠 ↔ 🌍",

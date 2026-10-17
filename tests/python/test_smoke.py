@@ -3,7 +3,6 @@ import importlib.util
 import json
 import sys
 import pytest
-from playwright.sync_api import sync_playwright
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = (ROOT / "fixtures" / "index.html").resolve().as_uri()
@@ -45,9 +44,11 @@ def test_close_browser_does_not_mask_an_earlier_failure(capsys) -> None:
     with pytest.raises(RuntimeError, match="close failed"):
         close_browser(_BrowserThatFailsToClose(), after_failure=False)
 
+@pytest.mark.browser
 @pytest.mark.parametrize("browser_name", BROWSERS)
 @pytest.mark.parametrize("profile,device_name", PROFILES)
 def test_shared_fixture(browser_name: str, profile: str, device_name: str | None) -> None:
+    from playwright.sync_api import sync_playwright
     RESULTS.mkdir(parents=True, exist_ok=True)
     png = RESULTS / f"{browser_name}-{profile}.png"
     meta = RESULTS / f"{browser_name}-{profile}.json"

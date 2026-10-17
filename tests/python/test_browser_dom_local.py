@@ -9,6 +9,7 @@ import threading
 import pytest
 
 
+@pytest.mark.browser
 def test_dom_capture_local_page(tmp_path):
     (tmp_path/'index.html').write_text('<!doctype html><meta charset="utf-8"><main id="body"><h1>日本語</h1><p>Body &amp; text</p></main>',encoding='utf-8')
     handler=functools.partial(SimpleHTTPRequestHandler,directory=str(tmp_path))
@@ -36,6 +37,7 @@ def test_dom_capture_local_page(tmp_path):
         server.shutdown();server.server_close();thread.join(timeout=5)
 
 
+@pytest.mark.browser
 @pytest.mark.parametrize('selector,code,error', [
     ('#missing', 2, 'Timeout'),
     ('p', 1, 'ambiguous_selector'),

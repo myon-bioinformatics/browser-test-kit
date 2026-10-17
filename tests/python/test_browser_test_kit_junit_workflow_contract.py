@@ -13,7 +13,7 @@ COLLECTOR = (
     "reusable-junit-identity.yml@1eda992aa6fa31a902e2c06428e53ab17e8fe3c1"
 )
 COMMAND = (
-    "python -m pytest tests/python -q "
+    'python -m pytest tests/python -q -m "not browser" '
     "--junitxml=test-results/junit/python-3.13.xml"
 )
 
@@ -65,7 +65,7 @@ def _assert_contract(workflow):
         "junit-python-3.13/python-3.13.xml",
         "junit-controlled-python-3.13/junit.xml",
     }
-    browser = _upload(producer, "python-browser-evidence")
+    browser = _upload(workflow["jobs"]["python-browser"], "python-browser-evidence")
     assert browser["with"]["path"].splitlines() == [
         "test-results", "!test-results/junit/**",
         "!test-results/controlled-failure/**",
@@ -104,11 +104,12 @@ def test_failure_evidence_contract_rejects_unsafe_mutations():
             (name + " ignores missing XML", path + ("with", "if-no-files-found"), "ignore"),
             (name + " retains raw for 90 days", path + ("with", "retention-days"), 90),
         ])
-    browser_index = producer["steps"].index(_upload(producer, "python-browser-evidence"))
+    browser_job = workflow["jobs"]["python-browser"]
+    browser_index = browser_job["steps"].index(_upload(browser_job, "python-browser-evidence"))
     mutations.extend([
-        ("raw JUnit duplicated", job_path + ("steps", browser_index, "with", "path"),
+        ("raw JUnit duplicated", ("jobs", "python-browser", "steps", browser_index, "with", "path"),
          "test-results\n!test-results/controlled-failure/**\n"),
-        ("controlled evidence duplicated", job_path + ("steps", browser_index, "with", "path"),
+        ("controlled evidence duplicated", ("jobs", "python-browser", "steps", browser_index, "with", "path"),
          "test-results\n!test-results/junit/**\n"),
     ])
     for label, path, value in mutations:
