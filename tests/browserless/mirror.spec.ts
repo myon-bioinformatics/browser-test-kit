@@ -4,8 +4,7 @@ import {writeFileSync} from 'node:fs';
 import {createRequire} from 'node:module';
 import {resolve} from 'node:path';
 
-// No page fixture: these never launch a browser. Run once, not per browser project.
-test.beforeEach(({}, testInfo) => test.skip(testInfo.project.name !== 'chromium', 'browserless; run once'));
+// No page/browser fixture: this suite runs once without installing a browser engine.
 const node = (...args: string[]) => spawnSync(process.execPath, [resolve('scripts/mirror_facts.mjs'), ...args], {encoding: 'utf8'});
 const check = (...files: string[]) => spawnSync('python', ['-S', 'scripts/mirror_check.py', 'compare', ...files], {encoding: 'utf8'});
 

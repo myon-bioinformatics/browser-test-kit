@@ -13,7 +13,7 @@ COLLECTOR = (
     "reusable-junit-identity.yml@1eda992aa6fa31a902e2c06428e53ab17e8fe3c1"
 )
 COMMAND = (
-    "python -m pytest tests/python -q "
+    'python -m pytest tests/python -q -m "not browser" '
     "--junitxml=test-results/junit/python-3.13.xml"
 )
 
@@ -53,19 +53,21 @@ def _assert_contract(workflow):
         assert upload["with"]["if-no-files-found"] == "error"
         assert upload["with"]["retention-days"] == 14
     collector = workflow["jobs"]["junit-identity"]
-    assert collector["needs"] == ["changes", "python"]
+    assert collector["needs"] == ["changes", "python", "node-browserless", "python-browser"]
     assert collector["if"] == (
         "always() && needs.changes.outputs.product_changed == 'true'"
     )
     assert collector.get("continue-on-error", False) is False
     assert collector["uses"] == COLLECTOR
     reports = json.loads(collector["with"]["expected-reports"])
-    assert isinstance(reports, list) and len(reports) == 2
+    assert isinstance(reports, list) and len(reports) == 4
     assert set(reports) == {
         "junit-python-3.13/python-3.13.xml",
         "junit-controlled-python-3.13/junit.xml",
+        "junit-node-browserless/browserless-node.xml",
+        "junit-python-browser-3.13/python-browser-3.13.xml",
     }
-    browser = _upload(producer, "python-browser-evidence")
+    browser = _upload(workflow["jobs"]["python-browser"], "python-browser-evidence")
     assert browser["with"]["path"].splitlines() == [
         "test-results", "!test-results/junit/**",
         "!test-results/controlled-failure/**",
@@ -104,11 +106,12 @@ def test_failure_evidence_contract_rejects_unsafe_mutations():
             (name + " ignores missing XML", path + ("with", "if-no-files-found"), "ignore"),
             (name + " retains raw for 90 days", path + ("with", "retention-days"), 90),
         ])
-    browser_index = producer["steps"].index(_upload(producer, "python-browser-evidence"))
+    browser_job = workflow["jobs"]["python-browser"]
+    browser_index = browser_job["steps"].index(_upload(browser_job, "python-browser-evidence"))
     mutations.extend([
-        ("raw JUnit duplicated", job_path + ("steps", browser_index, "with", "path"),
+        ("raw JUnit duplicated", ("jobs", "python-browser", "steps", browser_index, "with", "path"),
          "test-results\n!test-results/controlled-failure/**\n"),
-        ("controlled evidence duplicated", job_path + ("steps", browser_index, "with", "path"),
+        ("controlled evidence duplicated", ("jobs", "python-browser", "steps", browser_index, "with", "path"),
          "test-results\n!test-results/junit/**\n"),
     ])
     for label, path, value in mutations:

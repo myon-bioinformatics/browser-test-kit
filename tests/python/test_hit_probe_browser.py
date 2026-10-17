@@ -10,7 +10,6 @@ import os
 from pathlib import Path
 
 import pytest
-from playwright.sync_api import sync_playwright
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = (ROOT / "fixtures" / "hit_probe.html").resolve().as_uri()
@@ -81,8 +80,10 @@ def summary(observed):
     return "; ".join(rows)
 
 
+@pytest.mark.browser
 @pytest.mark.parametrize("browser_name", BROWSERS)
 def test_hit_maps_need_few_probes_and_agree_with_clicks(browser_name, capsys):
+    from playwright.sync_api import sync_playwright
     RESULTS.mkdir(parents=True, exist_ok=True)
     with sync_playwright() as pw:
         browser = getattr(pw, browser_name).launch()
@@ -117,6 +118,7 @@ def test_hit_maps_need_few_probes_and_agree_with_clicks(browser_name, capsys):
 EDGE_JS = """([x, y]) => { const e = document.elementFromPoint(x, y); return e ? (e.id || e.tagName) : null; }"""
 
 
+@pytest.mark.browser
 @pytest.mark.parametrize("browser_name", BROWSERS)
 def test_integer_edges_agree_and_fractional_edges_are_recorded(browser_name, capsys):
     """FRACTIONAL_HIT_COORDINATES in docs/antipatterns.md.
@@ -125,6 +127,7 @@ def test_integer_edges_agree_and_fractional_edges_are_recorded(browser_name, cap
     every engine (asserted). At fractional pixels engines may round differently, so those results
     are only recorded, per engine, as evidence.
     """
+    from playwright.sync_api import sync_playwright
     rows = []
     with sync_playwright() as pw:
         browser = getattr(pw, browser_name).launch()
