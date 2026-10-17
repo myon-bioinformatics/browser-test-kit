@@ -97,6 +97,7 @@ test('bounded exploration preserves receipts, original failures and listener cle
   assert.equal(result.ok, true);
   assert.equal(result.actions.length, 3);
   assert.equal(inputs, 3);
+  assert.deepEqual(result.inventories.map(row => [row.fields, row.buttons]), [[0, 0], [0, 0], [0, 0]]);
   assert.equal(page.listenerCount('pageerror'), 0);
   const cause = new Error('application readiness failed');
   await assert.rejects(explore(page, { route: '/', seed: 'test', steps: 3,
@@ -116,4 +117,75 @@ test('bounded exploration preserves receipts, original failures and listener cle
     });
   assert.equal(page.listenerCount('pageerror'), 0);
   await assert.rejects(explore(page, { route: '/', seed: 'test', steps: 21 }), TypeError);
+});
+
+test('a candidate that vanishes after enumeration is recorded without a long wait', async () => {
+  const { EventEmitter } = await import('node:events');
+  const { explore, ExplorationError } = await new Function('url', 'return import(url)')(
+    pathToFileURL(path.resolve('scripts/browser_execution.mjs')).href);
+  const timeout = Object.assign(new Error('candidate is no longer present'), { name: 'TimeoutError' });
+  let checks = 0;
+  const candidate = { isVisible: async () => true,
+    isEditable: async ({ timeout: bound }) => { checks++; assert.equal(bound, 250); throw timeout; },
+    isEnabled: async ({ timeout: bound }) => { checks++; assert.equal(bound, 250); throw timeout; } };
+  const locator = { count: async () => 1, nth: () => candidate };
+  const page = Object.assign(new EventEmitter(), {
+    locator: () => locator, getByRole: () => locator,
+    keyboard: { press: async () => {} }, mouse: { wheel: async () => {} }, url: () => 'https://example.test/',
+  });
+  const result = await explore(page, { route: '/', seed: 'gone', steps: 1, buttonName: /Add/ });
+  assert.equal(checks, 2);
+  assert.equal(result.actions.length, 1);
+  assert.ok(['tab', 'escape', 'scroll'].includes(result.actions[0].kind));
+  assert.deepEqual(result.inventories[0].checks.map(row => row.outcome),
+    ['unavailable_after_inventory', 'unavailable_after_inventory']);
+  assert.equal(result.inventories[0].fields, 1);  // different from absent at initial inventory
+  candidate.isEditable = async () => { throw new Error('browser closed'); };
+  await assert.rejects(explore(page, { route: '/', seed: 'gone', steps: 1 }), error => {
+    assert.ok(error instanceof ExplorationError);
+    assert.match(error.cause.message, /browser closed/);
+    assert.equal(error.receipt.inventories[0].checks[0].outcome, 'error');
+    return true;
+  });
+  assert.equal(page.listenerCount('pageerror'), 0);
+});
+
+test('a selected action timeout remains a failure instead of being reclassified as absent', async () => {
+  const { EventEmitter } = await import('node:events');
+  const { explore } = await new Function('url', 'return import(url)')(
+    pathToFileURL(path.resolve('scripts/browser_execution.mjs')).href);
+  const cause = Object.assign(new Error('selected input disappeared'), { name: 'TimeoutError' });
+  const item = { isVisible: async () => true, isEditable: async () => true,
+    getAttribute: async () => { throw cause; } };
+  const page = Object.assign(new EventEmitter(), {
+    locator: () => ({ count: async () => 1, nth: () => item }),
+    url: () => 'https://example.test/',
+  });
+  let seed = 0;
+  while (choice(String(seed), '/', 0, 4) !== 3) seed++;
+  await assert.rejects(explore(page, { route: '/', seed: String(seed), steps: 1 }), error => {
+    assert.equal(error.cause, cause);
+    assert.equal(error.receipt.inventories[0].checks[0].outcome, 'eligible');
+    assert.equal(error.receipt.actions[0].kind, 'fill');
+    assert.match(error.receipt.actions[0].error, /selected input disappeared/);
+    return true;
+  });
+});
+
+test('repeated availability races cannot exhaust the whole page test budget', async () => {
+  const { EventEmitter } = await import('node:events');
+  const { explore } = await new Function('url', 'return import(url)')(
+    pathToFileURL(path.resolve('scripts/browser_execution.mjs')).href);
+  const item = { isVisible: async () => true, isEditable: async () => {
+    await new Promise(resolve => setTimeout(resolve, 260));
+    throw Object.assign(new Error('gone'), { name: 'TimeoutError' });
+  } };
+  const page = Object.assign(new EventEmitter(), {
+    locator: () => ({ count: async () => 20, nth: () => item }),
+    url: () => 'https://example.test/', keyboard: { press: async () => {} }, mouse: { wheel: async () => {} },
+  });
+  const result = await explore(page, { route: '/', seed: 'bounded', steps: 1 });
+  assert.equal(result.inventories[0].budget_exhausted, true);
+  assert.ok(result.inventories[0].checks.length > 0 && result.inventories[0].checks.length <= 4);
+  assert.equal(result.actions.length, 1);
 });

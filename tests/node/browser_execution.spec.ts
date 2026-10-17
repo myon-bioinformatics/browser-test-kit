@@ -32,3 +32,46 @@ test('shared exploration fills supplied Unicode values without redefining emoji 
   expect(receipt.actions[0]).toMatchObject({ kind: 'fill', value: '日本語👩🏽‍💻' });
   await expect(page.getByRole('textbox')).toHaveValue('日本語👩🏽‍💻');
 });
+
+for (const kind of ['field', 'button']) {
+  test(`candidate removed between visibility and state check stays bounded: ${kind}`, async ({ page }) => {
+    // Deterministic race: actual Playwright locators and DOM removal, with only
+    // visibility observation wrapped to remove the candidate at that boundary.
+    const originalFields = page.locator.bind(page);
+    const originalButtons = page.getByRole.bind(page);
+    const wrap = (locator) => new Proxy(locator, {
+      get(target, key) {
+        if (key === 'nth') return index => {
+          const item = target.nth(index);
+          return new Proxy(item, { get(node, method) {
+            if (method === 'isVisible') return async () => {
+              const visible = await node.isVisible();
+              if (visible) await node.evaluate(element => element.remove());
+              return visible;
+            };
+            const value = node[method];
+            return typeof value === 'function' ? value.bind(node) : value;
+          } });
+        };
+        const value = target[key];
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+    const adapter = new Proxy(page, { get(target, key) {
+      if (key === 'locator') return selector => kind === 'field' ? wrap(originalFields(selector)) : originalFields(selector);
+      if (key === 'getByRole') return (role, options) => kind === 'button'
+        ? wrap(originalButtons(role, options)) : originalButtons(role, options);
+      const value = target[key];
+      return typeof value === 'function' ? value.bind(target) : value;
+    } });
+    let seed = 0;
+    while (choice(String(seed), '/sample', 0, 4) !== 0) seed++;
+    const receipt = await explore(adapter, { route: '/sample', seed: String(seed), steps: 1,
+      buttonName: /^Run$/ });
+    expect(receipt.ok).toBe(true);
+    expect(receipt.inventories[0].checks).toContainEqual(expect.objectContaining({
+      kind: kind === 'field' ? 'fill' : 'press', outcome: 'unavailable_after_inventory',
+    }));
+    expect(receipt.actions[0].kind).toBe('tab');
+  });
+}
