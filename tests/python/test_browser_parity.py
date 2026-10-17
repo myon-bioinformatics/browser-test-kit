@@ -20,7 +20,10 @@ def test_browser_install_and_config_parity() -> None:
     assert {name for name, lines in installs.items() if lines} == {"node", "python", "test-locked"}
     for name in ("node", "python", "test-locked"):
         assert len(installs[name]) == 1
-        assert engines == set(installs[name][0].strip().split())
+        words = installs[name][0].strip().split()
+        assert engines == {w for w in words if not w.startswith("-")}
+        # Headless runs launch only Chromium's headless shell; the full build is never used in CI.
+        assert "--only-shell" in words
 
 def _evidence_expectations(workflow: str, directory: str) -> set[str]:
     match = re.search(rf"check_evidence\.py {re.escape(directory)} .*--expect ([\w,-]+)", workflow)
