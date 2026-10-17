@@ -235,3 +235,14 @@ Generic behavior and its regression suite are maintained in the parent repositor
 this repository tests imports, CLI compatibility and vendor wiring.
 
 Public source placement and automatic Python CI updates: [vendor automation](docs/vendor-automation.md).
+
+### Shared bounded browser exploration
+
+`scripts/browser_execution.mjs` owns resource-aware `workerBudget`, stateless
+seeded `choice`, and bounded `explore` on an existing Playwright-compatible Page.
+Applications supply readiness, allowed button names and input values; the helper
+returns `browser-exploration/1` receipts and preserves partial receipts on errors.
+See [browser execution](docs/browser-execution.md). Generic checks run once in
+this repository's browserless Node lane; consumers keep their application
+contracts and immutable source/hash checks, rather than copying the test suite.
+Emoji identities and ordered page movement continue to use `route_trail.py`.
