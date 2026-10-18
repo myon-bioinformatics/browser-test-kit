@@ -34,7 +34,9 @@ ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / "fixtures" / "platform_probe.html"
 PROFILES = {"desktop": None, "iphone": "iPhone 13", "pixel": "Pixel 7"}
 DESKTOP_VIEWPORT = {"width": 1280, "height": 800}
-MIN_SEARCH_WIDTH = 240
+# WebKit on Windows refuses viewports below 250x240 ("minimal viewport of 250x240"), so the
+# width search starts there on every platform to keep results comparable.
+MIN_SEARCH_WIDTH = 250
 
 
 def os_name() -> str:
