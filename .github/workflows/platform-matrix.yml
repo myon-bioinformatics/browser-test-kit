@@ -1,0 +1,88 @@
+name: platform-matrix
+
+# Measure the same fixture on Windows, macOS and Linux x Chromium/Firefox/WebKit
+# (+ branded Chrome/Edge) x desktop/iPhone/Pixel x headless/headed, then build one
+# tabbed page to compare them (scripts/platform_probe.py, issue #89).
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - fixtures/platform_probe.html
+      - scripts/platform_probe.py
+      - .github/workflows/platform-matrix.yml
+
+permissions:
+  contents: read
+
+jobs:
+  collect:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - run: python -m pip install -r requirements-test.txt
+      - run: python -m playwright install --with-deps chromium firefox webkit
+      - name: Collect every engine, profile and mode
+        shell: bash
+        run: |
+          status=0
+          collect() { python scripts/platform_probe.py collect --out platform-results "$@" || status=1; }
+          for browser in chromium firefox webkit; do
+            for profile in desktop iphone pixel; do collect --browser "$browser" --profile "$profile"; done
+          done
+          # The real window frame and classic scrollbars only exist with a visible window.
+          for browser in chromium firefox webkit; do
+            if [ "$RUNNER_OS" = Linux ]; then
+              xvfb-run -a python scripts/platform_probe.py collect --browser "$browser" --headed --out platform-results || status=1
+            else
+              collect --browser "$browser" --headed
+            fi
+          done
+          # Branded browsers preinstalled on the runner images; missing ones are reported, not gated.
+          for channel in chrome msedge; do
+            python scripts/platform_probe.py collect --browser chromium --channel "$channel" --out platform-results \
+              || echo "::warning title=platform-matrix ${{ matrix.os }}::channel $channel not measured"
+          done
+          python -S scripts/platform_probe.py summary platform-results \
+            | sed 's/^/::notice title=platform-matrix ${{ matrix.os }}::/' || true
+          exit "$status"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: platform-${{ matrix.os }}
+          path: platform-results
+          if-no-files-found: error
+          retention-days: 30
+
+  matrix:
+    needs: collect
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: platform-*
+          path: platform-results
+      - name: Merge and render the tabbed comparison
+        run: |
+          python -S scripts/platform_probe.py merge platform-results --out platform-matrix/dataset.json
+          python -S scripts/platform_probe.py render platform-matrix/dataset.json --out platform-matrix/index.html
+          { echo '```text'; python -S scripts/platform_probe.py summary platform-matrix/dataset.json || true; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: platform-matrix
+          path: platform-matrix
+          if-no-files-found: error
+          retention-days: 90
