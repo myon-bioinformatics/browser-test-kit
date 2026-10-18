@@ -12,7 +12,27 @@ import sys
 from urllib.parse import urlsplit
 
 
-def capture(page, url, selector, timeout_ms, max_bytes):
+
+_DEFAULT_PORTS = {'http': 80, 'https': 443}
+
+
+def same_origin_key(url):
+    """(scheme, host, effective port) for origin comparison; None when the URL has no host.
+
+    Host names compare case-insensitively and an explicit default port equals the
+    omitted one, so http://LOCALHOST:80/ and http://localhost/ are one origin.
+    """
+    parts = urlsplit(url)
+    scheme = parts.scheme.lower()
+    try:
+        port = parts.port
+    except ValueError:
+        return None
+    if not parts.hostname:
+        return None
+    return (scheme, parts.hostname.lower(), port if port is not None else _DEFAULT_PORTS.get(scheme))
+
+def capture(page, url, selector, timeout_ms, max_bytes, *, aria_snapshot=False):
     response = page.goto(url, wait_until='domcontentloaded', timeout=timeout_ms)
     if response is not None and response.status >= 400:
         raise ValueError('HTTP status ' + str(response.status))
@@ -21,6 +41,9 @@ def capture(page, url, selector, timeout_ms, max_bytes):
     if target.count() != 1:
         return None
     data = target.evaluate('e => ({html:e.outerHTML, text:e.textContent, visible:e.innerText ?? null})', timeout=timeout_ms)
+    if aria_snapshot:
+        # The browser's own role/name computation, for comparing static accessible-name readers.
+        data['aria_snapshot'] = target.aria_snapshot(timeout=timeout_ms)
     encoded = json.dumps(data, ensure_ascii=False).encode('utf-8')
     if len(encoded) > max_bytes:
         raise ValueError('captured data exceeds byte limit')
@@ -39,6 +62,10 @@ def main(argv=None):
     parser.add_argument('--timeout-ms', type=int, default=30000)
     parser.add_argument('--max-bytes', type=int, default=2000000)
     parser.add_argument('--headed', action='store_true')
+    parser.add_argument('--aria-snapshot', action='store_true',
+                        help="also store the selected element's Playwright aria snapshot (roles and accessible names)")
+    parser.add_argument('--same-origin-only', action='store_true',
+                        help='abort requests to other origins and list them in blocked_requests')
     args = parser.parse_args(argv)
     parsed = urlsplit(args.url)
     if parsed.scheme not in ('http','https') or not parsed.hostname or parsed.username or parsed.password:
@@ -59,7 +86,22 @@ def main(argv=None):
                 context = browser.new_context(accept_downloads=False)
                 page = context.new_page()
                 page.set_default_timeout(args.timeout_ms)
-                result = capture(page,args.url,args.selector,args.timeout_ms,args.max_bytes)
+                blocked = []
+                if args.same_origin_only:
+                    origin = same_origin_key(args.url)
+                    def route(request_route):
+                        if same_origin_key(request_route.request.url) == origin:
+                            request_route.continue_()
+                        else:
+                            blocked.append(request_route.request.url)
+                            request_route.abort()
+                    page.route('**/*', route)
+                result = capture(page,args.url,args.selector,args.timeout_ms,args.max_bytes,
+                                 aria_snapshot=args.aria_snapshot)
+                if result is not None:
+                    result['browser_version'] = browser.version
+                    if args.same_origin_only:
+                        result['blocked_requests'] = sorted(set(blocked))
             finally:
                 browser.close()
         if result is None:
