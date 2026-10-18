@@ -7,7 +7,7 @@
 
 collect opens fixtures/platform_probe.html and records `btk-platform-facts/1`:
 screen, window outer/inner (frame = outer - inner; real only when headed), scrollbar
-width, devicePixelRatio, visualViewport, safe-area insets, pointer/hover/touch,
+width (page / always-scrolling probe), devicePixelRatio, visualViewport, safe-area insets, pointer/hover/touch,
 measured font widths, platform and browser version. The environment passes when
 the layout holds (no horizontal overflow, no overlap, nothing clipped) and a real
 click (a tap on touch profiles) at the integer centre of the button registers.
@@ -75,7 +75,13 @@ def collect(browser_name: str, profile: str, *, headed: bool = False, channel: s
         browser = engine.launch(headless=not headed, **({"channel": channel} if channel else {}))
         try:
             device = PROFILES[profile]
-            args = dict(pw.devices[device]) if device else {"viewport": dict(DESKTOP_VIEWPORT)}
+            if device:
+                args = dict(pw.devices[device])
+            elif headed:
+                # A real window: an emulated viewport would make inner larger than outer (negative frame).
+                args = {"no_viewport": True}
+            else:
+                args = {"viewport": dict(DESKTOP_VIEWPORT)}
             args.pop("default_browser_type", None)
             if browser_name == "firefox":
                 args.pop("is_mobile", None)  # DEVICE_DESCRIPTOR_CROSS_ENGINE
@@ -89,13 +95,13 @@ def collect(browser_name: str, profile: str, *, headed: bool = False, channel: s
             touch = bool(args.get("has_touch"))
             (page.touchscreen.tap if touch else page.mouse.click)(x, y)
             clicks = int(page.locator("#action").get_attribute("data-clicks"))
-            size = page.viewport_size or DESKTOP_VIEWPORT
+            size = page.viewport_size or {"width": facts["window"]["inner_width"],
+                                          "height": facts["window"]["inner_height"]}
 
             def ok_at(width: int) -> bool:
                 page.set_viewport_size({"width": width, "height": size["height"]})
                 return page.evaluate("window.__layoutChecks().ok")
             min_width = narrowest_ok_width(ok_at, MIN_SEARCH_WIDTH, size["width"])
-            page.set_viewport_size(size)
             version = browser.version
         finally:
             browser.close()
@@ -136,7 +142,7 @@ def summary_lines(records: list[dict]) -> list[str]:
         w, v = r["facts"]["window"], r["facts"]["viewport"]
         failed = ",".join(r["layout"]["failed"]) or "-"
         out.append(f"{r['verdict']:4} {r['env']['id']:38} v{r['env']['browser_version']} "
-                   f"frame={w['frame_width']}x{w['frame_height']} scrollbar={v['scrollbar_width']} "
+                   f"frame={w['frame_width']}x{w['frame_height']} scrollbar={v['scrollbar_width']}/{v.get('scrollbar_classic')} "
                    f"dpr={v['device_pixel_ratio']} min_ok_width={r['min_ok_width']} failed={failed}")
     return out
 
@@ -285,6 +291,8 @@ def main(argv=None) -> int:
             print(summary_lines([record])[0])
             return 0 if record["verdict"] == "pass" else 1
         records = load_records(args.inputs)
+        if args.command in ("merge", "render"):
+            Path(args.out).parent.mkdir(parents=True, exist_ok=True)
         if args.command == "merge":
             Path(args.out).write_text(json.dumps({"schema": DATASET_SCHEMA, "records": records}, ensure_ascii=False,
                                                  indent=1) + "\n", encoding="utf-8")
@@ -299,6 +307,8 @@ def main(argv=None) -> int:
         return 0
     except (OSError, ValueError, KeyError) as exc:
         print(f"error: {exc}", file=sys.stderr)
+        if os.environ.get("GITHUB_ACTIONS"):
+            print(f"::error title=platform_probe {args.command}::{type(exc).__name__}: {exc}")
         return 2
 
 

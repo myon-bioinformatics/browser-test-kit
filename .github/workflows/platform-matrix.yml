@@ -52,8 +52,12 @@ jobs:
             python scripts/platform_probe.py collect --browser chromium --channel "$channel" --out platform-results \
               || echo "::warning title=platform-matrix ${{ matrix.os }}::channel $channel not measured"
           done
-          python -S scripts/platform_probe.py summary platform-results \
-            | sed 's/^/::notice title=platform-matrix ${{ matrix.os }}::/' || true
+          # Annotations are capped per step: one notice per OS, one error per failing environment,
+          # and the full list in the job summary.
+          python -S scripts/platform_probe.py summary platform-results > summary.txt || true
+          { echo '```text'; cat summary.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=platform-matrix ${{ matrix.os }}::$(grep -c '^pass' summary.txt) pass, $(grep -c '^fail' summary.txt) fail"
+          grep '^fail' summary.txt | sed 's/^/::error title=platform-matrix ${{ matrix.os }}::/' || true
           exit "$status"
       - uses: actions/upload-artifact@v7
         if: always()

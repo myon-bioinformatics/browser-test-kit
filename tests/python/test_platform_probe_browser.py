@@ -3,7 +3,6 @@ import importlib.util
 from pathlib import Path
 
 import pytest
-from playwright.sync_api import sync_playwright
 
 ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location("platform_probe", ROOT / "scripts" / "platform_probe.py")
@@ -15,6 +14,7 @@ CASES = [("chromium", "desktop"), ("firefox", "desktop"), ("webkit", "desktop"),
          ("chromium", "pixel"), ("webkit", "iphone"), ("firefox", "iphone")]
 
 
+@pytest.mark.browser
 @pytest.mark.parametrize(("browser_name", "profile"), CASES)
 def test_environment_passes_and_records_facts(browser_name, profile):
     record = pp.collect(browser_name, profile)
@@ -28,7 +28,9 @@ def test_environment_passes_and_records_facts(browser_name, profile):
         assert record["click"]["input"] == "touch" and facts["window"]["inner_width"] < 500
 
 
+@pytest.mark.browser
 def test_viewer_tabs_highlight_what_changed(tmp_path):
+    from playwright.sync_api import sync_playwright
     records = pp.load_records([str(RESULTS)]) if RESULTS.exists() else []
     if len(records) < 2:
         pytest.skip("run the environment tests first")

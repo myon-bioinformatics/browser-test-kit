@@ -79,3 +79,16 @@ def test_render_embeds_data_safely(tmp_path):
     assert "</script><script>alert(1)" not in page and "\\u003c/script>" in page
     data = page.split('<script type="application/json" id="data">')[1].split("</script>")[0]
     assert len(json.loads(data)["records"]) == 2
+
+
+def test_merge_and_render_create_the_output_directory(tmp_path):
+    (tmp_path / "r.json").write_text(json.dumps(record()))
+    assert pp.main(["merge", str(tmp_path / "r.json"), "--out", str(tmp_path / "new" / "dataset.json")]) == 0
+    assert pp.main(["render", str(tmp_path / "new" / "dataset.json"), "--out", str(tmp_path / "x" / "index.html")]) == 0
+    assert (tmp_path / "x" / "index.html").read_text(encoding="utf-8").startswith("<!doctype html>")
+
+
+def test_errors_become_actions_annotations(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    assert pp.main(["summary", str(tmp_path)]) == 2
+    assert "::error title=platform_probe summary::ValueError" in capsys.readouterr().out
