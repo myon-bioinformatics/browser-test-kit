@@ -103,3 +103,48 @@ def test_collect_failure_is_reported_with_the_environment(tmp_path, monkeypatch,
     out = capsys.readouterr().out
     assert "::error title=platform_probe collect::webkit iphone headed: RuntimeError: Browser closed unexpectedly" in out
     assert "stack line" not in out
+
+
+GOOD_LIBS = {"purify": "3.4.17", "sanitized": '<img src="x"><b>ok</b>', "seed": 0.18705921546491625, "sri_refused": True}
+
+
+@pytest.mark.parametrize(("change", "failed"), [
+    ({}, []),
+    ({"purify": None}, ["purify_missing"]),
+    ({"sanitized": '<img src="x" onerror="alert(1)"><b>ok</b>'}, ["sanitize_unsafe"]),
+    ({"seed": 0.5}, ["seed_mismatch"]),
+    ({"sri_refused": False}, ["sri_not_enforced"]),
+    ({"sri_refused": None}, ["sri_not_enforced"]),
+])
+def test_adopted_libraries_must_load_behave_and_enforce_sri(change, failed):
+    result = pp.libs_check({**GOOD_LIBS, **change})
+    assert result == {"ok": not failed, "failed": failed}
+    rec = record()
+    rec["libs"] = result
+    assert pp.verdict(rec) == ("pass" if not failed else "fail")
+
+
+def test_records_without_libs_still_judge_on_layout_and_click():
+    assert pp.libs_check(None) == {"ok": True, "failed": []}
+    assert "libs" not in record() and record()["verdict"] == "pass"
+
+
+def test_fixture_integrity_matches_js_lock():
+    """Re-adopting a library must update the fixture's <script integrity> too."""
+    import re
+    lock = json.loads((ROOT / "js.lock.json").read_text(encoding="utf-8"))
+    page = (ROOT / "fixtures" / "platform_probe.html").read_text(encoding="utf-8")
+    for entry in lock["files"]:
+        tags = re.findall(r'<script src="\.\./' + re.escape(entry["destination"]) + r'" integrity="([^"]+)"', page)
+        assert tags and tags[0] == entry["sri"], entry["name"]
+    assert len(set(re.findall(r'integrity="([^"]+)"', page))) == len(lock["files"]) + 1  # + the refused one
+
+
+def test_adopted_files_match_js_lock():
+    import base64
+    import hashlib
+    lock = json.loads((ROOT / "js.lock.json").read_text(encoding="utf-8"))
+    for entry in lock["files"]:
+        data = (ROOT / entry["destination"]).read_bytes()
+        assert hashlib.sha256(data).hexdigest() == entry["sha256"], entry["name"]
+        assert "sha384-" + base64.b64encode(hashlib.sha384(data).digest()).decode() == entry["sri"]

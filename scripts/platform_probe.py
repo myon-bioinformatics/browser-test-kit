@@ -20,12 +20,15 @@ Exit codes: 0 OK; 1 an environment failed (collect, summary); 2 input error.
 from __future__ import annotations
 
 import argparse
+import functools
 import glob
 import html
 import json
 import os
 import platform
 import sys
+import threading
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 FACTS_SCHEMA = "btk-platform-facts/1"
@@ -63,15 +66,55 @@ def narrowest_ok_width(ok_at, low: int, high: int) -> int | None:
     return high
 
 
+# js-adopt: what the adopted libraries must do in every engine (fixtures load them with SRI).
+# seedrandom('platform-matrix') is an ARC4 stream: the same first value in every engine and OS.
+EXPECTED_SEED = 0.18705921546491625
+
+
+def libs_check(libs: dict | None) -> dict:
+    """Adopted libraries loaded, behaved, and a wrong integrity was refused."""
+    if libs is None:
+        return {"ok": True, "failed": []}
+    failed = []
+    if not libs.get("purify"):
+        failed.append("purify_missing")
+    sanitized = libs.get("sanitized") or ""
+    if "onerror" in sanitized or "<b>ok</b>" not in sanitized:
+        failed.append("sanitize_unsafe")
+    if libs.get("seed") is None or libs["seed"] != EXPECTED_SEED:
+        failed.append("seed_mismatch")
+    if libs.get("sri_refused") is not True:
+        failed.append("sri_not_enforced")
+    return {"ok": not failed, "failed": failed}
+
+
 def verdict(record: dict) -> str:
-    return "pass" if record["layout"]["ok"] and record["click"]["ok"] else "fail"
+    libs = record.get("libs", {"ok": True})
+    return "pass" if record["layout"]["ok"] and record["click"]["ok"] and libs["ok"] else "fail"
+
+
+class _QuietHandler(SimpleHTTPRequestHandler):
+    def log_message(self, *args):  # keep collect output to one line per environment
+        pass
 
 
 def collect(browser_name: str, profile: str, *, headed: bool = False, channel: str | None = None) -> dict:
-    from playwright.sync_api import sync_playwright  # only collect needs a browser
-
     if profile not in PROFILES:
         raise ValueError(f"profile must be one of {sorted(PROFILES)}")
+    # Served over HTTP: SRI (crossorigin) does not work for file:// pages in every engine.
+    server = ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(_QuietHandler, directory=str(ROOT)))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{server.server_port}/{FIXTURE.relative_to(ROOT).as_posix()}"
+    try:
+        return _collect(browser_name, profile, headed=headed, channel=channel, url=url)
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def _collect(browser_name: str, profile: str, *, headed: bool, channel: str | None, url: str) -> dict:
+    from playwright.sync_api import sync_playwright  # only collect needs a browser
+
     with sync_playwright() as pw:
         engine = getattr(pw, browser_name)
         browser = engine.launch(headless=not headed, **({"channel": channel} if channel else {}))
@@ -89,7 +132,7 @@ def collect(browser_name: str, profile: str, *, headed: bool = False, channel: s
                 args.pop("is_mobile", None)  # DEVICE_DESCRIPTOR_CROSS_ENGINE
             context = browser.new_context(**args)
             page = context.new_page()
-            page.goto(FIXTURE.resolve().as_uri())
+            page.goto(url)
             facts = page.evaluate("window.__platformFacts()")
             layout = page.evaluate("window.__layoutChecks()")
             box = page.locator("#action").bounding_box()
@@ -112,7 +155,7 @@ def collect(browser_name: str, profile: str, *, headed: bool = False, channel: s
         "env": {"os": os_name(), "os_release": platform.release(), "runner_image": os.environ.get("ImageOS"),
                 "browser": browser_name, "channel": channel, "browser_version": version,
                 "profile": profile, "device": PROFILES[profile] or "Desktop", "headless": not headed},
-        "facts": facts, "layout": layout,
+        "facts": facts, "layout": layout, "libs": libs_check(facts.get("libs")),
         "click": {"ok": clicks == 1, "count": clicks, "input": "touch" if touch else "mouse", "point": [x, y]},
         "min_ok_width": min_width,
     }
@@ -142,7 +185,7 @@ def summary_lines(records: list[dict]) -> list[str]:
     out = []
     for r in records:
         w, v = r["facts"]["window"], r["facts"]["viewport"]
-        failed = ",".join(r["layout"]["failed"]) or "-"
+        failed = ",".join(r["layout"]["failed"] + r.get("libs", {}).get("failed", [])) or "-"
         out.append(f"{r['verdict']:4} {r['env']['id']:38} v{r['env']['browser_version']} "
                    f"frame={w['frame_width']}x{w['frame_height']} scrollbar={v['scrollbar_width']}/{v.get('scrollbar_classic')} "
                    f"dpr={v['device_pixel_ratio']} sans={r['facts'].get('fonts', {}).get('sans')} "
