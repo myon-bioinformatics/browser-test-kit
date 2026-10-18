@@ -12,6 +12,26 @@ import sys
 from urllib.parse import urlsplit
 
 
+
+_DEFAULT_PORTS = {'http': 80, 'https': 443}
+
+
+def same_origin_key(url):
+    """(scheme, host, effective port) for origin comparison; None when the URL has no host.
+
+    Host names compare case-insensitively and an explicit default port equals the
+    omitted one, so http://LOCALHOST:80/ and http://localhost/ are one origin.
+    """
+    parts = urlsplit(url)
+    scheme = parts.scheme.lower()
+    try:
+        port = parts.port
+    except ValueError:
+        return None
+    if not parts.hostname:
+        return None
+    return (scheme, parts.hostname.lower(), port if port is not None else _DEFAULT_PORTS.get(scheme))
+
 def capture(page, url, selector, timeout_ms, max_bytes, *, aria_snapshot=False):
     response = page.goto(url, wait_until='domcontentloaded', timeout=timeout_ms)
     if response is not None and response.status >= 400:
@@ -68,9 +88,9 @@ def main(argv=None):
                 page.set_default_timeout(args.timeout_ms)
                 blocked = []
                 if args.same_origin_only:
-                    origin = '{0.scheme}://{0.netloc}/'.format(parsed)
+                    origin = same_origin_key(args.url)
                     def route(request_route):
-                        if request_route.request.url.startswith(origin):
+                        if same_origin_key(request_route.request.url) == origin:
                             request_route.continue_()
                         else:
                             blocked.append(request_route.request.url)

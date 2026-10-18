@@ -88,3 +88,33 @@ def test_aria_snapshot_and_same_origin_only(tmp_path):
         assert result['browser_version']
     finally:
         server.shutdown();server.server_close();thread.join(timeout=5)
+
+
+def _capture_module():
+    import importlib.util
+    path = Path(__file__).resolve().parents[2] / 'examples/capture_browser_dom.py'
+    spec = importlib.util.spec_from_file_location('capture_browser_dom', path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize('a, b, same', [
+    ('http://LOCALHOST:8000/a', 'http://localhost:8000/b', True),
+    ('http://example.test:80/', 'http://example.test/x', True),
+    ('https://Example.Test:443/', 'https://example.test/', True),
+    ('http://example.test/', 'https://example.test/', False),
+    ('http://example.test:8080/', 'http://example.test/', False),
+    ('http://example.test/', 'http://example.test.evil/', False),
+    ('http://example.test/', 'http://example.test@evil.test/', False),
+])
+def test_same_origin_key_uses_scheme_host_and_effective_port(a, b, same):
+    key = _capture_module().same_origin_key
+    assert (key(a) == key(b)) is same
+    assert key(a) is not None
+
+
+def test_same_origin_key_without_host_or_with_bad_port():
+    key = _capture_module().same_origin_key
+    assert key('data:text/plain,x') is None
+    assert key('http://example.test:99999/') is None
