@@ -20,7 +20,7 @@ def test_environment_passes_and_records_facts(browser_name, profile):
     record = pp.collect(browser_name, profile)
     RESULTS.mkdir(parents=True, exist_ok=True)
     (RESULTS / f"{record['env']['id']}.json").write_text(pp.json.dumps(record, ensure_ascii=False), encoding="utf-8")
-    assert record["verdict"] == "pass", (record["layout"], record["click"])
+    assert record["verdict"] == "pass", (record["layout"], record["click"], record["libs"], record["facts"]["libs"])
     facts = record["facts"]
     assert facts["window"]["inner_width"] == facts["viewport"]["client_width"] + facts["viewport"]["scrollbar_width"]
     assert record["min_ok_width"] is not None and record["min_ok_width"] <= facts["window"]["inner_width"]

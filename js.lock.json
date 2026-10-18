@@ -1,0 +1,29 @@
+{
+  "schema": "js-adopt/1",
+  "files": [
+    {
+      "name": "purify",
+      "repository": "cure53/DOMPurify",
+      "ref": "3.4.17",
+      "path": "dist/purify.min.js",
+      "url": "https://raw.githubusercontent.com/cure53/DOMPurify/3.4.17/dist/purify.min.js",
+      "destination": "vendor/js/purify.min.js",
+      "bytes": 29828,
+      "sha256": "cd37898f9782adf54820c413191b5691803f0f137c799d6edcfd38523b4c2c31",
+      "sri": "sha384-P0JNneQf81HOl9VwNXK76cQ9VMD6Nfsnepxb0cCOg8+UzEdzgPHAPV4wVQrvYQSx",
+      "license": "MPL-2.0 OR Apache-2.0"
+    },
+    {
+      "name": "seedrandom",
+      "repository": "davidbau/seedrandom",
+      "ref": "3.0.5",
+      "path": "seedrandom.js",
+      "url": "https://raw.githubusercontent.com/davidbau/seedrandom/3.0.5/seedrandom.js",
+      "destination": "vendor/js/seedrandom.js",
+      "bytes": 8602,
+      "sha256": "df5431fa9ba4b311f182a046e60cdd36ae37a1a80f515d6e9b1f568528735047",
+      "sri": "sha384-Qj6XJWUAR0RXLEb7I9aNoEMBOPRraB1dFw5WXtFDYrLgA3N/qQWVtz9YLeo0IZV+",
+      "license": "MIT"
+    }
+  ]
+}

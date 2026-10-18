@@ -41,6 +41,12 @@ body{margin:0;font:16px system-ui,sans-serif;background:#fff;color:#111}
 <footer id="footer">footer</footer>
 <div id="safe"></div>
 <div id="scrollbox" style="position:absolute;left:-200px;top:0;width:100px;height:100px;overflow:scroll"></div>
+<!-- js-adopt: libraries load with the SRI recorded in js.lock.json (python -S js_adopt.py tag NAME --base ../).
+     The third tag carries a deliberately wrong integrity and must be refused by every engine. -->
+<script src="../vendor/js/purify.min.js" integrity="sha384-P0JNneQf81HOl9VwNXK76cQ9VMD6Nfsnepxb0cCOg8+UzEdzgPHAPV4wVQrvYQSx" crossorigin="anonymous"></script>
+<script src="../vendor/js/seedrandom.js" integrity="sha384-Qj6XJWUAR0RXLEb7I9aNoEMBOPRraB1dFw5WXtFDYrLgA3N/qQWVtz9YLeo0IZV+" crossorigin="anonymous"></script>
+<script src="../vendor/js/seedrandom.js" integrity="sha384-OLBgp1GsljhM2TJ+sbHjaiH9txEUvgdDTAzHv2P24donTt6/529l+9Ua0vFImLlb" crossorigin="anonymous"
+        onload="window.__sriRefused=false" onerror="window.__sriRefused=true"></script>
 <script>
 document.getElementById('action').addEventListener('click', e => {
   e.currentTarget.dataset.clicks = String(+e.currentTarget.dataset.clicks + 1);
@@ -94,6 +100,10 @@ window.__platformFacts = () => {
     fonts: { sans: width('16px sans-serif'), serif: width('16px serif'), mono: width('16px monospace'),
              system_ui: width('16px system-ui') },
     action_box: { x: +r.x.toFixed(2), y: +r.y.toFixed(2), width: +r.width.toFixed(2), height: +r.height.toFixed(2) },
+    libs: { purify: window.DOMPurify ? DOMPurify.version : null,
+            sanitized: window.DOMPurify ? DOMPurify.sanitize('<img src=x onerror=alert(1)><b>ok</b>') : null,
+            seed: typeof Math.seedrandom === 'function' ? new Math.seedrandom('platform-matrix')() : null,
+            sri_refused: window.__sriRefused ?? null },
     platform: { ua: navigator.userAgent, platform: navigator.userAgentData?.platform || navigator.platform,
                 mobile: navigator.userAgentData?.mobile ?? null, language: navigator.language },
   };

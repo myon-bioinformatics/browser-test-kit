@@ -9,6 +9,8 @@ on:
     paths:
       - fixtures/platform_probe.html
       - scripts/platform_probe.py
+      - js.lock.json
+      - vendor/js/**
       - .github/workflows/platform-matrix.yml
 
 permissions:

@@ -179,6 +179,7 @@ python -S scripts/platform_probe.py render platform-results --out matrix.html
 - `matrix.html` is self-contained: tab rows for OS, browser (engine or channel), device and mode. Switching a tab highlights every value that changed from the previous selection; `*` marks values that differ anywhere in the dataset; a scaled diagram shows screen, available area, window, viewport and scrollbar.
 - `.github/workflows/platform-matrix.yml` runs every engine × profile × mode on `ubuntu-24.04`, `windows-latest` and `macos-latest` (plus branded `chrome`/`msedge` where installed), prints one `::notice` per environment, and uploads the merged `platform-matrix` artifact (`dataset.json`, `index.html`).
 - Profiles are emulations (`MOBILE_VIEWPORT_ONLY`), and Playwright WebKit is not Safari (`SAFARI_EQUALS_WEBKIT`). Engines are compared by pass/fail and properties, not equal numbers (`CROSS_ENGINE_PIXEL_EQUALITY`).
+- Adopted third-party JS (`js-adopt`, see the parent's `js_adopt.py`) is checked here too: the fixture loads every file in `js.lock.json` with its SRI, and an environment passes only if DOMPurify sanitizes, seedrandom returns the same first value as every other engine, and a tag with a deliberately wrong `integrity` is refused. `collect` serves the fixture over a local HTTP server because SRI with `crossorigin` does not apply to `file://` pages.
 - Only `collect` needs Playwright. Exit codes: 0 OK; 1 an environment failed; 2 input error.
 
 ### Planned sequence
