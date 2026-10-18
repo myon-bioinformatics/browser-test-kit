@@ -62,3 +62,29 @@ def test_selector_mismatch_does_not_save(tmp_path, selector, code, error):
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+@pytest.mark.browser
+def test_aria_snapshot_and_same_origin_only(tmp_path):
+    (tmp_path/'index.html').write_text(
+        '<!doctype html><meta charset="utf-8"><style>a::before{content:"["}a::after{content:"]"}</style>'
+        '<main id="body"><a href="/x">GitHub</a><button aria-label="Delete">\U0001F5D1\ufe0f</button>'
+        '<img src="https://example.invalid/pixel.png" alt="Logo"></main>', encoding='utf-8')
+    handler=functools.partial(SimpleHTTPRequestHandler,directory=str(tmp_path))
+    server=ThreadingHTTPServer(('127.0.0.1',0),handler)
+    thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+    try:
+        script=Path(__file__).resolve().parents[2]/'examples/capture_browser_dom.py'
+        output=tmp_path/'capture.json'
+        run=subprocess.run([sys.executable,str(script),f'http://127.0.0.1:{server.server_port}/index.html',
+                            '--selector','#body','--output',str(output),'--aria-snapshot','--same-origin-only'],
+                           capture_output=True,text=True,timeout=90)
+        assert run.returncode==0,run.stderr
+        result=json.loads(output.read_text(encoding='utf-8'))
+        # CSS generated content is part of the browser's accessible name, not of the HTML.
+        assert '- link "[GitHub]"' in result['aria_snapshot']
+        assert '- button "Delete"' in result['aria_snapshot'] and '- img "Logo"' in result['aria_snapshot']
+        assert result['blocked_requests']==['https://example.invalid/pixel.png']
+        assert result['browser_version']
+    finally:
+        server.shutdown();server.server_close();thread.join(timeout=5)

@@ -17,6 +17,18 @@ Limits apply per operation and to selected output after collection, not all
 network traffic/memory. Existing evidence files are not overwritten. Exit 0 means
 captured, 1 ambiguous selection, 2 error. `--headed` shows the temporary browser.
 
+`--aria-snapshot` also stores the selected element's Playwright aria snapshot (roles
+and the browser's accessible names, including CSS generated content such as
+`::before`), so static readers can be compared with the browser. BlueProbe's
+`accessible_names.compare_aria_snapshot()` uses it on its `tests/cases/pages/` corpus.
+`--same-origin-only` aborts requests to other origins (badges, analytics, fonts) and
+lists them in `blocked_requests`; the captured page then depends only on the served
+commit. `browser_version` is always recorded.
+
+```sh
+python examples/capture_browser_dom.py http://127.0.0.1:8000/index.html --aria-snapshot --same-origin-only --output page.json
+```
+
 Use existing `scripts/page_text.py` for static extraction without a browser.
 GHI's selected-body HTML reader remains a separate downstream consumer. No GHI
 import or vendor update is required here. Local fixture coverage runs in the
