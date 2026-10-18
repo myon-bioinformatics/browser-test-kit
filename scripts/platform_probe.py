@@ -145,7 +145,8 @@ def summary_lines(records: list[dict]) -> list[str]:
         failed = ",".join(r["layout"]["failed"]) or "-"
         out.append(f"{r['verdict']:4} {r['env']['id']:38} v{r['env']['browser_version']} "
                    f"frame={w['frame_width']}x{w['frame_height']} scrollbar={v['scrollbar_width']}/{v.get('scrollbar_classic')} "
-                   f"dpr={v['device_pixel_ratio']} min_ok_width={r['min_ok_width']} failed={failed}")
+                   f"dpr={v['device_pixel_ratio']} sans={r['facts'].get('fonts', {}).get('sans')} "
+                   f"min_ok_width={r['min_ok_width']} failed={failed}")
     return out
 
 
