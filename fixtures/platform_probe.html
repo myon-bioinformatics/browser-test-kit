@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>platform probe</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;font:16px system-ui,sans-serif;background:#fff;color:#111}
+#header{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding:8px 12px;border-bottom:1px solid #ccc}
+#header h1{font-size:18px;margin:0;white-space:nowrap}
+/* The toolbar moves to its own row on narrow screens but never wraps inside: its text width
+   (which depends on the OS fonts) decides the narrowest width the layout survives. */
+#toolbar{display:flex;gap:6px;white-space:nowrap;overflow:hidden;margin-left:auto}
+#toolbar button{font:inherit;padding:4px 10px}
+#layout{display:grid;grid-template-columns:180px 1fr;gap:12px;padding:12px}
+@media (max-width:640px){#layout{grid-template-columns:1fr}#nav{display:flex;gap:8px;flex-wrap:wrap}}
+#nav a{display:block;padding:4px 0;color:#0645ad}
+#cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px}
+.card{border:1px solid #ccc;border-radius:6px;padding:10px;min-width:0}
+.card h2{font-size:16px;margin:0 0 6px;white-space:nowrap;overflow:hidden}
+#action{font:inherit;padding:10px 16px;margin:12px}
+#footer{position:sticky;bottom:0;background:#f4f4f4;border-top:1px solid #ccc;padding:6px 12px}
+/* safe-area insets are only readable through CSS env(); mirror them into padding. */
+#safe{position:fixed;inset:0;pointer-events:none;visibility:hidden;
+  padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px)}
+</style></head>
+<body>
+<header id="header"><h1>Platform probe</h1>
+  <div id="toolbar"><button type="button">開く</button><button type="button">保存</button><button type="button">共有</button><button type="button">設定</button></div>
+</header>
+<div id="layout">
+  <nav id="nav"><a href="#a">概要</a><a href="#b">座標</a><a href="#c">ウインドウ</a></nav>
+  <main id="main">
+    <div id="cards">
+      <section class="card"><h2>画面とウインドウ</h2><p>screen / outer / inner</p></section>
+      <section class="card"><h2>ビューポート</h2><p>visualViewport / scrollbar</p></section>
+      <section class="card"><h2>入力</h2><p>pointer / hover / touch</p></section>
+    </div>
+    <button id="action" type="button" data-clicks="0">押す</button>
+  </main>
+</div>
+<footer id="footer">footer</footer>
+<div id="safe"></div>
+<div id="scrollbox" style="position:absolute;left:-200px;top:0;width:100px;height:100px;overflow:scroll"></div>
+<script>
+document.getElementById('action').addEventListener('click', e => {
+  e.currentTarget.dataset.clicks = String(+e.currentTarget.dataset.clicks + 1);
+});
+
+// Layout verdict: every rule is a property, not a pixel value, so engines can differ in
+// numbers and still pass (CROSS_ENGINE_PIXEL_EQUALITY).
+window.__layoutChecks = () => {
+  const de = document.documentElement, failed = [];
+  const rect = id => document.getElementById(id).getBoundingClientRect();
+  if (de.scrollWidth > de.clientWidth) failed.push('horizontal_overflow');
+  const tb = document.getElementById('toolbar');
+  if (tb.scrollWidth > tb.clientWidth + 0.5) failed.push('toolbar_clipped');
+  for (const h of document.querySelectorAll('.card h2'))
+    if (h.scrollWidth > h.clientWidth + 0.5) { failed.push('heading_clipped'); break; }
+  const boxes = ['header', 'nav', 'main'].map(rect);
+  for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) {
+    const a = boxes[i], b = boxes[j];
+    const overlap = Math.min(a.right, b.right) - Math.max(a.left, b.left) > 0.5 &&
+                    Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 0.5;
+    if (overlap) { failed.push('overlap'); i = boxes.length; break; }
+  }
+  const btn = rect('action');
+  if (btn.left < 0 || btn.right > de.clientWidth) failed.push('action_outside');
+  return { ok: failed.length === 0, failed };
+};
+
+window.__platformFacts = () => {
+  const de = document.documentElement, vv = window.visualViewport, s = screen;
+  const mq = q => matchMedia(q).matches;
+  const safe = getComputedStyle(document.getElementById('safe'));
+  const ctx = document.createElement('canvas').getContext('2d');
+  const width = font => { ctx.font = font; return +ctx.measureText('Hamburgefonstiv 日本語 0123').width.toFixed(2); };
+  const r = document.getElementById('action').getBoundingClientRect();
+  return {
+    screen: { width: s.width, height: s.height, avail_width: s.availWidth, avail_height: s.availHeight,
+              avail_left: s.availLeft ?? null, avail_top: s.availTop ?? null, color_depth: s.colorDepth },
+    window: { outer_width: outerWidth, outer_height: outerHeight, inner_width: innerWidth, inner_height: innerHeight,
+              screen_x: screenX, screen_y: screenY,
+              frame_width: outerWidth - innerWidth, frame_height: outerHeight - innerHeight },
+    viewport: { client_width: de.clientWidth, client_height: de.clientHeight,
+                scrollbar_width: innerWidth - de.clientWidth,
+                // Classic scrollbars take width; overlay scrollbars (macOS default, mobile) take none.
+                scrollbar_classic: (b => b.offsetWidth - b.clientWidth)(document.getElementById('scrollbox')),
+                visual_width: vv ? +vv.width.toFixed(2) : null, visual_height: vv ? +vv.height.toFixed(2) : null,
+                visual_scale: vv ? vv.scale : null, device_pixel_ratio: devicePixelRatio },
+    safe_area: { top: safe.paddingTop, right: safe.paddingRight, bottom: safe.paddingBottom, left: safe.paddingLeft },
+    input: { pointer_fine: mq('(pointer: fine)'), pointer_coarse: mq('(pointer: coarse)'), hover: mq('(hover: hover)'),
+             max_touch_points: navigator.maxTouchPoints },
+    preference: { dark: mq('(prefers-color-scheme: dark)'), reduced_motion: mq('(prefers-reduced-motion: reduce)') },
+    fonts: { sans: width('16px sans-serif'), serif: width('16px serif'), mono: width('16px monospace'),
+             system_ui: width('16px system-ui') },
+    action_box: { x: +r.x.toFixed(2), y: +r.y.toFixed(2), width: +r.width.toFixed(2), height: +r.height.toFixed(2) },
+    platform: { ua: navigator.userAgent, platform: navigator.userAgentData?.platform || navigator.platform,
+                mobile: navigator.userAgentData?.mobile ?? null, language: navigator.language },
+  };
+};
+</script>
+</body></html>

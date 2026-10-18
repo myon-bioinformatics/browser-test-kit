@@ -165,6 +165,22 @@ Run these existing comparisons without downloading browsers: `npm ci --ignore-sc
 The same JSON catalog supports stable `@id` names and readiness markers; Python
 sync/async and dependency-light Node execution reuse one Page for the whole trail.
 
+### OS × browser × device comparison (`scripts/platform_probe.py`, `platform-matrix`)
+
+Opens `fixtures/platform_probe.html` in one environment and records `btk-platform-facts/1`: screen and available area, window outer/inner size (the difference is the window frame, real only with `--headed`), scrollbar width (page and an always-scrolling probe, so overlay scrollbars show as 0), `devicePixelRatio`, `visualViewport`, safe-area insets, pointer/hover/touch, measured font widths, platform and browser version. An environment **passes** when the layout holds (no horizontal overflow, no overlap, nothing clipped) and a real click — a tap on touch profiles — at the integer centre of the button registers. `min_ok_width` is the narrowest viewport width where the layout still holds, found by binary search (≤ 13 probes).
+
+```bash
+python scripts/platform_probe.py collect --browser webkit --profile iphone --out platform-results
+xvfb-run -a python scripts/platform_probe.py collect --browser chromium --headed --out platform-results
+python -S scripts/platform_probe.py summary platform-results            # one line each; exit 1 if any fail
+python -S scripts/platform_probe.py render platform-results --out matrix.html
+```
+
+- `matrix.html` is self-contained: tab rows for OS, browser (engine or channel), device and mode. Switching a tab highlights every value that changed from the previous selection; `*` marks values that differ anywhere in the dataset; a scaled diagram shows screen, available area, window, viewport and scrollbar.
+- `.github/workflows/platform-matrix.yml` runs every engine × profile × mode on `ubuntu-24.04`, `windows-latest` and `macos-latest` (plus branded `chrome`/`msedge` where installed), prints one `::notice` per environment, and uploads the merged `platform-matrix` artifact (`dataset.json`, `index.html`).
+- Profiles are emulations (`MOBILE_VIEWPORT_ONLY`), and Playwright WebKit is not Safari (`SAFARI_EQUALS_WEBKIT`). Engines are compared by pass/fail and properties, not equal numbers (`CROSS_ENGINE_PIXEL_EQUALITY`).
+- Only `collect` needs Playwright. Exit codes: 0 OK; 1 an environment failed; 2 input error.
+
 ### Planned sequence
 
 1. Documentation/evidence contract.
