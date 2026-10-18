@@ -144,8 +144,7 @@ def test_push_with_retry_never_prompts_and_is_bounded(monkeypatch) -> None:
     kwargs = run.calls[0][1]
     assert kwargs["timeout"] == git_commit.PUSH_TIMEOUT_SECONDS and kwargs["stdin"] is subprocess.DEVNULL
     env = kwargs["env"]
-    assert (env["GIT_TERMINAL_PROMPT"], env["GCM_INTERACTIVE"], env["GIT_SSH_COMMAND"]) == (
-        "0", "never", "ssh -o BatchMode=yes")
+    assert (env["GIT_TERMINAL_PROMPT"], env["GCM_INTERACTIVE"], env["GIT_ASKPASS"]) == ("0", "never", "")
     attempts = []
 
     def hang_once(argv, **kw):
@@ -156,6 +155,21 @@ def test_push_with_retry_never_prompts_and_is_bounded(monkeypatch) -> None:
     sleeps: list = []
     assert git_commit.push_with_retry(run=hang_once, sleep=sleeps.append, timeout=5) == (True, "done")
     assert attempts == [5, 5] and sleeps == [2.0]
+
+
+def test_push_adapter_forwards_the_total_budget_to_canonical_parent(monkeypatch):
+    seen = {}
+
+    def parent(**kwargs):
+        seen.update(kwargs)
+        return False, "parent deadline report"
+
+    monkeypatch.setattr(git_commit.gh_ops, "git_commit_push_with_retry", parent)
+    run, sleep, clock = object(), object(), object()
+    assert git_commit.push_with_retry(run=run, sleep=sleep, monotonic=clock,
+                                      timeout=7, total_timeout=19) == (False, "parent deadline report")
+    assert seen == {"delays": git_commit.PUSH_RETRY_DELAYS, "run": run, "sleep": sleep,
+                    "monotonic": clock, "timeout": 7, "total_timeout": 19}
 
 
 def test_cli_stages_only_named_files_prints_status_diff_and_sha(tmp_path: Path) -> None:

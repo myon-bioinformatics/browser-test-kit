@@ -28,6 +28,7 @@ staged files without --allow-staged).
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import os
 import subprocess
 import sys
@@ -37,14 +38,22 @@ from typing import Callable
 
 Runner = Callable[..., "subprocess.CompletedProcess[str]"]
 
-NETWORK_ERROR_HINTS = (
-    "could not resolve host", "connection timed out", "connection refused", "network is unreachable",
-    "temporary failure in name resolution", "could not read from remote repository",
-    "the remote end hung up unexpectedly", "early eof", "rpc failed", "failed to connect",
-    "operation timed out", "connection reset", "ssl_read", "no route to host", "socket is not connected",
-)
 
-PUSH_RETRY_DELAYS: tuple[float, ...] = (2.0, 4.0, 8.0, 16.0)
+def _canonical_ops():
+    """Load the adjacent locked parent implementation without a sys.path fallback."""
+    path = Path(__file__).with_name("gh_ops.py")
+    spec = importlib.util.spec_from_file_location("_git_commit_parent_ops", path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load canonical gh_ops from {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+gh_ops = _canonical_ops()
+NETWORK_ERROR_HINTS = gh_ops._GIT_COMMIT_NETWORK_HINTS
+PUSH_RETRY_DELAYS = gh_ops._GIT_COMMIT_PUSH_DELAYS
 
 
 def _run(argv: list[str], run: Runner, **kwargs) -> "subprocess.CompletedProcess[str]":
@@ -87,41 +96,27 @@ def build_message(base: str, trailers: list[str]) -> str:
 
 
 def _looks_like_network_error(text: str) -> bool:
-    lowered = text.lower()
-    return any(hint in lowered for hint in NETWORK_ERROR_HINTS)
+    return gh_ops._git_commit_looks_like_network_error(text)
 
 
-PUSH_TIMEOUT_SECONDS = 300.0
+PUSH_TIMEOUT_SECONDS = gh_ops._GIT_PUSH_ATTEMPT_TIMEOUT
+PUSH_TOTAL_TIMEOUT_SECONDS = gh_ops._GIT_NETWORK_TIMEOUT
 
 
 def _push_env() -> dict:
     """fetch-guard: a push never waits for a credential or SSH prompt."""
-    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"}
-    env.setdefault("GIT_SSH_COMMAND", "ssh -o BatchMode=yes")
-    return env
+    return gh_ops._git_network_env()
 
 
 def push_with_retry(*, delays: tuple[float, ...] = PUSH_RETRY_DELAYS, run: Runner = subprocess.run,
                     sleep: Callable[[float], None] = time.sleep,
-                    timeout: float = PUSH_TIMEOUT_SECONDS) -> tuple[bool, str]:
-    """``git push origin HEAD``, retrying only network-looking failures. Never forces.
-
-    Each attempt is non-interactive and ends within ``timeout`` seconds; a timed-out
-    attempt counts as a network error and is retried while delays remain.
-    """
-    remaining = list(delays)
-    while True:
-        try:
-            done = _run(["git", "push", "origin", "HEAD"], run, timeout=timeout, env=_push_env(),
-                        stdin=subprocess.DEVNULL)
-            output = done.stdout + done.stderr
-        except subprocess.TimeoutExpired:
-            done, output = None, f"git push: operation timed out after {timeout:g}s"
-        if done is not None and done.returncode == 0:
-            return True, output
-        if not remaining or not _looks_like_network_error(output):
-            return False, output
-        sleep(remaining.pop(0))
+                    timeout: float = PUSH_TIMEOUT_SECONDS,
+                    total_timeout: float = PUSH_TOTAL_TIMEOUT_SECONDS,
+                    monotonic: Callable[[], float] = time.monotonic) -> tuple[bool, str]:
+    """Delegate push/retry/deadline/auth policy to the locked canonical parent."""
+    return gh_ops.git_commit_push_with_retry(delays=delays, run=run, sleep=sleep,
+                                             timeout=timeout, total_timeout=total_timeout,
+                                             monotonic=monotonic)
 
 
 def main(argv: list[str] | None = None, *, run: Runner = subprocess.run,

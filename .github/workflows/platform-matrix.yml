@@ -98,6 +98,8 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
+          # Markdown backticks are literal text, not shell command substitutions.
+          # shellcheck disable=SC2016
           body="$(printf '<!-- platform-matrix -->\n### platform-matrix\n\nTabbed viewer: artifact `platform-matrix` (index.html) of [this run](%s).\n\n```text\n%s\n```\n' \
             "$RUN_URL" "$(cat platform-matrix/summary.txt)")"
           id=$(timeout 60 gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate \
