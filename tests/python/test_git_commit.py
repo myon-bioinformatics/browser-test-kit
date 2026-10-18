@@ -135,6 +135,29 @@ def test_push_with_retry_does_not_retry_non_network_errors() -> None:
 
 # --- main(): end-to-end against a real temp git repo -----------------------
 
+def test_push_with_retry_never_prompts_and_is_bounded(monkeypatch) -> None:
+    """fetch-guard: no credential/SSH prompt, a deadline per attempt, a timeout is retried."""
+    for name in ("GIT_TERMINAL_PROMPT", "GCM_INTERACTIVE", "GIT_SSH_COMMAND"):
+        monkeypatch.delenv(name, raising=False)
+    run = FakeRun([(0, "ok\n", "")])
+    assert git_commit.push_with_retry(run=run, sleep=lambda s: None) == (True, "ok\n")
+    kwargs = run.calls[0][1]
+    assert kwargs["timeout"] == git_commit.PUSH_TIMEOUT_SECONDS and kwargs["stdin"] is subprocess.DEVNULL
+    env = kwargs["env"]
+    assert (env["GIT_TERMINAL_PROMPT"], env["GCM_INTERACTIVE"], env["GIT_SSH_COMMAND"]) == (
+        "0", "never", "ssh -o BatchMode=yes")
+    attempts = []
+
+    def hang_once(argv, **kw):
+        attempts.append(kw["timeout"])
+        if len(attempts) == 1:
+            raise subprocess.TimeoutExpired(argv, kw["timeout"])
+        return subprocess.CompletedProcess(argv, 0, "done", "")
+    sleeps: list = []
+    assert git_commit.push_with_retry(run=hang_once, sleep=sleeps.append, timeout=5) == (True, "done")
+    assert attempts == [5, 5] and sleeps == [2.0]
+
+
 def test_cli_stages_only_named_files_prints_status_diff_and_sha(tmp_path: Path) -> None:
     init_repo(tmp_path)
     (tmp_path / "a.txt").write_text("changed\n", encoding="utf-8")

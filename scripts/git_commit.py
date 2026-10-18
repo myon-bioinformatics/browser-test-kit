@@ -91,14 +91,33 @@ def _looks_like_network_error(text: str) -> bool:
     return any(hint in lowered for hint in NETWORK_ERROR_HINTS)
 
 
+PUSH_TIMEOUT_SECONDS = 300.0
+
+
+def _push_env() -> dict:
+    """fetch-guard: a push never waits for a credential or SSH prompt."""
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"}
+    env.setdefault("GIT_SSH_COMMAND", "ssh -o BatchMode=yes")
+    return env
+
+
 def push_with_retry(*, delays: tuple[float, ...] = PUSH_RETRY_DELAYS, run: Runner = subprocess.run,
-                    sleep: Callable[[float], None] = time.sleep) -> tuple[bool, str]:
-    """``git push origin HEAD``, retrying only network-looking failures. Never forces."""
+                    sleep: Callable[[float], None] = time.sleep,
+                    timeout: float = PUSH_TIMEOUT_SECONDS) -> tuple[bool, str]:
+    """``git push origin HEAD``, retrying only network-looking failures. Never forces.
+
+    Each attempt is non-interactive and ends within ``timeout`` seconds; a timed-out
+    attempt counts as a network error and is retried while delays remain.
+    """
     remaining = list(delays)
     while True:
-        done = _run(["git", "push", "origin", "HEAD"], run)
-        output = done.stdout + done.stderr
-        if done.returncode == 0:
+        try:
+            done = _run(["git", "push", "origin", "HEAD"], run, timeout=timeout, env=_push_env(),
+                        stdin=subprocess.DEVNULL)
+            output = done.stdout + done.stderr
+        except subprocess.TimeoutExpired:
+            done, output = None, f"git push: operation timed out after {timeout:g}s"
+        if done is not None and done.returncode == 0:
             return True, output
         if not remaining or not _looks_like_network_error(output):
             return False, output
