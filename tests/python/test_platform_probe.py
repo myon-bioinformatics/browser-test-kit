@@ -92,3 +92,14 @@ def test_errors_become_actions_annotations(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("GITHUB_ACTIONS", "true")
     assert pp.main(["summary", str(tmp_path)]) == 2
     assert "::error title=platform_probe summary::ValueError" in capsys.readouterr().out
+
+
+def test_collect_failure_is_reported_with_the_environment(tmp_path, monkeypatch, capsys):
+    def boom(*args, **kwargs):
+        raise RuntimeError("Browser closed unexpectedly\n  stack line")
+    monkeypatch.setattr(pp, "collect", boom)
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    assert pp.main(["collect", "--browser", "webkit", "--profile", "iphone", "--headed", "--out", str(tmp_path)]) == 2
+    out = capsys.readouterr().out
+    assert "::error title=platform_probe collect::webkit iphone headed: RuntimeError: Browser closed unexpectedly" in out
+    assert "stack line" not in out

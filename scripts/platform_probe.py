@@ -284,7 +284,16 @@ def main(argv=None) -> int:
         if args.command == "collect":
             if args.channel and args.browser != "chromium":
                 raise ValueError("--channel needs --browser chromium")
-            record = collect(args.browser, args.profile, headed=args.headed, channel=args.channel)
+            try:
+                record = collect(args.browser, args.profile, headed=args.headed, channel=args.channel)
+            except Exception as exc:  # a browser that cannot launch or navigate is a finding, not a crash
+                where = f"{args.browser}{'/' + args.channel if args.channel else ''} {args.profile}" \
+                        f"{' headed' if args.headed else ''}"
+                first = str(exc).strip().splitlines()[0][:300] if str(exc).strip() else ""
+                print(f"error: {where}: {type(exc).__name__}: {first}", file=sys.stderr)
+                if os.environ.get("GITHUB_ACTIONS"):
+                    print(f"::error title=platform_probe collect::{where}: {type(exc).__name__}: {first}")
+                return 2
             Path(args.out).mkdir(parents=True, exist_ok=True)
             path = Path(args.out) / f"{record['env']['id']}.json"
             path.write_text(json.dumps(record, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
