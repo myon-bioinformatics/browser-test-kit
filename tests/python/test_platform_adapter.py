@@ -202,3 +202,10 @@ def test_manual_runs_can_switch_grid_and_widths_while_schedule_keeps_defaults():
     apps = (ROOT / '.github/workflows/platform-apps.yml').read_text()
     assert "WIDTH_STEP: ${{ inputs.width_step || '8' }}" in apps and "WIDTHS: ${{ inputs.widths || '320 384' }}" in apps
     assert '--widths "${widths[@]}" --width-step "$WIDTH_STEP"' in apps and '^[0-9]+( [0-9]+)*$' in apps
+
+
+def test_report_publishes_a_small_digest_and_a_pr_summary():
+    apps = (ROOT / '.github/workflows/platform-apps.yml').read_text()
+    assert 'scripts/app_digest.py app-results --ironmate .ironmate' in apps and 'name: platform-app-digest' in apps
+    assert 'pull-requests: write' in apps and 'startswith("<!-- platform-apps-digest -->")' in apps
+    assert "github.event.pull_request.head.repo.full_name == github.repository" in apps

@@ -104,6 +104,9 @@ jobs:
     needs: [plan, published-flutter]
     if: always()
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: write  # one updated digest comment on same-repository pull requests
     steps:
       - uses: actions/checkout@v7
         with:
@@ -156,6 +159,39 @@ jobs:
             --report app-matrix/screenshots/report.json --dataset app-matrix/dataset.json --embed-css \
             > app-matrix/screenshots/viewer.html
           echo 'Page viewer: artifact platform-app-matrix/screenshots/viewer.html' >> "$GITHUB_STEP_SUMMARY"
+      # A small single-page digest (thumbnails as data URIs, shrunk to a quarter until it fits
+      # 1 MB) plus a Markdown summary, so a run can be reviewed without the full artifact.
+      - name: Digest (one small page and a summary)
+        id: digest
+        if: always()
+        env:
+          RUNNERS_JSON: ${{ needs.plan.outputs.os }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python -S scripts/app_digest.py app-results --ironmate .ironmate --runners-json "$RUNNERS_JSON" \
+            --out app-digest --run-url "$RUN_URL"
+          cat app-digest/summary.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        if: always() && steps.digest.outcome == 'success'
+        with:
+          name: platform-app-digest
+          path: app-digest
+          retention-days: 30
+      - name: Comment the digest summary on the PR
+        if: always() && steps.digest.outcome == 'success' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_PROMPT_DISABLED: "1"
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          body="$(cat app-digest/summary.md)"
+          id=$(timeout 60 gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate \
+            --jq '.[] | select(.body | startswith("<!-- platform-apps-digest -->")) | .id' | tail -n 1)
+          if [ -n "$id" ]; then
+            timeout 60 gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -f body="$body" > /dev/null
+          else
+            timeout 60 gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" -f body="$body" > /dev/null
+          fi
       - uses: actions/upload-artifact@v7
         if: always()
         with:

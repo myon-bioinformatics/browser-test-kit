@@ -34,6 +34,13 @@ the report job adds web-ui's `tool/capture_matrix.py` at a pinned merged commit:
 environment's tile, pass/fail and deployed build. Update the web-ui SHA together with its
 test when the viewer changes.
 
+For a quick review the report job also writes `platform-app-digest`, a separate small
+artifact: `digest.html` is one self-contained page (every page x environment, thumbnail as
+a data URI, pass/fail, failure reasons, deployed build), with thumbnails starting at 64x128
+px and halved in each direction (a quarter of the pixels) until the page fits 1 MB, and
+`summary.md`, a short table that also goes to the job summary and to one updated comment
+on same-repository pull requests. The full matrix artifact stays for detailed checks.
+
 This is deliberately a selected-control contract, not a guarantee for every screen,
 all painted text, or every app feature. Flutter's invisible semantics labels do not
 have the same glyph metrics as its canvas. Their `scrollWidth` is not treated as
