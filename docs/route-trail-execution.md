@@ -180,3 +180,28 @@ API hooks, not a new CLI screenshot flag. For an installed kit, omit
 `PYTHONPATH=scripts`. Existing sync/async Python and Node browser matrix tests
 capture each step and check that actual PNG files were produced; Node retains
 them in its CI artifact. This validates capture, not visual-baseline comparison.
+
+
+### Execution URL contract (Python and Node)
+
+The full plan is checked before navigation or a runtime subprocess starts. Both
+twins accept HTTP(S) with ASCII DNS labels (including localhost and a trailing
+dot), canonical four-octet decimal IPv4, or bracketed IPv6 without a zone ID.
+An explicit destination port must be **1..65535**: 65535 is accepted; 0, 65536,
+and 99999 are rejected. Port 0 is reserved and is not a supported destination.
+Legacy shortened, octal, and hexadecimal IPv4 spellings are rejected.
+
+Host labels must be 1..63 characters, cannot start/end with a hyphen, and the
+host without its optional trailing dot is at most 253 characters. Unicode
+hosts and `xn--` IDN labels are deliberately unsupported until a shared IDNA
+implementation exists; Python's IDNA2003 and WHATWG do not share a contract.
+This tightens the previously proposed Unicode-host acceptance in twin-parity.
+Unicode remains supported in paths, queries and fragments. URL length is at
+most 4096 Unicode code points in both runtimes.
+
+Credentials, empty/malformed authorities, controls, Unicode whitespace, and
+backslashes are rejected. Local absolute `file:///path` and
+`file://localhost/path` URLs are also accepted. A passing preflight establishes
+syntax and supported address forms; DNS resolution, file existence, service
+availability and browser-specific blocked ports remain runtime concerns.
+The existing exact observed-URL verification still applies after navigation.

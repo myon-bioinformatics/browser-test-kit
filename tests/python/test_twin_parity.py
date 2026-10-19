@@ -99,8 +99,8 @@ def test_validate_steps_twins_agree_on_every_url_and_step_shape():
     results = assert_twins_agree(route_trail.validate_steps, "route_trail_node.mjs", "validateSteps", url_cases())
     accepted = {cases[0][0]["url"] for cases, r in zip(url_cases(), results) if r["ok"] and isinstance(cases[0], list)
                 and cases[0] and isinstance(cases[0][0], dict) and "ready" not in cases[0][0]}
-    assert {"HTTP://A/", "file://localhost/tmp/x", "http://[::1]:80/", "https://例え.jp/"} <= accepted
-    assert not {" http://a/", "http://a b/", "http:///..", "file://", "file:/tmp/x", "http://a/\n"} & accepted
+    assert {"HTTP://A/", "file://localhost/tmp/x", "http://[::1]:80/"} <= accepted
+    assert not {" http://a/", "http://a b/", "http:///..", "file://", "file:/tmp/x", "http://a/\n", "https://例え.jp/", "http://a:99999/"} & accepted
 
 
 def test_execution_url_regex_is_the_same_source_in_both_twins():

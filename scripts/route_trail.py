@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import ipaddress
 import re
 import sys
 
@@ -100,13 +101,44 @@ def resolve(trail: str, registry: dict, *, base: str = "http://localhost:8080/",
 
 
 MAX_STEPS = 1000
-# Shared with route_trail_node.mjs EXECUTION_URL: the same regex source, character for
-# character (tests compare them), used with fullmatch here and ^...$ there. Scheme is
-# case-insensitive; no ASCII controls, spaces or backslashes anywhere; HTTP(S) needs a host without
-# credentials, '%' or brackets (an IPv6 literal is the only bracketed form) and an optional numeric
-# port; file URLs are local absolute paths (file:///path or file://localhost/path).
-EXECUTION_URL_SOURCE = r'^(?:[Hh][Tt][Tt][Pp][Ss]?:\/\/(?:[^\x00-\x20\x7f/?#@\\%:\[\]]+|\[[0-9A-Fa-f:.]+\])(?::[0-9]{1,5})?(?:[/?#][^\x00-\x20\x7f\\]*)?|[Ff][Ii][Ll][Ee]:\/\/(?:[Ll][Oo][Cc][Aa][Ll][Hh][Oo][Ss][Tt])?\/[^\x00-\x20\x7f\\]*)$'
+# Shared grammar with route_trail_node.mjs (TWIN_PARSER_DRIFT). The match only
+# splits the URL; _execution_url also checks host semantics and destination port.
+# Deliberately supported hosts: ASCII DNS, canonical dotted IPv4, bracketed IPv6.
+# IDN/ACE labels are excluded until both twins have the same IDNA implementation.
+EXECUTION_URL_SOURCE = r'^(?:([Hh][Tt][Tt][Pp][Ss]?):\/\/([A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])(?::([0-9]{1,5}))?(?:[/?#][^\x00-\x20\x7f-\x9f\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\\]*)?|[Ff][Ii][Ll][Ee]:\/\/(?:[Ll][Oo][Cc][Aa][Ll][Hh][Oo][Ss][Tt])?\/[^\x00-\x20\x7f-\x9f\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\\]*)$'
 EXECUTION_URL = re.compile(EXECUTION_URL_SOURCE)
+
+
+def _execution_url(url):
+    match = EXECUTION_URL.fullmatch(url)
+    if not match:
+        return False
+    scheme, host, port = match.groups()
+    if scheme is None:  # Local absolute file URL; no authority or port.
+        return True
+    if port is not None and not 1 <= int(port) <= 65535:
+        return False  # Port 0 is not a destination service.
+    if host.startswith('['):
+        try:
+            ipaddress.IPv6Address(host[1:-1])
+            return True
+        except ValueError:
+            return False
+    dns = host[:-1] if host.endswith('.') else host
+    if not dns or len(dns) > 253:
+        return False
+    labels = dns.lower().split('.')
+    if any(not re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?', label)
+           or label.startswith('xn--') for label in labels):
+        return False
+    # WHATWG treats a numeric/hex final label as IPv4, even in a DNS-looking name.
+    # Accept only the canonical four-octet spelling, never legacy/octal/hex forms.
+    if re.fullmatch(r'[0-9]+|0x[0-9a-f]*', labels[-1]):
+        return (len(labels) == 4 and all(re.fullmatch(r'0|[1-9][0-9]{0,2}', label)
+                                       and int(label) <= 255 for label in labels))
+    return True
+
+
 MAX_TIMEOUT = 120000
 
 
@@ -156,7 +188,6 @@ def _catalog(data):
 
 def validate_steps(steps, timeout_ms=10000):
     """Validate the entire plan before any navigation. No Playwright import."""
-    from urllib.parse import urlsplit
     if type(timeout_ms) is not int or not 1 <= timeout_ms <= MAX_TIMEOUT:
         raise ValueError('timeout_ms must be an integer 1..120000')
     if not isinstance(steps, list) or not 1 <= len(steps) <= MAX_STEPS:
@@ -168,8 +199,8 @@ def validate_steps(steps, timeout_ms=10000):
             raise ValueError('step requires emoji, route and url strings')
         url = step['url']
         # One explicit rule shared with route_trail_node.mjs (EXECUTION_URL): each language's own
-        # URL parser (urlsplit vs WHATWG URL) accepts and repairs different inputs (PARSER_PARITY).
-        if len(url) > 4096 or not EXECUTION_URL.fullmatch(url):
+        # URL parser accepts and repairs different inputs (TWIN_PARSER_DRIFT).
+        if len(url) > 4096 or not _execution_url(url):
             raise ValueError('execution URLs must be absolute HTTP(S) or local file URLs without credentials')
         _ready_spec(step.get('ready'))
     return steps
