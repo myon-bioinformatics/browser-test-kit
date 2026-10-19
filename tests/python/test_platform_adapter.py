@@ -70,6 +70,86 @@ def test_fixture_workflow_remains_42_and_published_lane_is_separate():
     assert '--adapter' in apps and 'needs: published-flutter' in apps
 
 
+def test_published_lane_runs_three_os_on_dispatch_and_schedule_but_linux_on_pull_requests():
+    apps = (ROOT / '.github/workflows/platform-apps.yml').read_text()
+    assert 'workflow_dispatch:' in apps and "cron: '17 3 * * 1'" in apps
+    assert """echo 'os=["ubuntu-24.04"]'""" in apps
+    assert """echo 'os=["ubuntu-24.04","macos-latest","windows-latest"]'""" in apps
+    assert 'runs-on: ${{ matrix.os }}' in apps and 'shell: bash' in apps
+    assert '$RUNNER_OS-$BROWSER-$PROFILE' in apps and 'platform-app-${{ runner.os }}-' in apps
+
+
+def test_representative_flutter_pages_share_header_contract_and_provenance():
+    adapters = {p.stem: json.loads(p.read_text(encoding='utf-8')) for p in (ROOT / 'adapters').glob('flutter-*.json')}
+    routes = {name: a['url'].split('#', 1)[1] for name, a in adapters.items()}
+    assert routes == {'flutter-home': '/', 'flutter-hub': '/hub', 'flutter-clipboard-shelf': '/core/clipboard-shelf',
+                      'flutter-now-timeline': '/tools/time/now-timeline', 'flutter-photo-studio': '/tools/media/photo-studio',
+                      'flutter-http-request-draft': '/tools/http/request-draft', 'flutter-ui-showcase': '/examples/ui-showcase',
+                      'flutter-screen1': '/screen1', 'flutter-counter': '/examples/counter-playground'}
+    home = adapters['flutter-home']
+    for name, adapter in adapters.items():
+        assert adapter['id'] == name and adapter['flutter_semantics'] is True
+        assert adapter['provenance'] == {'path': 'assets/assets/diagnostics/build_metadata.json',
+                                         'field': ['repository', 'revision', 'sha']}
+        assert adapter['elements'][:4] == home['elements']
+    assert len({pa.target_identity(a, a['url'])['key'] for a in adapters.values()}) == len(adapters)
+
+
+@pytest.mark.parametrize('provenance', [{'path': '/abs.json', 'field': ['a']}, {'path': '../up.json', 'field': ['a']},
+                                        {'path': 'https://evil.test/x.json', 'field': ['a']}, {'path': 'a.json', 'field': []},
+                                        {'path': 'a.json', 'field': 'sha'}, 'a.json'])
+def test_provenance_must_be_a_relative_same_site_path_with_keys(tmp_path, provenance):
+    path = tmp_path / 'adapter.json'
+    path.write_text(json.dumps({**config(), 'provenance': provenance}))
+    with pytest.raises(ValueError, match='provenance'):
+        pa.load_adapter(path)
+
+
+class _Response:
+    def __init__(self, status, body):
+        self.status, self.ok, self._body = status, 200 <= status < 300, body
+
+    def body(self):
+        return self._body
+
+
+class _Page:
+    def __init__(self, response=None, error=None):
+        self.requested, self._response, self._error = [], response, error
+        self.request = self
+
+    def get(self, url, timeout):
+        self.requested.append(url)
+        if self._error:
+            raise self._error
+        return self._response
+
+
+def test_read_provenance_reports_value_or_reason_without_raising():
+    cfg = {**config(), 'url': 'https://example.test/app/#/hub',
+           'provenance': {'path': 'assets/meta.json', 'field': ['repository', 'revision', 'sha']}}
+    page = _Page(_Response(200, json.dumps({'repository': {'revision': {'sha': 'a' * 40}}}).encode()))
+    out = pa.read_provenance(page, cfg, cfg['url'])
+    assert page.requested == ['https://example.test/app/assets/meta.json']
+    assert out == {'url': 'https://example.test/app/assets/meta.json', 'field': ['repository', 'revision', 'sha'],
+                   'status': 200, 'value': 'a' * 40, 'error': None}
+    assert pa.read_provenance(_Page(_Response(200, b'{"repository": {"revision": {"sha": null}}}')), cfg, cfg['url'])['error'] == 'field_missing'
+    assert pa.read_provenance(_Page(_Response(404, b'')), cfg, cfg['url'])['error'] == 'http_status'
+    assert pa.read_provenance(_Page(_Response(200, b'not json')), cfg, cfg['url'])['error'] == 'JSONDecodeError'
+    assert pa.read_provenance(_Page(error=TimeoutError()), cfg, cfg['url'])['error'] == 'TimeoutError'
+    assert pa.read_provenance(_Page(), config(), config()['url']) is None
+
+
+def test_summary_shows_the_build_the_page_came_from():
+    record = {'env': {'id': 'Linux-chromium-desktop-headless', 'browser_version': '1'}, 'verdict': 'pass',
+              'min_ok_width': 256, 'facts': {'window': {'frame_width': 0, 'frame_height': 0},
+              'viewport': {'scrollbar_width': 0, 'device_pixel_ratio': 1}}, 'layout': {'failed': []},
+              'click': {'ok': True}, 'target': {'adapter': 'flutter-hub', 'provenance': {'value': 'b' * 40}}}
+    assert pp.summary_lines([record])[0].endswith('target=flutter-hub build=' + 'b' * 12)
+    record['target']['provenance'] = {'value': None, 'error': 'http_status'}
+    assert pp.summary_lines([record])[0].endswith('build=unknown(http_status)')
+
+
 def test_summary_reports_narrow_width_click_and_layout_failure():
     record = {'env':{'id':'Linux-chromium-desktop-headless','browser_version':'1'},
               'verdict':'fail', 'min_ok_width':300, 'facts':{'window':{'frame_width':0,'frame_height':0},

@@ -7,7 +7,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 
 LAYOUT_JS = r"""cfg => {
@@ -70,6 +70,14 @@ def load_adapter(path: str | Path) -> dict:
     if click['target'] not in config['elements']:
         raise ValueError('click target must be a layout element')
     validate_url(config.get('url', ''))
+    provenance = config.get('provenance')
+    if provenance is not None:
+        source, field = (provenance.get('path'), provenance.get('field')) if isinstance(provenance, dict) else (None, None)
+        if (not isinstance(source, str) or not source or source.startswith('/') or '..' in source.split('/')
+                or urlsplit(source).scheme or urlsplit(source).netloc):
+            raise ValueError('provenance path must be a relative same-site path')
+        if not isinstance(field, list) or not field or not all(isinstance(k, str) and k for k in field):
+            raise ValueError('provenance field must be a nonempty list of keys')
     return config
 
 
@@ -84,6 +92,34 @@ def target_identity(config: dict, url: str) -> dict:
     digest = hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()
     return {'adapter': config['id'], 'url': url, 'config_sha256': digest,
             'key': config['id'] + '-' + hashlib.sha256((digest + url).encode()).hexdigest()[:12]}
+
+
+def read_provenance(page, config: dict, url: str) -> dict | None:
+    """Which build the page came from, read from a same-site JSON file the app publishes.
+
+    Reported, never gating: a missing file or field is ``value: None`` with the reason,
+    so a deployment without metadata still yields its layout and click observations.
+    """
+    spec = config.get('provenance')
+    if not spec:
+        return None
+    target = urljoin(url.split('#', 1)[0], spec['path'])
+    out = {'url': target, 'field': spec['field'], 'status': None, 'value': None, 'error': None}
+    try:
+        response = page.request.get(target, timeout=15000)
+        out['status'] = response.status
+        if not response.ok:
+            out['error'] = 'http_status'
+            return out
+        value = json.loads(response.body())
+        for key in spec['field']:
+            value = value.get(key) if isinstance(value, dict) else None
+        out['value'] = value if isinstance(value, (str, int, float, bool)) else None
+        if out['value'] is None:
+            out['error'] = 'field_missing'
+    except Exception as exc:  # network, JSON or Playwright errors are part of the observation
+        out['error'] = type(exc).__name__
+    return out
 
 
 def prepare(page, config: dict):
