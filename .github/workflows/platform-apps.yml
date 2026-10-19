@@ -14,6 +14,7 @@ on:
       - 'scripts/platform_probe.py'
       - 'scripts/platform_adapter.py'
       - 'scripts/platform_facts.js'
+      - 'scripts/app_comparison.py'
       - '.github/workflows/platform-apps.yml'
 
 permissions:
@@ -88,12 +89,19 @@ jobs:
           retention-days: 30
 
   report:
-    needs: published-flutter
+    needs: [plan, published-flutter]
     if: always()
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
         with:
+          persist-credentials: false
+      - name: Check out pinned Ironmate comparison tools
+        uses: actions/checkout@v7
+        with:
+          repository: myon-bioinformatics/Ironmate
+          ref: b01d105487ef6b5a9ef0c67aa70ca2a17d6841b4
+          path: .ironmate
           persist-credentials: false
       - uses: actions/download-artifact@v8
         with:
@@ -105,6 +113,14 @@ jobs:
           python -S scripts/platform_probe.py render app-matrix/dataset.json --out app-matrix/index.html
           python -S scripts/platform_probe.py summary app-matrix/dataset.json > app-matrix/summary.txt || true
           { echo '```text'; cat app-matrix/summary.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Compare captured screenshots (differences are diagnostic only)
+        timeout-minutes: 10
+        env:
+          RUNNERS_JSON: ${{ needs.plan.outputs.os }}
+        run: |
+          python -S scripts/app_comparison.py app-results --ironmate .ironmate \
+            --runners-json "$RUNNERS_JSON" --out app-matrix/screenshots
+          { echo 'Screenshot comparison: artifact platform-app-matrix/screenshots/index.html'; echo 'PNG/MAE/RMSE differences are not UI defect verdicts. Missing captures are explicit in report.json.'; } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
