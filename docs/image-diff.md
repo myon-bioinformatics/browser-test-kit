@@ -15,7 +15,7 @@ See also [screenshot-evidence.md](screenshot-evidence.md) for how this fits next
 
 ## Regression tests
 
-Install test dependencies (`requirements-test.txt` includes Pillow) and run:
+Install test dependencies (`uv run --locked` includes Pillow) and run:
 
 ```bash
 python -m pytest tests/python/test_browser_test_kit_image_diff.py

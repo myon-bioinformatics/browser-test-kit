@@ -1,7 +1,7 @@
 # Optional browser DOM capture
 
 This example belongs to the browser-testing lane. It uses the repository's existing
-`requirements-test.txt` Playwright dependency and Chromium installation, rather
+the `browser` dependency group (Playwright) and Chromium installation, rather
 than adding a browser dependency to gh_identity or the stdlib scripts.
 
 ```sh
