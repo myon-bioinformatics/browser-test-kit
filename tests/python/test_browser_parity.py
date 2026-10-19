@@ -53,9 +53,13 @@ def test_browserless_lanes_do_not_install_engines_and_gate_browser_work():
         assert 'playwright install' not in commands, name
     for name in ('python', 'test-locked'):
         commands = '\n'.join(step.get('run', '') for step in jobs[name]['steps'])
-        assert 'requirements-test-core.txt' in commands
+        assert 'uv run --locked' in commands
+        assert '--group browser' not in commands
         assert '-m "not browser"' in commands
+        assert 'pip install' not in commands
     assert 'playwright' not in (ROOT / 'requirements-test-core.txt').read_text().lower()
+    dev_group = re.search(r'(?ms)^dev = \[(.*?)^\]', (ROOT / 'pyproject.toml').read_text())
+    assert dev_group and 'playwright' not in dev_group.group(1).lower()
     for name in ('node', 'python-browser'):
         assert lightweight <= set(jobs[name]['needs'])
         assert 'always()' not in jobs[name]['if']  # Failed fast checks must not start browser downloads.
@@ -72,3 +76,11 @@ def test_direct_browser_test_imports_are_lazy_and_marked():
             if any(isinstance(part, ast.ImportFrom) and (part.module or '').startswith('playwright.')
                    for part in ast.walk(node)):
                 assert any(ast.unparse(d) == 'pytest.mark.browser' for d in node.decorator_list), (path, node.name)
+
+
+def test_module_smoke_still_checks_noneditable_install_outside_checkout():
+    jobs = yaml.safe_load((ROOT / '.github/workflows/playwright.yml').read_text())['jobs']
+    for name in ('python', 'test-locked'):
+        step = next(s for s in jobs[name]['steps'] if s.get('name') == 'Scripts install and run as modules (python -m)')
+        assert 'cd "$RUNNER_TEMP"' in step['run']
+        assert 'uv run --locked --no-dev --no-editable --project "$GITHUB_WORKSPACE" python -m check_png --help' in step['run']

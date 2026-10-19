@@ -13,7 +13,7 @@ COLLECTOR = (
     "reusable-junit-identity.yml@1eda992aa6fa31a902e2c06428e53ab17e8fe3c1"
 )
 COMMAND = (
-    'python -m pytest tests/python -q -m "not browser" '
+    'uv run --locked python -m pytest tests/python -q -m "not browser" '
     "--junitxml=test-results/junit/python-3.13.xml"
 )
 

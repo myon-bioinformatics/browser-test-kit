@@ -18,9 +18,10 @@ pa = pp.adapters
 @pytest.fixture
 def application(tmp_path):
     # This app has no __platformFacts / __layoutChecks hooks and uses different DOM ids.
-    # Nonmonotonic responsive rules (8 px grid): passes at 264..287, fails at 288..303, passes >=304.
+    # Nonmonotonic responsive rules: passes at 260..287, fails at 288..303, passes >=304.
+    # On the default 8 px grid the first pass is 264; with --width-step 1 it is exactly 260.
     (tmp_path / 'index.html').write_text('''<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1">
-    <style>body{margin:0}h1{margin:0;width:180px;height:32px}button{display:block;width:264px;height:40px}
+    <style>body{margin:0}h1{margin:0;width:180px;height:32px}button{display:block;width:260px;height:40px}
     @media(min-width:288px) and (max-width:303px){button{width:320px}}
     #cover{display:none;position:fixed;inset:32px 0 0;background:white;z-index:5}</style>
     <h1 id="title">App title</h1><button id="increment" data-value="0" onclick="this.dataset.value=String(+this.dataset.value+1);localStorage.setItem('counter',this.dataset.value)">Increment</button><div id="cover"></div><script>document.querySelector("#increment").dataset.value=localStorage.getItem("counter") || "0";</script>''')
@@ -53,6 +54,15 @@ def test_app_without_fixture_hooks_finds_true_first_pass_and_clicks_each_width(a
     assert record['target']['url'] == url and record['target']['config_sha256']
     assert (tmp_path/'shots/width-264.png').exists()
     assert record['env']['device_validation'] == ('emulation' if profile == 'pixel' else 'desktop-browser')
+
+
+@pytest.mark.browser
+def test_exact_grid_finds_the_true_edge_and_device_widths_are_allowed(application, tmp_path):
+    url, config, path = application
+    record = pp.collect('chromium', 'desktop', adapter=str(path), widths=(390,), width_step=1)
+    assert record['verdict'] == 'pass' and record['min_ok_width'] == 260
+    assert record['width_search']['step'] == 1 and record['width_search']['low'] == 250
+    assert [s['width'] for s in record['samples']] == [260, 390]
 
 
 @pytest.mark.browser

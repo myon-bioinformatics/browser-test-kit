@@ -157,3 +157,90 @@ def test_summary_reports_narrow_width_click_and_layout_failure():
               'samples':[{'width':320,'layout':{'failed':['overlap:#a:#b']},'click':{'ok':False}}]}
     line = pp.summary_lines([record])[0]
     assert '320px:overlap:#a:#b' in line and '320px:click' in line
+
+
+def test_report_adds_the_web_ui_viewer_on_top_of_the_ironmate_comparison():
+    import re
+    apps = (ROOT / '.github/workflows/platform-apps.yml').read_text()
+    pin = re.search(r'repository: myon-bioinformatics/web-ui\n\s+ref: ([0-9a-f]+)', apps)
+    assert pin and pin.group(1) == 'b35ed9b77d4222b946d9813298243489a69e624a'
+    assert 'ref: edc47a267bd2f5a1e29ec3a5474cb24a73c6f50d' in apps
+    assert apps.count('repository: myon-bioinformatics/Ironmate') == 1  # one comparison, not two
+    assert '--report app-matrix/screenshots/report.json --dataset app-matrix/dataset.json --embed-css' in apps
+    assert "hashFiles('app-matrix/screenshots/report.json')" in apps and 'screenshots/viewer.html' in apps
+    # The viewer joins on adapter ids: web-ui's page table must name exactly these adapters.
+    assert {p.stem for p in (ROOT / 'adapters').glob('flutter-*.json')} == {
+        'flutter-home', 'flutter-hub', 'flutter-clipboard-shelf', 'flutter-now-timeline', 'flutter-photo-studio',
+        'flutter-http-request-draft', 'flutter-ui-showcase', 'flutter-counter', 'flutter-screen1'}
+
+
+@pytest.mark.parametrize('step,floor', [(1, 250), (2, 250), (8, 256), (10, 250), (64, 256)])
+def test_search_grid_is_a_default_that_can_be_switched(step, floor):
+    assert pp.search_floor(step) == floor and pp.WIDTH_STEP == 8 and pp.MIN_SEARCH_WIDTH == 256
+
+
+@pytest.mark.parametrize('step', [0, 65, 8.0, True])
+def test_invalid_width_step_fails_before_browser_launch(step):
+    with pytest.raises(ValueError, match='width_step'):
+        pp.collect('chromium', 'desktop', width_step=step)
+
+
+def test_cli_accepts_device_and_edge_widths_and_rejects_below_250(tmp_path, monkeypatch, capsys):
+    seen = {}
+    def fake_collect(*args, **kwargs):
+        seen.update(kwargs)
+        raise RuntimeError('stop before a browser')
+    monkeypatch.setattr(pp, 'collect', fake_collect)
+    pp.main(['collect', '--browser', 'chromium', '--out', str(tmp_path), '--widths', '390', '419', '420',
+             '--width-step', '1'])
+    assert seen['widths'] == (390, 419, 420) and seen['width_step'] == 1
+    seen.clear()
+    pp.main(['collect', '--browser', 'chromium', '--out', str(tmp_path), '--widths', '249'])
+    assert not seen
+
+
+def test_manual_runs_can_switch_grid_and_widths_while_schedule_keeps_defaults():
+    apps = (ROOT / '.github/workflows/platform-apps.yml').read_text()
+    assert "WIDTH_STEP: ${{ inputs.width_step || '8' }}" in apps and "WIDTHS: ${{ inputs.widths || '320 384' }}" in apps
+    assert '--widths "${widths[@]}" --width-step "$WIDTH_STEP"' in apps and '^[0-9]+( [0-9]+)*$' in apps
+
+
+def test_report_publishes_a_small_digest_and_a_pr_summary():
+    apps = (ROOT / '.github/workflows/platform-apps.yml').read_text()
+    assert 'scripts/app_digest.py app-results --ironmate .ironmate' in apps and 'name: platform-app-digest' in apps
+    assert 'pull-requests: write' in apps and 'scripts/app_digest_comment.py' in apps
+    assert 'gh api' not in apps
+    assert "github.event.pull_request.head.repo.full_name == github.repository" in apps
+
+
+def test_workflow_checks_inputs_before_fanout_and_matches_capture_width():
+    apps = (ROOT / '.github/workflows/platform-apps.yml').read_text()
+    plan = apps.split('  published-flutter:', 1)[0]
+    assert '^([1-9]|[1-5][0-9]|6[0-4])$' in plan
+    assert '10#$width >= 250 && 10#$width <= 3840' in plan
+    assert 'shot=width-$((10#$width))' in plan
+    assert apps.count('--shot "$SHOT"') == 2
+    assert "- 'scripts/app_digest.py'" in apps and "- 'scripts/app_digest_comment.py'" in apps
+    import re
+    assert all(re.match(r'[0-9a-f]{40} # v[0-9]+$', pin) for pin in re.findall(r'uses: actions/[^@]+@([^\n]+)', apps))
+
+
+@pytest.mark.parametrize('step,widths,expected', [('8', '320 384', 'width-384'), ('1', '390 412', 'width-412'),
+                                                  ('8', '0320 0384', 'width-384'), ('0', '320 384', None),
+                                                  ('65', '320 384', None), ('8', '249', None),
+                                                  ('8', '3841', None), ('8', '99999999999999999999', None)])
+def test_workflow_plan_validates_actual_inputs(tmp_path, step, widths, expected):
+    import os
+    import subprocess
+    import yaml
+    workflow = yaml.safe_load((ROOT / '.github/workflows/platform-apps.yml').read_text())
+    script = workflow['jobs']['plan']['steps'][0]['run']
+    output = tmp_path / 'outputs'
+    run = subprocess.run(['bash', '-e', '-o', 'pipefail', '-c', script], capture_output=True, text=True,
+                         env={**os.environ, 'WIDTH_STEP': step, 'WIDTHS': widths, 'EVENT': 'workflow_dispatch',
+                              'GITHUB_OUTPUT': str(output)})
+    if expected is None:
+        assert run.returncode == 2 and not output.exists()
+    else:
+        assert run.returncode == 0, run.stderr
+        assert f'shot={expected}\n' in output.read_text()

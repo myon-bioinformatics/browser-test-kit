@@ -80,7 +80,9 @@ class ResolverRegressionTests(unittest.TestCase):
             f"import sysconfig\nsysconfig.get_path = lambda name: {str(site)!r}\n",
             encoding="utf-8")
         with patch.dict(os.environ, {"PYTHONPATH": str(site)}):
-            self.assertTrue(pb.externally_managed(sys.executable))
+            # uv run executes this suite inside the project venv, which is exempt.
+            host = sys.executable if sys.prefix == sys.base_prefix else sys._base_executable
+            self.assertTrue(pb.externally_managed(host))
             self.assertFalse(pb.externally_managed(self.python))
 
     def test_resolution_failure_stops_before_pytest(self):

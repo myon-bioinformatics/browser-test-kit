@@ -6,6 +6,13 @@ name: platform-apps (published network lane)
 # measures the same pages on Linux, macOS and Windows.
 on:
   workflow_dispatch:
+    inputs:
+      width_step:
+        description: 'Width search grid in px: 8 aligns results; 1 finds exact breakpoint edges'
+        default: '8'
+      widths:
+        description: 'Extra click widths, space separated (e.g. "320 384" or device widths "390 412")'
+        default: '320 384'
   schedule:
     - cron: '17 3 * * 1'
   pull_request:
@@ -15,6 +22,8 @@ on:
       - 'scripts/platform_adapter.py'
       - 'scripts/platform_facts.js'
       - 'scripts/app_comparison.py'
+      - 'scripts/app_digest.py'
+      - 'scripts/app_digest_comment.py'
       - '.github/workflows/platform-apps.yml'
 
 permissions:
@@ -25,11 +34,28 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       os: ${{ steps.os.outputs.os }}
+      width_step: ${{ steps.os.outputs.width_step }}
+      widths: ${{ steps.os.outputs.widths }}
+      shot: ${{ steps.os.outputs.shot }}
     steps:
       - id: os
         env:
           EVENT: ${{ github.event_name }}
+          WIDTH_STEP: ${{ inputs.width_step || '8' }}
+          WIDTHS: ${{ inputs.widths || '320 384' }}
         run: |
+          [[ "$WIDTH_STEP" =~ ^([1-9]|[1-5][0-9]|6[0-4])$ && "$WIDTHS" =~ ^[0-9]+( [0-9]+)*$ ]] || { echo "::error::invalid width_step or widths"; exit 2; }
+          read -ra widths <<< "$WIDTHS"
+          for width in "${widths[@]}"; do
+            if [[ ${#width} -gt 4 ]] || ! (( 10#$width >= 250 && 10#$width <= 3840 )); then
+              echo "::error::widths must be 250..3840"; exit 2
+            fi
+          done
+          {
+            echo "width_step=$WIDTH_STEP"
+            echo "widths=$WIDTHS"
+            echo "shot=width-$((10#$width))"
+          } >> "$GITHUB_OUTPUT"
           if [ "$EVENT" = pull_request ]; then
             echo 'os=["ubuntu-24.04"]' >> "$GITHUB_OUTPUT"
           else
@@ -57,30 +83,35 @@ jobs:
           - {browser: chromium, profile: iphone}
           - {browser: webkit, profile: pixel}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: '3.13'
-      - run: python -m pip install -r requirements-test.txt
-      - run: python -m playwright install --with-deps --only-shell ${{ matrix.browser }}
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: '3.13'
+      - run: uv run --locked --group browser python -m playwright install --with-deps --only-shell ${{ matrix.browser }}
       - name: Measure representative published pages
         env:
           BROWSER: ${{ matrix.browser }}
           PROFILE: ${{ matrix.profile }}
+          WIDTH_STEP: ${{ needs.plan.outputs.width_step }}
+          WIDTHS: ${{ needs.plan.outputs.widths }}
         run: |
+          read -ra widths <<< "$WIDTHS"
           status=0
           for adapter in adapters/flutter-*.json; do
             name=$(basename "$adapter" .json)
-            python scripts/platform_probe.py collect --browser "$BROWSER" --profile "$PROFILE" \
-              --adapter "$adapter" --widths 320 384 --out app-results \
+            uv run --locked --group browser python scripts/platform_probe.py collect --browser "$BROWSER" --profile "$PROFILE" \
+              --adapter "$adapter" --widths "${widths[@]}" --width-step "$WIDTH_STEP" --out app-results \
               --evidence-dir "app-results/$name/$RUNNER_OS-$BROWSER-$PROFILE" || status=1
           done
           python -S scripts/platform_probe.py summary app-results > app-results/summary.txt || status=1
           { echo 'Published-site observations; mobile profiles are emulation, not physical devices.'; echo '```text'; cat app-results/summary.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
           exit "$status"
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:
           name: platform-app-${{ runner.os }}-${{ matrix.browser }}-${{ matrix.profile }}
@@ -92,18 +123,21 @@ jobs:
     needs: [plan, published-flutter]
     if: always()
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: write  # one digest comment per run on same-repository pull requests
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
       - name: Check out pinned Ironmate comparison tools
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: myon-bioinformatics/Ironmate
-          ref: fd7aab7d6fa105b0f915ba774780260df4e3c6ac
+          ref: edc47a267bd2f5a1e29ec3a5474cb24a73c6f50d
           path: .ironmate
           persist-credentials: false
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           pattern: platform-app-*
           path: app-results
@@ -117,11 +151,62 @@ jobs:
         timeout-minutes: 10
         env:
           RUNNERS_JSON: ${{ needs.plan.outputs.os }}
+          SHOT: ${{ needs.plan.outputs.shot }}
         run: |
           python -S scripts/app_comparison.py app-results --ironmate .ironmate \
-            --runners-json "$RUNNERS_JSON" --out app-matrix/screenshots
+            --runners-json "$RUNNERS_JSON" --shot "$SHOT" --out app-matrix/screenshots
           { echo 'Screenshot comparison: artifact platform-app-matrix/screenshots/index.html'; echo 'PNG/MAE/RMSE differences are not UI defect verdicts. Missing captures are explicit in report.json.'; } >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v7
+      # View the same comparison by page emoji with switchable tile layouts (web-ui), pinned to
+      # a merged main commit; bump the SHA together with its test when web-ui's viewer changes.
+      - name: Check out pinned web-ui page viewer
+        if: always() && hashFiles('app-matrix/screenshots/report.json') != ''
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: myon-bioinformatics/web-ui
+          ref: b35ed9b77d4222b946d9813298243489a69e624a
+          path: .web-ui
+          persist-credentials: false
+          sparse-checkout: |
+            /web_ui.py
+            /tool/
+            /css/
+            /examples/
+          sparse-checkout-cone-mode: false
+      - name: Page viewer (one section per page, opened by emoji)
+        if: always() && hashFiles('app-matrix/screenshots/report.json') != ''
+        run: |
+          python -S .web-ui/tool/capture_matrix.py --pages .web-ui/examples/flutter-pages.json \
+            --report app-matrix/screenshots/report.json --dataset app-matrix/dataset.json --embed-css \
+            > app-matrix/screenshots/viewer.html
+          echo 'Page viewer: artifact platform-app-matrix/screenshots/viewer.html' >> "$GITHUB_STEP_SUMMARY"
+      # A small single-page digest (thumbnails as data URIs, shrunk to a quarter until it fits
+      # 1 MB) plus a Markdown summary, so a run can be reviewed without the full artifact.
+      - name: Digest (one small page and a summary)
+        id: digest
+        if: always()
+        env:
+          RUNNERS_JSON: ${{ needs.plan.outputs.os }}
+          SHOT: ${{ needs.plan.outputs.shot }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python -S scripts/app_digest.py app-results --ironmate .ironmate --runners-json "$RUNNERS_JSON" \
+            --shot "$SHOT" --out app-digest --run-url "$RUN_URL"
+          cat app-digest/summary.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always() && steps.digest.outcome == 'success'
+        with:
+          name: platform-app-digest
+          path: app-digest
+          retention-days: 30
+      - name: Comment the digest summary on the PR
+        if: always() && steps.digest.outcome == 'success' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_PROMPT_DISABLED: "1"
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          python -S scripts/app_digest_comment.py "$GITHUB_REPOSITORY" "$PR" --file app-digest/summary.md
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:
           name: platform-app-matrix

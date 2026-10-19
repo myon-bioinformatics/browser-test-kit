@@ -496,3 +496,51 @@ def test_compare_rendered_cli_reads_stdin_and_reports_os_error(tmp_path: Path) -
         pytest.skip("running as a user that can read mode-0 files")
     denied = run_cli(str(SAMPLE), "--compare-rendered", str(bad))
     assert denied.returncode == 2 and "error reading --compare-rendered input" in denied.stderr.decode("utf-8")
+
+
+@pytest.mark.parametrize('source', ['file', 'stdin'])
+def test_rendered_input_limits_binary_read_before_decoding(tmp_path, monkeypatch, capsys, source):
+    import io
+    import types
+    html_file = tmp_path / 'page.html'
+    html_file.write_text('<p>x</p>', encoding='utf-8')
+    rendered = tmp_path / 'rendered.txt'
+    rendered.write_bytes(b'not used')
+    reads = []
+
+    class BoundedInput(io.BytesIO):
+        def read(self, size=-1):
+            reads.append(size)
+            assert size == 11  # max_bytes + 1, never an unbounded text read
+            return super().read(size)
+
+    stream = BoundedInput(b'\xff' * 100)
+    if source == 'stdin':
+        monkeypatch.setattr(page_text.sys, 'stdin', types.SimpleNamespace(buffer=stream))
+        target = '-'
+    else:
+        old_open = Path.open
+        monkeypatch.setattr(Path, 'open', lambda path, *a, **k: stream if path == rendered else old_open(path, *a, **k))
+        target = str(rendered)
+    assert page_text.main([str(html_file), '--compare-rendered', target, '--max-bytes', '10']) == 2
+    assert reads == [11]
+    assert 'exceeds --max-bytes' in capsys.readouterr().err
+
+
+def test_rendered_byte_limit_counts_raw_bytes_not_replacement_encoding(tmp_path):
+    html_file = tmp_path / 'page.html'
+    html_file.write_text('<p>x</p>', encoding='utf-8')
+    rendered = tmp_path / 'rendered.txt'
+    rendered.write_bytes(b'\xff' * 9)
+    result = run_cli(str(html_file), '--compare-rendered', str(rendered), '--max-bytes', '10')
+    assert result.returncode == 1
+    assert b'exceeds --max-bytes' not in result.stderr
+
+
+def test_compare_rendered_refuses_byte_truncated_static_html(tmp_path):
+    html_file = tmp_path / 'large.html'
+    html_file.write_text('<p>x</p>' + ' ' * 100, encoding='utf-8')
+    rendered = tmp_path / 'rendered.txt'
+    rendered.write_text('x', encoding='utf-8')
+    result = run_cli(str(html_file), '--compare-rendered', str(rendered), '--max-bytes', '10')
+    assert result.returncode == 2 and b'static HTML was truncated by --max-bytes' in result.stderr

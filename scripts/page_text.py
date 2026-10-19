@@ -637,24 +637,28 @@ def main(argv: list[str] | None = None) -> int:
     result = page_text(loaded["html"], url=url, max_chars=args.max_chars)
 
     if args.compare_rendered is not None:
+        if loaded["byte_limit_hit"]:
+            print("error: static HTML was truncated by --max-bytes; raise --max-bytes to compare", file=sys.stderr)
+            return 2
         if args.source == "-" and args.compare_rendered == "-":
             print("error: cannot use stdin (-) for both source and --compare-rendered", file=sys.stderr)
             return 2
         try:
             if args.compare_rendered == "-":
-                rendered_raw = sys.stdin.read()
+                rendered_bytes = sys.stdin.buffer.read(args.max_bytes + 1)
             else:
                 comp_path = Path(args.compare_rendered)
                 if not comp_path.is_file():
                     print(f"error: no such file for --compare-rendered: {args.compare_rendered}", file=sys.stderr)
                     return 2
-                rendered_raw = comp_path.read_text(encoding="utf-8", errors="replace")
+                rendered_bytes = _read_file(comp_path, args.compare_rendered, args.max_bytes)
         except OSError as error:
             print(f"error reading --compare-rendered input: {error}", file=sys.stderr)
             return 2
-        if len(rendered_raw.encode("utf-8")) > args.max_bytes:
+        if len(rendered_bytes) > args.max_bytes:
             print(f"error: --compare-rendered input exceeds --max-bytes ({args.max_bytes})", file=sys.stderr)
             return 2
+        rendered_raw = rendered_bytes.decode("utf-8", "replace")
         if result["truncated"]:
             print(f"error: static text was truncated to {args.max_chars} of {result['total_chars']} characters; "
                   "raise --max-chars to compare", file=sys.stderr)
