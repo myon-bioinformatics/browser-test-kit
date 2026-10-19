@@ -28,12 +28,11 @@ Routes and emojis follow flutter_navigation_basic's generated page identities
 it asks for geolocation permission. Screenshots are stored per page and environment
 (`app-results/<adapter>/<OS>-<browser>-<profile>/`).
 
-The report job then builds `compare/` in the `platform-app-matrix` artifact with two
-pinned tools: Ironmate's `browser_matrix.py` (rows = pages, columns = environments,
-`sheet.png`, tiles and tile-level differences in `report.json`) and web-ui's
-`tool/capture_matrix.py` (`viewer.html`, one section per page opened from its emoji,
-with each environment's pass/fail and deployed build). Both are checked out at merged
-main commits named in the workflow; update the SHAs together when either tool changes.
+After the screenshot comparison (`scripts/app_comparison.py` with the pinned Ironmate),
+the report job adds web-ui's `tool/capture_matrix.py` at a pinned merged commit:
+`screenshots/viewer.html` shows one section per page, opened from its emoji, with each
+environment's tile, pass/fail and deployed build. Update the web-ui SHA together with its
+test when the viewer changes.
 
 This is deliberately a selected-control contract, not a guarantee for every screen,
 all painted text, or every app feature. Flutter's invisible semantics labels do not
@@ -142,3 +141,34 @@ when the report job can render other completed observations.
 Offline regressions exercise a different DOM without fixture hooks, nonmonotonic
 width rules, touch and mouse postconditions, persistent-storage isolation, overlap,
 occlusion and missing elements. They use a loopback server and no public network.
+
+## Screenshot comparison artifact
+
+The report job also checks out a full-commit-pinned Ironmate and calls
+`scripts/app_comparison.py`. `platform-app-matrix/screenshots/` contains `sheet.png`,
+a labeled `index.html`, `tiles/` and `report.json`. Open `screenshots/index.html` for
+the grid and independent capture evidence, or the parent `index.html` for all
+platform facts and per-width layout/click details. Capture job failures remain failures.
+
+```sh
+python -S scripts/app_comparison.py app-results --ironmate ../Ironmate \
+  --runners-json '["ubuntu-24.04","macos-latest","windows-latest"]' \
+  --out app-matrix/screenshots
+```
+
+Use a trusted Ironmate checkout containing the planned-axis `browser_matrix.build`
+API. The report reuses Ironmate's PNG decoding, DPR-normalized tiles and existing
+`image_compare.metrics` MAE/RMSE. The OS plan and nine adapter files define expected
+coverage, so even a completely absent page or environment appears as missing. No
+PNG at all is an error. Output must be new/empty and must not be a symlink; a report
+rerun uses a fresh output directory. Parent directories are trusted, matching Ironmate.
+
+The JSON retains original screenshot hashes/sizes, tile crop/pad rows, independent
+observation verdicts, per-shot layout/click evidence, DPR, browser version, capture
+time and deployment provenance. A missing observation or unknown/different build
+is explicit. A pixel score never changes an observation verdict. Missing PNGs are
+coverage gaps, not measured UI failures; a passing observation does not certify the
+whole UI. OS fonts, engine rendering, DPR, different viewport heights, animation and
+capture timing can all cause differences. Width fitting crops/pads content, and
+cropped content is outside the metric. Inspect the original PNG and relevant
+layout/click failure before attributing a difference to an application defect.

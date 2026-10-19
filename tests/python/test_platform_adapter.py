@@ -67,7 +67,7 @@ def test_fixture_workflow_remains_42_and_published_lane_is_separate():
     assert 'os: [ubuntu-24.04, windows-latest, macos-latest]' in fixture
     assert 'for profile in desktop iphone pixel' in fixture
     assert '--adapter' not in fixture
-    assert '--adapter' in apps and 'needs: published-flutter' in apps
+    assert '--adapter' in apps and 'needs: [plan, published-flutter]' in apps
 
 
 def test_published_lane_runs_three_os_on_dispatch_and_schedule_but_linux_on_pull_requests():
@@ -159,13 +159,14 @@ def test_summary_reports_narrow_width_click_and_layout_failure():
     assert '320px:overlap:#a:#b' in line and '320px:click' in line
 
 
-def test_report_builds_the_ironmate_sheet_and_web_ui_viewer_from_pinned_commits():
+def test_report_adds_the_web_ui_viewer_on_top_of_the_ironmate_comparison():
     import re
     apps = (ROOT / '.github/workflows/platform-apps.yml').read_text()
-    pins = dict(re.findall(r'repository: myon-bioinformatics/(Ironmate|web-ui)\n\s+ref: ([0-9a-f]+)', apps))
-    assert set(pins) == {'Ironmate', 'web-ui'} and all(len(sha) == 40 for sha in pins.values())
-    assert 'browser_matrix.py app-results --out app-matrix/compare' in apps
-    assert '--dataset app-matrix/dataset.json --embed-css' in apps and 'compare/viewer.html' in apps
+    pin = re.search(r'repository: myon-bioinformatics/web-ui\n\s+ref: ([0-9a-f]+)', apps)
+    assert pin and len(pin.group(1)) == 40
+    assert apps.count('repository: myon-bioinformatics/Ironmate') == 1  # one comparison, not two
+    assert '--report app-matrix/screenshots/report.json --dataset app-matrix/dataset.json --embed-css' in apps
+    assert "hashFiles('app-matrix/screenshots/report.json')" in apps and 'screenshots/viewer.html' in apps
     # The viewer joins on adapter ids: web-ui's page table must name exactly these adapters.
     assert {p.stem for p in (ROOT / 'adapters').glob('flutter-*.json')} == {
         'flutter-home', 'flutter-hub', 'flutter-clipboard-shelf', 'flutter-now-timeline', 'flutter-photo-studio',

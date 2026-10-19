@@ -21,6 +21,7 @@ on:
       - 'scripts/platform_probe.py'
       - 'scripts/platform_adapter.py'
       - 'scripts/platform_facts.js'
+      - 'scripts/app_comparison.py'
       - '.github/workflows/platform-apps.yml'
 
 permissions:
@@ -100,12 +101,19 @@ jobs:
           retention-days: 30
 
   report:
-    needs: published-flutter
+    needs: [plan, published-flutter]
     if: always()
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
         with:
+          persist-credentials: false
+      - name: Check out pinned Ironmate comparison tools
+        uses: actions/checkout@v7
+        with:
+          repository: myon-bioinformatics/Ironmate
+          ref: fd7aab7d6fa105b0f915ba774780260df4e3c6ac
+          path: .ironmate
           persist-credentials: false
       - uses: actions/download-artifact@v8
         with:
@@ -117,45 +125,37 @@ jobs:
           python -S scripts/platform_probe.py render app-matrix/dataset.json --out app-matrix/index.html
           python -S scripts/platform_probe.py summary app-matrix/dataset.json > app-matrix/summary.txt || true
           { echo '```text'; cat app-matrix/summary.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-      # Compare the same screenshots across environments (Ironmate) and view them by page
-      # emoji (web-ui). Both tools are pinned to merged main commits; bump the SHAs together
-      # with their tests when either tool changes.
-      - uses: actions/setup-python@v7
-        if: always()
-        with:
-          python-version: '3.13'
-      - uses: actions/checkout@v7
-        if: always()
-        with:
-          repository: myon-bioinformatics/Ironmate
-          ref: 4e238a0aba46284d74fa49a975d59cf5d752de0f
-          path: .compare-tools/ironmate
-          persist-credentials: false
-          sparse-checkout: |
-            /*.py
-          sparse-checkout-cone-mode: false
-      - uses: actions/checkout@v7
-        if: always()
+      - name: Compare captured screenshots (differences are diagnostic only)
+        timeout-minutes: 10
+        env:
+          RUNNERS_JSON: ${{ needs.plan.outputs.os }}
+        run: |
+          python -S scripts/app_comparison.py app-results --ironmate .ironmate \
+            --runners-json "$RUNNERS_JSON" --out app-matrix/screenshots
+          { echo 'Screenshot comparison: artifact platform-app-matrix/screenshots/index.html'; echo 'PNG/MAE/RMSE differences are not UI defect verdicts. Missing captures are explicit in report.json.'; } >> "$GITHUB_STEP_SUMMARY"
+      # View the same comparison by page emoji with switchable tile layouts (web-ui), pinned to
+      # a merged main commit; bump the SHA together with its test when web-ui's viewer changes.
+      - name: Check out pinned web-ui page viewer
+        if: always() && hashFiles('app-matrix/screenshots/report.json') != ''
+        uses: actions/checkout@v7
         with:
           repository: myon-bioinformatics/web-ui
           ref: ad72168cbdb86fc2404c24582a67b254741f3ebb
-          path: .compare-tools/web-ui
+          path: .web-ui
           persist-credentials: false
           sparse-checkout: |
             /web_ui.py
-            /tool/capture_matrix.py
+            /tool/
             /css/
-            /examples/flutter-pages.json
+            /examples/
           sparse-checkout-cone-mode: false
-      - name: Build the comparison sheet and the page viewer
-        if: always()
+      - name: Page viewer (one section per page, opened by emoji)
+        if: always() && hashFiles('app-matrix/screenshots/report.json') != ''
         run: |
-          # Screenshots that exist are compared even when some environments failed.
-          python -S .compare-tools/ironmate/browser_matrix.py app-results --out app-matrix/compare
-          python -S .compare-tools/web-ui/tool/capture_matrix.py --pages .compare-tools/web-ui/examples/flutter-pages.json \
-            --report app-matrix/compare/report.json --dataset app-matrix/dataset.json --embed-css \
-            > app-matrix/compare/viewer.html
-          echo "Comparison: artifact platform-app-matrix, compare/viewer.html (per page) and compare/sheet.png." >> "$GITHUB_STEP_SUMMARY"
+          python -S .web-ui/tool/capture_matrix.py --pages .web-ui/examples/flutter-pages.json \
+            --report app-matrix/screenshots/report.json --dataset app-matrix/dataset.json --embed-css \
+            > app-matrix/screenshots/viewer.html
+          echo 'Page viewer: artifact platform-app-matrix/screenshots/viewer.html' >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
