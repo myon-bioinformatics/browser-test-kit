@@ -67,7 +67,7 @@ def test_fixture_workflow_remains_42_and_published_lane_is_separate():
     assert 'os: [ubuntu-24.04, windows-latest, macos-latest]' in fixture
     assert 'for profile in desktop iphone pixel' in fixture
     assert '--adapter' not in fixture
-    assert '--adapter' in apps and 'needs: published-flutter' in apps
+    assert '--adapter' in apps and 'needs: [plan, published-flutter]' in apps
 
 
 def test_published_lane_runs_three_os_on_dispatch_and_schedule_but_linux_on_pull_requests():
