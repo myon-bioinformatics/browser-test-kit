@@ -5,7 +5,7 @@
     python -S scripts/platform_probe.py summary dataset.json                 # one line per environment; exit 1 if any fail
     python -S scripts/platform_probe.py render dataset.json --out matrix.html  # tabs: OS / browser / device / mode
 
-collect opens fixtures/platform_probe.html and records `btk-platform-facts/1`:
+collect defaults to fixtures/platform_probe.html; --adapter JSON selects an app. It records `btk-platform-facts/1`:
 screen, window outer/inner (frame = outer - inner; real only when headed), scrollbar
 width (page / always-scrolling probe), devicePixelRatio, visualViewport, safe-area insets, pointer/hover/touch,
 measured font widths, platform and browser version. The environment passes when
@@ -20,6 +20,8 @@ Exit codes: 0 OK; 1 an environment failed (collect, summary); 2 input error.
 from __future__ import annotations
 
 import argparse
+import datetime
+
 import functools
 import glob
 import html
@@ -30,6 +32,11 @@ import sys
 import threading
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+
+# Tests load this module directly by path.
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+import platform_adapter as adapters
 
 FACTS_SCHEMA = "btk-platform-facts/1"
 DATASET_SCHEMA = "btk-platform-matrix/1"
@@ -90,6 +97,8 @@ def libs_check(libs: dict | None) -> dict:
 
 def verdict(record: dict) -> str:
     libs = record.get("libs", {"ok": True})
+    if any(not s['layout']['ok'] or not s['click']['ok'] for s in record.get('samples', [])):
+        return 'fail'
     return "pass" if record["layout"]["ok"] and record["click"]["ok"] and libs["ok"] else "fail"
 
 
@@ -98,9 +107,18 @@ class _QuietHandler(SimpleHTTPRequestHandler):
         pass
 
 
-def collect(browser_name: str, profile: str, *, headed: bool = False, channel: str | None = None) -> dict:
+def collect(browser_name: str, profile: str, *, headed: bool = False, channel: str | None = None,
+            adapter: str | None = None, url: str | None = None,
+            widths: tuple[int, ...] = (320, 390), evidence_dir: str | None = None) -> dict:
     if profile not in PROFILES:
         raise ValueError(f"profile must be one of {sorted(PROFILES)}")
+    config = adapters.load_adapter(adapter) if adapter else None
+    if url and not config:
+        raise ValueError('--url needs --adapter')
+    if config:
+        target_url = adapters.validate_url(url or config['url'])
+        return _collect(browser_name, profile, headed=headed, channel=channel, url=target_url,
+                        config=config, widths=widths, evidence_dir=evidence_dir)
     # Served over HTTP: SRI (crossorigin) does not work for file:// pages in every engine.
     server = ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(_QuietHandler, directory=str(ROOT)))
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -112,7 +130,8 @@ def collect(browser_name: str, profile: str, *, headed: bool = False, channel: s
         server.server_close()
 
 
-def _collect(browser_name: str, profile: str, *, headed: bool, channel: str | None, url: str) -> dict:
+def _collect(browser_name: str, profile: str, *, headed: bool, channel: str | None, url: str, config: dict | None = None,
+             widths: tuple[int, ...] = (), evidence_dir: str | None = None) -> dict:
     from playwright.sync_api import sync_playwright  # only collect needs a browser
 
     with sync_playwright() as pw:
@@ -132,36 +151,108 @@ def _collect(browser_name: str, profile: str, *, headed: bool, channel: str | No
                 args.pop("is_mobile", None)  # DEVICE_DESCRIPTOR_CROSS_ENGINE
             context = browser.new_context(**args)
             page = context.new_page()
-            page.goto(url)
-            facts = page.evaluate("window.__platformFacts()")
-            layout = page.evaluate("window.__layoutChecks()")
-            box = page.locator("#action").bounding_box()
-            x, y = int(box["x"] + box["width"] / 2), int(box["y"] + box["height"] / 2)
-            touch = bool(args.get("has_touch"))
-            (page.touchscreen.tap if touch else page.mouse.click)(x, y)
-            clicks = int(page.locator("#action").get_attribute("data-clicks"))
+            page.set_default_timeout(15000)
+            response = page.goto(url, wait_until='domcontentloaded', timeout=60000)
+            if response and not response.ok:
+                raise ValueError(f'target returned HTTP {response.status}')
+            target = adapters.target_identity(config, url) if config else None
+            if config:
+                adapters.prepare(page, config)
+                page.add_script_tag(path=str(ROOT / 'scripts' / 'platform_facts.js'))
+                facts = page.locator(config['click']['target']).evaluate('(e) => window.__btkPlatformFacts(e)')
+                layout = adapters.layout(page, config)
+            else:
+                facts = page.evaluate("window.__platformFacts()")
+                layout = page.evaluate("window.__layoutChecks()")
             size = page.viewport_size or {"width": facts["window"]["inner_width"],
                                           "height": facts["window"]["inner_height"]}
+            touch = bool(args.get("has_touch"))
+            samples = []
+            observations = []
+            def fresh_page(width):
+                nonlocal context, page
+                context.close()
+                options = dict(args)
+                options.pop('no_viewport', None)
+                options['viewport'] = {'width': width, 'height': size['height']}
+                context = browser.new_context(**options)
+                page = context.new_page()
+                page.set_default_timeout(15000)
+                response = page.goto(url, wait_until='domcontentloaded', timeout=60000)
+                if response and not response.ok:
+                    raise ValueError(f'target returned HTTP {response.status}')
+                adapters.prepare(page, config)
 
-            def ok_at(width: int) -> bool:
+            def measure(width):
                 page.set_viewport_size({"width": width, "height": size["height"]})
-                return page.evaluate("window.__layoutChecks().ok")
-            min_width = narrowest_ok_width(ok_at, MIN_SEARCH_WIDTH, size["width"])
+                if config:
+                    adapters.settle(page)
+                return adapters.layout(page, config) if config else page.evaluate("window.__layoutChecks()")
+            def capture(label):
+                if evidence_dir:
+                    folder = Path(evidence_dir)
+                    folder.mkdir(parents=True, exist_ok=True)
+                    page.screenshot(path=str(folder / (label + '.png')))
+            if config:
+                capture('initial')
+                # Ascending exhaustive search: responsive apps need not be monotonic.
+                min_width = None
+                for width in range(MIN_SEARCH_WIDTH, size['width'] + 1):
+                    result = measure(width)
+                    observations.append({'width': width, 'ok': result['ok'], 'failed': result['failed']})
+                    if result['ok']:
+                        min_width = width
+                        break
+                for width in sorted(set(widths) | ({min_width} if min_width else set())):
+                    fresh_page(width)
+                    result = adapters.layout(page, config)
+                    click = adapters.click_check(page, config, touch)
+                    samples.append({'width': width, 'layout': result, 'click': click})
+                    capture(f'width-{width}')
+                fresh_page(size['width'])
+                click_result = adapters.click_check(page, config, touch)
+            else:
+                box = page.locator("#action").bounding_box()
+                x, y = int(box["x"] + box["width"] / 2), int(box["y"] + box["height"] / 2)
+                (page.touchscreen.tap if touch else page.mouse.click)(x, y)
+                clicks = int(page.locator("#action").get_attribute("data-clicks"))
+                click_result = {"ok": clicks == 1, "count": clicks, "input": "touch" if touch else "mouse", "point": [x, y]}
+                min_width = narrowest_ok_width(lambda w: measure(w)['ok'], MIN_SEARCH_WIDTH, size['width'])
+            resolved_url = page.url
             version = browser.version
+        except Exception:
+            if config and evidence_dir and 'page' in locals():
+                try:
+                    Path(evidence_dir).mkdir(parents=True, exist_ok=True)
+                    page.screenshot(path=str(Path(evidence_dir) / 'failure.png'), timeout=5000)
+                except Exception:
+                    pass  # preserve the original navigation/adapter failure
+            raise
         finally:
             browser.close()
     record = {
         "schema": FACTS_SCHEMA,
         "env": {"os": os_name(), "os_release": platform.release(), "runner_image": os.environ.get("ImageOS"),
                 "browser": browser_name, "channel": channel, "browser_version": version,
-                "profile": profile, "device": PROFILES[profile] or "Desktop", "headless": not headed},
+                "profile": profile, "device": PROFILES[profile] or "Desktop", "headless": not headed,
+                "device_validation": "emulation" if profile != "desktop" else "desktop-browser"},
         "facts": facts, "layout": layout, "libs": libs_check(facts.get("libs")),
-        "click": {"ok": clicks == 1, "count": clicks, "input": "touch" if touch else "mouse", "point": [x, y]},
+        "click": click_result,
         "min_ok_width": min_width,
     }
+    if target:
+        record['target'] = {**target, 'resolved_url': resolved_url, 'config': config}
+        record['samples'] = samples
+        record['width_search'] = {'method': 'ascending-exhaustive', 'low': MIN_SEARCH_WIDTH, 'high': size['width'],
+                                  'observations': observations, 'scope': 'layout-only'}
+        record['observed_at'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
     record["env"]["id"] = env_id(record["env"])
     record["verdict"] = verdict(record)
     return record
+
+
+def record_key(record: dict) -> str:
+    return record['env']['id'] + ('--' + record['target']['key'] if record.get('target') else '')
 
 
 def load_records(paths: list[str]) -> list[dict]:
@@ -175,7 +266,7 @@ def load_records(paths: list[str]) -> list[dict]:
             for item in items:
                 if not isinstance(item, dict) or item.get("schema") != FACTS_SCHEMA:
                     continue
-                records[item["env"]["id"]] = item
+                records[record_key(item)] = item
     if not records:
         raise ValueError("no btk-platform-facts/1 records found")
     return [records[k] for k in sorted(records)]
@@ -185,11 +276,18 @@ def summary_lines(records: list[dict]) -> list[str]:
     out = []
     for r in records:
         w, v = r["facts"]["window"], r["facts"]["viewport"]
-        failed = ",".join(r["layout"]["failed"] + r.get("libs", {}).get("failed", [])) or "-"
+        failures = r["layout"]["failed"] + r.get("libs", {}).get("failed", [])
+        if not r['click']['ok']:
+            failures = failures + ['initial_click']
+        for sample in r.get('samples', []):
+            failures += [str(sample['width']) + 'px:' + why for why in sample['layout']['failed']]
+            if not sample['click']['ok']:
+                failures.append(str(sample['width']) + 'px:click')
+        failed = ','.join(failures) or '-'
         out.append(f"{r['verdict']:4} {r['env']['id']:38} v{r['env']['browser_version']} "
                    f"frame={w['frame_width']}x{w['frame_height']} scrollbar={v['scrollbar_width']}/{v.get('scrollbar_classic')} "
                    f"dpr={v['device_pixel_ratio']} sans={r['facts'].get('fonts', {}).get('sans')} "
-                   f"min_ok_width={r['min_ok_width']} failed={failed}")
+                   f"min_ok_width={r['min_ok_width']} failed={failed} target={r.get('target', {}).get('adapter', 'fixture')}")
     return out
 
 
@@ -216,7 +314,7 @@ svg{width:100%;height:auto;border:1px solid var(--line);border-radius:6px}svg te
 .note{color:var(--muted);font-size:12px}
 </style></head><body><main>
 <h1>Platform matrix</h1>
-<p class="sub">同じ fixture を OS × ブラウザ × 端末で開いた実測値。タブを切り替えると、直前と値が変わった行が色付きになります（* は環境によって値が違う項目）。</p>
+<p class="sub">対象ごとの OS × ブラウザ × 端末の実測値（スマホはエミュレーション、実機ではありません）。タブを切り替えると、直前と値が変わった行が色付きになります（* は環境によって値が違う項目）。</p>
 <div id="tabs"></div>
 <div id="head"></div>
 <div class="grid"><div><table id="facts"></table></div><div><svg id="diagram" viewBox="0 0 420 300" role="img" aria-label="screen, window and viewport"></svg>
@@ -225,7 +323,7 @@ svg{width:100%;height:auto;border:1px solid var(--line);border-radius:6px}svg te
 <script type="application/json" id="data">__DATA__</script>
 <script>
 const records = JSON.parse(document.getElementById('data').textContent).records;
-const axes = [['OS', r => r.env.os], ['Browser', r => r.env.channel || r.env.browser], ['Device', r => r.env.device],
+const axes = [['Target', r => r.target?.key || 'fixture'], ['OS', r => r.env.os], ['Browser', r => r.env.channel || r.env.browser], ['Device', r => r.env.device],
               ['Mode', r => r.env.headless ? 'headless' : 'headed']];
 const sel = axes.map(([, f]) => f(records[0]));
 let previous = null;
@@ -282,9 +380,10 @@ function show() {
   if (!r) { head.textContent = 'この組み合わせは未測定です（薄いタブは測定がありません）'; diagram(null); previous = null; return; }
   const badge = Object.assign(document.createElement('span'), {className: 'badge ' + r.verdict, textContent: r.verdict});
   head.append(badge, ` ${r.env.id}  v${r.env.browser_version}  OS ${r.env.os_release}`,
+    `  ・対象 ${r.target?.url || 'fixture'} / ${r.env.device_validation || 'legacy'}  `,
     `  ・最小幅 ${r.min_ok_width ?? '—'}px`, r.layout.failed.length ? `  ・崩れ: ${r.layout.failed.join(', ')}` : '',
     `  ・クリック ${r.click.ok ? 'OK' : 'NG'}（${r.click.input} @ ${r.click.point.join(',')}）`);
-  const now = new Map(flat({facts: r.facts, min_ok_width: r.min_ok_width, browser_version: r.env.browser_version}));
+  const now = new Map(flat({facts: r.facts, min_ok_width: r.min_ok_width, browser_version: r.env.browser_version, samples: JSON.stringify(r.samples || [])}));
   let group = '';
   for (const [key, value] of now) {
     const top = key.split('.').slice(0, 2).join('.');
@@ -316,6 +415,10 @@ def main(argv=None) -> int:
     c.add_argument("--channel", help="installed branded browser, e.g. chrome or msedge (chromium only)")
     c.add_argument("--profile", choices=sorted(PROFILES), default="desktop")
     c.add_argument("--headed", action="store_true", help="a real window, so the frame size is measured")
+    c.add_argument('--adapter', help='JSON adapter for an application (default: original local fixture)')
+    c.add_argument('--url', help='override adapter HTTP(S) target URL')
+    c.add_argument('--widths', nargs='+', type=int, default=[320, 390], help='additional real-click widths')
+    c.add_argument('--evidence-dir', help='screenshots; use a separate directory per environment')
     c.add_argument("--out", required=True, help="directory for <env-id>.json")
     m = sub.add_parser("merge", help="combine records into one dataset")
     m.add_argument("inputs", nargs="+", help="directories or JSON files")
@@ -331,17 +434,25 @@ def main(argv=None) -> int:
             if args.channel and args.browser != "chromium":
                 raise ValueError("--channel needs --browser chromium")
             try:
-                record = collect(args.browser, args.profile, headed=args.headed, channel=args.channel)
+                if any(w < MIN_SEARCH_WIDTH or w > 3840 for w in args.widths):
+                    raise ValueError('widths must be between 250 and 3840')
+                record = collect(args.browser, args.profile, headed=args.headed, channel=args.channel,
+                                 adapter=args.adapter, url=args.url, widths=tuple(args.widths), evidence_dir=args.evidence_dir)
             except Exception as exc:  # a browser that cannot launch or navigate is a finding, not a crash
                 where = f"{args.browser}{'/' + args.channel if args.channel else ''} {args.profile}" \
                         f"{' headed' if args.headed else ''}"
                 first = str(exc).strip().splitlines()[0][:300] if str(exc).strip() else ""
+                Path(args.out).mkdir(parents=True, exist_ok=True)
+                tag = Path(args.adapter).stem if args.adapter else 'fixture'
+                error_path = Path(args.out) / f"error-{args.browser}-{args.profile}-{tag}.json"
+                error_path.write_text(json.dumps({'schema': 'btk-platform-error/1', 'environment': where,
+                                     'adapter': tag, 'error_type': type(exc).__name__, 'message': first}) + '\n', encoding='utf-8')
                 print(f"error: {where}: {type(exc).__name__}: {first}", file=sys.stderr)
                 if os.environ.get("GITHUB_ACTIONS"):
                     print(f"::error title=platform_probe collect::{where}: {type(exc).__name__}: {first}")
                 return 2
             Path(args.out).mkdir(parents=True, exist_ok=True)
-            path = Path(args.out) / f"{record['env']['id']}.json"
+            path = Path(args.out) / f"{record_key(record)}.json"
             path.write_text(json.dumps(record, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
             print(summary_lines([record])[0])
             return 0 if record["verdict"] == "pass" else 1

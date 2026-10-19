@@ -47,6 +47,7 @@ body{margin:0;font:16px system-ui,sans-serif;background:#fff;color:#111}
 <script src="../vendor/js/seedrandom.js" integrity="sha384-Qj6XJWUAR0RXLEb7I9aNoEMBOPRraB1dFw5WXtFDYrLgA3N/qQWVtz9YLeo0IZV+" crossorigin="anonymous"></script>
 <script src="../vendor/js/seedrandom.js" integrity="sha384-OLBgp1GsljhM2TJ+sbHjaiH9txEUvgdDTAzHv2P24donTt6/529l+9Ua0vFImLlb" crossorigin="anonymous"
         onload="window.__sriRefused=false" onerror="window.__sriRefused=true"></script>
+<script src="../scripts/platform_facts.js"></script>
 <script>
 document.getElementById('action').addEventListener('click', e => {
   e.currentTarget.dataset.clicks = String(+e.currentTarget.dataset.clicks + 1);
@@ -74,39 +75,13 @@ window.__layoutChecks = () => {
   return { ok: failed.length === 0, failed };
 };
 
-window.__platformFacts = () => {
-  const de = document.documentElement, vv = window.visualViewport, s = screen;
-  const mq = q => matchMedia(q).matches;
-  const safe = getComputedStyle(document.getElementById('safe'));
-  const ctx = document.createElement('canvas').getContext('2d');
-  const width = font => { ctx.font = font; return +ctx.measureText('Hamburgefonstiv 日本語 0123').width.toFixed(2); };
-  const r = document.getElementById('action').getBoundingClientRect();
-  return {
-    screen: { width: s.width, height: s.height, avail_width: s.availWidth, avail_height: s.availHeight,
-              avail_left: s.availLeft ?? null, avail_top: s.availTop ?? null, color_depth: s.colorDepth },
-    window: { outer_width: outerWidth, outer_height: outerHeight, inner_width: innerWidth, inner_height: innerHeight,
-              screen_x: screenX, screen_y: screenY,
-              frame_width: outerWidth - innerWidth, frame_height: outerHeight - innerHeight },
-    viewport: { client_width: de.clientWidth, client_height: de.clientHeight,
-                scrollbar_width: innerWidth - de.clientWidth,
-                // Classic scrollbars take width; overlay scrollbars (macOS default, mobile) take none.
-                scrollbar_classic: (b => b.offsetWidth - b.clientWidth)(document.getElementById('scrollbox')),
-                visual_width: vv ? +vv.width.toFixed(2) : null, visual_height: vv ? +vv.height.toFixed(2) : null,
-                visual_scale: vv ? vv.scale : null, device_pixel_ratio: devicePixelRatio },
-    safe_area: { top: safe.paddingTop, right: safe.paddingRight, bottom: safe.paddingBottom, left: safe.paddingLeft },
-    input: { pointer_fine: mq('(pointer: fine)'), pointer_coarse: mq('(pointer: coarse)'), hover: mq('(hover: hover)'),
-             max_touch_points: navigator.maxTouchPoints },
-    preference: { dark: mq('(prefers-color-scheme: dark)'), reduced_motion: mq('(prefers-reduced-motion: reduce)') },
-    fonts: { sans: width('16px sans-serif'), serif: width('16px serif'), mono: width('16px monospace'),
-             system_ui: width('16px system-ui') },
-    action_box: { x: +r.x.toFixed(2), y: +r.y.toFixed(2), width: +r.width.toFixed(2), height: +r.height.toFixed(2) },
+window.__platformFacts = () => ({
+  ...window.__btkPlatformFacts(document.getElementById('action')),
     libs: { purify: window.DOMPurify ? DOMPurify.version : null,
             sanitized: window.DOMPurify ? DOMPurify.sanitize('<img src=x onerror=alert(1)><b>ok</b>') : null,
             seed: typeof Math.seedrandom === 'function' ? new Math.seedrandom('platform-matrix')() : null,
             sri_refused: window.__sriRefused ?? null },
-    platform: { ua: navigator.userAgent, platform: navigator.userAgentData?.platform || navigator.platform,
-                mobile: navigator.userAgentData?.mobile ?? null, language: navigator.language },
-  };
-};
+ });
+
 </script>
 </body></html>
