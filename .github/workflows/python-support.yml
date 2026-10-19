@@ -56,6 +56,13 @@ jobs:
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           python-version: '3.11'
+      - name: Fetch pinned shared vendor tool
+        uses: actions/checkout@v7
+        with:
+          repository: myon-bioinformatics/myon-bioinformatics
+          ref: 1eda992aa6fa31a902e2c06428e53ab17e8fe3c1
+          path: .vendor-sync-tools
+          persist-credentials: false
       - name: Resolve all supported groups and image extra from the lock
         run: uv sync --locked --all-groups --all-extras
       - name: Full browserless regression suite at the supported floor
