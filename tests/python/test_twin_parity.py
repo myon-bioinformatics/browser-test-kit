@@ -5,6 +5,7 @@ differently; they must agree on accept/reject and on every accepted value.
 """
 import importlib.util
 import json
+import os
 import random
 import re
 import shutil
@@ -27,7 +28,9 @@ def _load(name):
 tp = _load("twin_parity")
 interaction = _load("interaction")
 route_trail = _load("route_trail")
-needs_node = pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+# Locally a missing node skips; on CI it must fail, or the parity check would pass by not running.
+needs_node = pytest.mark.skipif(shutil.which("node") is None and not os.environ.get("CI"),
+                                reason="node is not installed")
 
 
 def assert_twins_agree(py_fn, module, export, cases):
