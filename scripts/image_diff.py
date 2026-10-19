@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Compare two images (files or zip members) and print one line: size, changed pixels, bbox, max delta.
+"""Compare two images (files or zip members) and print size, changed pixels, bbox, max delta.
 
 Needs Pillow (only dependency). Optional --clip X,Y,W,H in CSS px, scaled by
 image width / --viewport-width (screenshots taken at devicePixelRatio != 1).
+Optional --diff-image OUT.png saves a visual diff highlight PNG.
+Optional --json outputs structured JSON.
 Source forms: PATH or ZIP::member. Exit 0 = identical (within --tolerance), 1 = differs, 2 = input error.
 """
 from __future__ import annotations
@@ -99,11 +101,31 @@ def scaled_clip_box(
     return left, top, right, bottom
 
 
-def compare(image_a, image_b, clip=None, viewport_width=None, tolerance=0):
+from pathlib import Path
+import json
+
+
+def generate_diff_image(work_b, mask, out_path: str) -> None:
+    _require_pillow_import()
+    from PIL import Image
+
+    bg = work_b.convert("RGBA")
+    dim_bg = Image.blend(bg, Image.new("RGBA", bg.size, (255, 255, 255, 255)), 0.5)
+    red_layer = Image.new("RGBA", bg.size, (255, 0, 0, 255))
+    diff_canvas = Image.composite(red_layer, dim_bg, mask)
+
+    out_file = Path(out_path)
+    out_file.parent.mkdir(parents=True, exist_ok=True)
+    diff_canvas.save(out_file, format="PNG")
+
+
+def compare(image_a, image_b, clip=None, viewport_width=None, tolerance=0, diff_image_path=None):
     _require_pillow_import()
     from PIL import ImageChops
 
     if image_a.size != image_b.size:
+        if diff_image_path is not None:
+            raise ValueError("cannot generate diff image for images with different dimensions")
         return {
             "size_a": image_a.size,
             "size_b": image_b.size,
@@ -122,7 +144,8 @@ def compare(image_a, image_b, clip=None, viewport_width=None, tolerance=0):
     mask = max_band.point(lambda value: 255 if value > tolerance else 0, mode="L")
     changed = mask.histogram()[255]
     total = mask.width * mask.height
-    return {
+
+    result = {
         "size": work_a.size,
         "changed": changed,
         "ratio": round(changed / total, 6) if total else 0,
@@ -131,6 +154,12 @@ def compare(image_a, image_b, clip=None, viewport_width=None, tolerance=0):
         "same_size": True,
         "differs": changed > 0,
     }
+
+    if diff_image_path is not None:
+        generate_diff_image(work_b, mask, diff_image_path)
+        result["diff_image"] = str(diff_image_path)
+
+    return result
 
 
 def format_result(result: dict) -> str:
@@ -144,6 +173,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--clip", type=parse_clip, metavar="X,Y,W,H")
     parser.add_argument("--viewport-width", type=finite_positive)
     parser.add_argument("--tolerance", type=int, default=0)
+    parser.add_argument("--json", action="store_true", help="output result as JSON")
+    parser.add_argument("--diff-image", metavar="PATH",
+                        help="save a visual PNG diff image highlighting changed pixels to PATH")
     args = parser.parse_args(argv)
 
     if not 0 <= args.tolerance <= 255:
@@ -163,13 +195,18 @@ def main(argv: list[str] | None = None) -> int:
             clip=args.clip,
             viewport_width=args.viewport_width,
             tolerance=args.tolerance,
+            diff_image_path=args.diff_image,
         )
     except SystemExit:
         raise
     except (OSError, KeyError, zipfile.BadZipFile, ValueError) as exc:
         print(f"image_diff: {exc}", file=sys.stderr)
         return 2
-    print(format_result(result))
+
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        print(format_result(result))
     return 1 if result["differs"] else 0
 
 

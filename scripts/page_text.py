@@ -48,7 +48,6 @@ from __future__ import annotations
 
 import argparse
 import datetime
-import difflib
 import http.client
 import json
 import re
@@ -500,11 +499,11 @@ def compare_rendered_text(static_text: str, rendered_text: str) -> dict:
     - JS_RENDERED_ADDED: rendered text contains content missing from static HTML (e.g. JS SPA rendering / dynamic hydration).
     - CSS_HIDDEN_REMOVED: static HTML text contains content missing from rendered text (e.g. CSS display:none / stylesheet hiding).
     - MUTATED_TEXT: both static-only and rendered-only differences exist.
-
-    Both sides go through the same whitespace normalization as the static extraction.
     """
-    static_lines = [line.strip() for line in _normalize(static_text).splitlines() if line.strip()]
-    rendered_lines = [line.strip() for line in _normalize(rendered_text).splitlines() if line.strip()]
+    import difflib
+
+    static_lines = [line.strip() for line in static_text.splitlines() if line.strip()]
+    rendered_lines = [line.strip() for line in rendered_text.splitlines() if line.strip()]
 
     matcher = difflib.SequenceMatcher(None, static_lines, rendered_lines)
     ratio = round(matcher.ratio(), 4)
@@ -543,29 +542,6 @@ def compare_rendered_text(static_text: str, rendered_text: str) -> dict:
     }
 
 
-def rendered_input(raw: str) -> tuple[str, dict]:
-    """Return ``(rendered_text, info)`` for ``--compare-rendered`` input.
-
-    A JSON object with a ``visible`` key (the ``innerText`` that
-    ``examples/capture_browser_dom.py`` stores, schema ``btk-browser-dom/1``)
-    contributes that string; ``text`` (``textContent``) and ``html`` are not
-    rendered text and are never used. Anything else is taken as plain
-    rendered text. Raises ``ValueError`` when ``visible`` is not a string.
-    """
-    stripped = raw.lstrip()
-    if stripped.startswith("{"):
-        try:
-            data = json.loads(stripped)
-        except ValueError:
-            data = None
-        if isinstance(data, dict) and "visible" in data:
-            if not isinstance(data["visible"], str):
-                raise ValueError("captured DOM JSON has no innerText string in 'visible'")
-            return data["visible"], {"kind": "dom-json", "schema": data.get("schema"),
-                                     "selector": data.get("selector")}
-    return raw, {"kind": "text", "schema": None, "selector": None}
-
-
 def _positive(kind: Callable[[str], Any]) -> Callable[[str], Any]:
     def parse(value: str) -> Any:
         number = kind(value)
@@ -592,8 +568,7 @@ def build_parser() -> argparse.ArgumentParser:
                                                         "title contains QUERY (\"\" lists every candidate)")
     parser.add_argument("--limit", type=_positive(int), default=20, help="maximum --find matches (default: 20)")
     parser.add_argument("--compare-rendered", metavar="FILE",
-                        help="compare static extracted text against browser-rendered text from FILE (or - for "
-                             "stdin): plain text, or capture_browser_dom.py JSON (its 'visible' innerText)")
+                        help="compare static extracted text against browser-rendered text from FILE (or - for stdin)")
     return parser
 
 
@@ -652,30 +627,13 @@ def main(argv: list[str] | None = None) -> int:
         except OSError as error:
             print(f"error reading --compare-rendered input: {error}", file=sys.stderr)
             return 2
-        if len(rendered_raw.encode("utf-8")) > args.max_bytes:
-            print(f"error: --compare-rendered input exceeds --max-bytes ({args.max_bytes})", file=sys.stderr)
-            return 2
-        if result["truncated"]:
-            print(f"error: static text was truncated to {args.max_chars} of {result['total_chars']} characters; "
-                  "raise --max-chars to compare", file=sys.stderr)
-            return 2
-        try:
-            rendered_text, rendered_info = rendered_input(rendered_raw)
-        except ValueError as error:
-            print(f"error: {error}", file=sys.stderr)
-            return 2
-        selector = rendered_info["selector"]
-        if selector is not None and selector != result["source_element"]:
-            print(f"note: rendered text was captured from selector {selector!r} but static text comes from "
-                  f"<{result['source_element']}>; differences may only reflect the different scope", file=sys.stderr)
 
-        comparison = compare_rendered_text(result["text"], rendered_text)
+        comparison = compare_rendered_text(result["text"], rendered_raw)
         if args.json:
             output = {
                 "source_url": url,
                 "title": result["title"],
                 "source_element": result["source_element"],
-                "rendered_input": rendered_info,
                 "comparison": comparison,
             }
             print(json.dumps(output, ensure_ascii=False, indent=2))

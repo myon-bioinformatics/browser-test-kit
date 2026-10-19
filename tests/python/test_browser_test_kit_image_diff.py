@@ -295,3 +295,62 @@ def test_invalid_image_bytes_exit_two(tmp_path, in_zip):
     assert proc.returncode == 2
     assert "image_diff:" in proc.stderr
     assert "Traceback" not in proc.stderr
+
+
+def test_json_output_format(tmp_path: Path) -> None:
+    import json
+
+    base = solid_rgba((50, 50), (255, 255, 255, 255))
+    changed = base.copy()
+    ImageDraw.Draw(changed).rectangle((10, 10, 19, 19), fill=(0, 0, 0, 255))
+    left = tmp_path / "a.png"
+    right = tmp_path / "b.png"
+    write_png(left, base)
+    write_png(right, changed)
+
+    proc = run_image_diff(str(left), str(right), "--json")
+    assert proc.returncode == 1
+    data = json.loads(proc.stdout)
+    assert data["size"] == [50, 50]
+    assert data["changed"] == 100
+    assert data["same_size"] is True
+    assert data["differs"] is True
+
+
+def test_diff_image_creation(tmp_path: Path) -> None:
+    import json
+
+    base = solid_rgba((50, 50), (255, 255, 255, 255))
+    changed = base.copy()
+    ImageDraw.Draw(changed).rectangle((10, 10, 19, 19), fill=(0, 0, 255, 255))
+    left = tmp_path / "a.png"
+    right = tmp_path / "b.png"
+    diff_out = tmp_path / "diff.png"
+    write_png(left, base)
+    write_png(right, changed)
+
+    proc = run_image_diff(str(left), str(right), "--diff-image", str(diff_out), "--json")
+    assert proc.returncode == 1
+    assert diff_out.is_file()
+    assert diff_out.stat().st_size > 0
+
+    diff_img = Image.open(diff_out)
+    assert diff_img.size == (50, 50)
+    # Check that changed pixel area has red component highlighted
+    pixel = diff_img.getpixel((15, 15))
+    assert pixel[0] > 200  # Highlight red channel
+
+    data = json.loads(proc.stdout)
+    assert data["diff_image"] == str(diff_out)
+
+
+def test_diff_image_size_mismatch_error(tmp_path: Path) -> None:
+    a = tmp_path / "a.png"
+    b = tmp_path / "b.png"
+    diff_out = tmp_path / "diff.png"
+    write_png(a, solid_rgba((10, 10), (0, 0, 0, 255)))
+    write_png(b, solid_rgba((20, 20), (0, 0, 0, 255)))
+
+    proc = run_image_diff(str(a), str(b), "--diff-image", str(diff_out))
+    assert proc.returncode == 2
+    assert "different dimensions" in proc.stderr

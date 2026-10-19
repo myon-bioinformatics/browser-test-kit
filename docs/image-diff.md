@@ -6,8 +6,11 @@ Canonical implementation lives in this repository (`scripts/image_diff.py`). Pil
 
 ```bash
 pip install pillow   # or: pip install browser-test-kit-tools[image]
-python scripts/image_diff.py a.png b.png [--clip X,Y,W,H] [--viewport-width CSS_PX] [--tolerance N]
+python scripts/image_diff.py a.png b.png [--clip X,Y,W,H] [--viewport-width CSS_PX] [--tolerance N] [--json] [--diff-image OUT.png]
 ```
+
+- `--diff-image OUT.png` saves a PNG diff image highlighting changed pixels in red over a dimmed baseline.
+- `--json` outputs structured comparison results as JSON.
 
 Exit `0` = identical within tolerance, `1` = differs, `2` = input error or missing Pillow.
 

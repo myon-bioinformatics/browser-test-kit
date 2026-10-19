@@ -30,9 +30,6 @@ python examples/capture_browser_dom.py http://127.0.0.1:8000/index.html --aria-s
 ```
 
 Use existing `scripts/page_text.py` for static extraction without a browser.
-`python scripts/page_text.py <URL> --compare-rendered page.json` compares that static
-text with this capture's `visible` (`innerText`); capture the same element
-(`--selector main` when the page has a `<main>`) so the scopes match.
 GHI's selected-body HTML reader remains a separate downstream consumer. No GHI
 import or vendor update is required here. Local fixture coverage runs in the
 existing Python Playwright CI lane; external sites are not core test fixtures.
