@@ -100,6 +100,13 @@ def resolve(trail: str, registry: dict, *, base: str = "http://localhost:8080/",
 
 
 MAX_STEPS = 1000
+# Shared with route_trail_node.mjs EXECUTION_URL: the same regex source, character for
+# character (tests compare them), used with fullmatch here and ^...$ there. Scheme is
+# case-insensitive; no ASCII controls, spaces or backslashes anywhere; HTTP(S) needs a host without
+# credentials, '%' or brackets (an IPv6 literal is the only bracketed form) and an optional numeric
+# port; file URLs are local absolute paths (file:///path or file://localhost/path).
+EXECUTION_URL_SOURCE = r'^(?:[Hh][Tt][Tt][Pp][Ss]?:\/\/(?:[^\x00-\x20\x7f/?#@\\%:\[\]]+|\[[0-9A-Fa-f:.]+\])(?::[0-9]{1,5})?(?:[/?#][^\x00-\x20\x7f\\]*)?|[Ff][Ii][Ll][Ee]:\/\/(?:[Ll][Oo][Cc][Aa][Ll][Hh][Oo][Ss][Tt])?\/[^\x00-\x20\x7f\\]*)$'
+EXECUTION_URL = re.compile(EXECUTION_URL_SOURCE)
 MAX_TIMEOUT = 120000
 
 
@@ -160,16 +167,10 @@ def validate_steps(steps, timeout_ms=10000):
         if any(not isinstance(step.get(k), str) for k in ('emoji', 'route', 'url')):
             raise ValueError('step requires emoji, route and url strings')
         url = step['url']
-        if len(url) > 4096 or any(ord(c) < 32 for c in url) or '\\' in url:
-            raise ValueError('invalid execution URL')
-        parsed = urlsplit(url)
-        if parsed.scheme not in {'http', 'https', 'file'} or parsed.username or parsed.password:
+        # One explicit rule shared with route_trail_node.mjs (EXECUTION_URL): each language's own
+        # URL parser (urlsplit vs WHATWG URL) accepts and repairs different inputs (PARSER_PARITY).
+        if len(url) > 4096 or not EXECUTION_URL.fullmatch(url):
             raise ValueError('execution URLs must be absolute HTTP(S) or local file URLs without credentials')
-        if parsed.scheme == 'file':
-            if parsed.netloc not in {'', 'localhost'} or not parsed.path.startswith('/'):
-                raise ValueError('file URL must refer to a local absolute path')
-        elif not parsed.hostname:
-            raise ValueError('execution URL requires a host')
         _ready_spec(step.get('ready'))
     return steps
 

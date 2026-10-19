@@ -4,6 +4,8 @@ import {pathToFileURL} from 'node:url';
 import {createRequire} from 'node:module';
 import {resolve} from 'node:path';
 const receipt=(steps,total,error)=>({schema:'route-trail-run/1',ok:!error,total,completed:steps.length,steps,...(error?{error}:{})});
+// Shared with route_trail.py EXECUTION_URL_SOURCE, character for character (see the comment there).
+export const EXECUTION_URL = /^(?:[Hh][Tt][Tt][Pp][Ss]?:\/\/(?:[^\x00-\x20\x7f/?#@\\%:\[\]]+|\[[0-9A-Fa-f:.]+\])(?::[0-9]{1,5})?(?:[/?#][^\x00-\x20\x7f\\]*)?|[Ff][Ii][Ll][Ee]:\/\/(?:[Ll][Oo][Cc][Aa][Ll][Hh][Oo][Ss][Tt])?\/[^\x00-\x20\x7f\\]*)$/;
 export class TrailExecutionError extends Error {
   constructor(result){super(result.error.message);this.receipt=result;}
 }
@@ -13,11 +15,8 @@ export function validateSteps(steps,timeoutMs=10000){
   for(const step of steps){
     if(!step||typeof step!=='object'||Array.isArray(step)||Object.keys(step).some(k=>!['id','emoji','route','url','title','ready'].includes(k)))throw Error('invalid execution step');
     if(['emoji','route','url'].some(k=>typeof step[k]!=='string'))throw Error('step requires emoji, route and url strings');
-    if(step.url.length>4096||/[\u0000-\u001f\\]/.test(step.url))throw Error('invalid execution URL');
-    if(!/^(https?:\/\/|file:\/\/)/.test(step.url))throw Error('execution URL must be absolute');
-    const url=new URL(step.url);
-    if(!['http:','https:','file:'].includes(url.protocol)||url.username||url.password)throw Error('execution URLs require HTTP(S) or local file without credentials');
-    if(url.protocol==='file:' && url.hostname)throw Error('file URL must be local');
+    // Same rule as route_trail.py EXECUTION_URL; WHATWG URL would repair inputs urlsplit rejects.
+    if(step.url.length>4096||!EXECUTION_URL.test(step.url))throw Error('execution URLs must be absolute HTTP(S) or local file URLs without credentials');
     if(step.ready!=null){
       const r=step.ready;
       if(typeof r!=='object'||Array.isArray(r)||Object.keys(r).some(k=>!['selector','text'].includes(k))||typeof r.selector!=='string'||!r.selector||r.selector.length>512)throw Error('invalid ready selector');
