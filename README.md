@@ -115,6 +115,7 @@ python scripts/page_text.py fixtures/index.html --json
 curl -sL https://example.com/ | python scripts/page_text.py - --url https://example.com/
 python scripts/page_text.py <URL> --find "status page"
 python scripts/page_text.py <URL> --compare-rendered rendered.txt
+python scripts/page_text.py <URL> --compare-rendered page.json   # capture_browser_dom.py output
 ```
 
 - The text comes from the first `<main>`, else the first `<article>`, else `<body>`; `script`, `style`, `noscript`, `template`, `svg`, and `textarea` are dropped with their contents, as is the never-rendered fallback content of `iframe`, `noembed`, and `noframes`.
@@ -123,7 +124,7 @@ python scripts/page_text.py <URL> --compare-rendered rendered.txt
 - `--json` adds `truncated`, `total_chars`, `bytes`, `byte_limit_hit`, `status`, `content_type`, and `fetched_at`. `--find ""` lists every candidate. `--max-chars`, `--max-bytes`, and `--timeout` bound the work.
 - Exit codes: 0 OK (or EQUAL comparison); 1 no `--find` match, non-EQUAL comparison, or an HTTP error status (the page is still printed; a 404 adds a `LOGIN_WALL_AS_404` hint); 2 usage, input, or network error.
 - JavaScript is not run and CSS is not evaluated, so an empty result on a single-page app is `PAGE_TEXT_AS_RENDERED_TEXT`, not an empty page. Core tests use only local fixtures and a local HTTP server.
-- `--compare-rendered FILE` compares static extracted text against Playwright's `inner_text()` (or terminal-browser's rendered text) from a file or stdin, classifying differences into `EQUAL`, `JS_RENDERED_ADDED`, `CSS_HIDDEN_REMOVED`, or `MUTATED_TEXT`.
+- `--compare-rendered FILE` compares static extracted text against Playwright's `inner_text()` (or terminal-browser's rendered text) from a file or stdin, classifying differences into `EQUAL`, `JS_RENDERED_ADDED`, `CSS_HIDDEN_REMOVED`, or `MUTATED_TEXT`. A `capture_browser_dom.py` JSON file contributes its `visible` (`innerText`); `textContent` and `html` are never used as rendered text. A truncated static text (`--max-chars`) is refused with exit 2.
 
 ### Hit maps with few probes (`scripts/hit_probe.py`, `littlebit-approx`)
 

@@ -438,3 +438,61 @@ def test_compare_rendered_cli_missing_file() -> None:
     result = run_cli(str(SAMPLE), "--compare-rendered", "nonexistent/file.txt")
     assert result.returncode == 2
     assert "no such file" in result.stderr.decode("utf-8")
+
+
+def test_rendered_input_reads_dom_capture_visible_only() -> None:
+    capture = json.dumps({"schema": "btk-browser-dom/1", "selector": "main", "html": "<p>Hidden</p>",
+                          "text": "Hidden", "visible": "Shown"})
+    assert page_text.rendered_input(capture) == ("Shown", {"kind": "dom-json", "schema": "btk-browser-dom/1",
+                                                          "selector": "main"})
+    assert page_text.rendered_input("plain\ntext")[1]["kind"] == "text"
+    assert page_text.rendered_input("{not json")[0] == "{not json"
+    assert page_text.rendered_input('{"text": "x"}')[1]["kind"] == "text"  # textContent is not rendered text
+    with pytest.raises(ValueError):
+        page_text.rendered_input(json.dumps({"visible": None}))
+
+
+def test_compare_rendered_normalizes_whitespace_on_both_sides() -> None:
+    assert page_text.compare_rendered_text("a b", "a    b\n\n\n")["classification"] == "EQUAL"
+
+
+def test_compare_rendered_cli_dom_json(tmp_path: Path) -> None:
+    html_file = tmp_path / "page.html"
+    html_file.write_text("<main><h1>Title</h1><p>Static body</p></main>", encoding="utf-8")
+    capture = tmp_path / "page.json"
+    capture.write_text(json.dumps({"schema": "btk-browser-dom/1", "selector": "body",
+                                   "visible": "Title\nStatic body\nDynamic JS badge"}), encoding="utf-8")
+    result = run_cli(str(html_file), "--compare-rendered", str(capture), "--json")
+    assert result.returncode == 1
+    data = json.loads(result.stdout.decode("utf-8"))
+    assert data["comparison"]["classification"] == "JS_RENDERED_ADDED"
+    assert data["comparison"]["only_rendered"] == ["Dynamic JS badge"]
+    assert data["rendered_input"]["kind"] == "dom-json"
+    assert "captured from selector 'body'" in result.stderr.decode("utf-8")
+
+    capture.write_text(json.dumps({"visible": None}), encoding="utf-8")
+    assert run_cli(str(html_file), "--compare-rendered", str(capture)).returncode == 2
+
+
+def test_compare_rendered_cli_refuses_truncated_or_oversized(tmp_path: Path) -> None:
+    rendered = tmp_path / "rendered.txt"
+    rendered.write_text("x" * 50, encoding="utf-8")
+    truncated = run_cli(str(SAMPLE), "--compare-rendered", str(rendered), "--max-chars", "5")
+    assert truncated.returncode == 2 and "raise --max-chars" in truncated.stderr.decode("utf-8")
+    big = tmp_path / "big.txt"
+    big.write_text("y" * (SAMPLE.stat().st_size + 10), encoding="utf-8")
+    oversized = run_cli(str(SAMPLE), "--compare-rendered", str(big), "--max-bytes", str(SAMPLE.stat().st_size + 1))
+    assert oversized.returncode == 2 and "exceeds --max-bytes" in oversized.stderr.decode("utf-8")
+
+
+def test_compare_rendered_cli_reads_stdin_and_reports_os_error(tmp_path: Path) -> None:
+    static_text = page_text.page_text(SAMPLE.read_text(encoding="utf-8"))["text"]
+    ok = run_cli(str(SAMPLE), "--compare-rendered", "-", stdin=static_text.encode("utf-8"))
+    assert ok.returncode == 0 and "Classification: EQUAL" in ok.stdout.decode("utf-8")
+    bad = tmp_path / "bad.txt"
+    bad.write_text("x", encoding="utf-8")
+    bad.chmod(0)
+    if os.access(bad, os.R_OK):
+        pytest.skip("running as a user that can read mode-0 files")
+    denied = run_cli(str(SAMPLE), "--compare-rendered", str(bad))
+    assert denied.returncode == 2 and "error reading --compare-rendered input" in denied.stderr.decode("utf-8")
