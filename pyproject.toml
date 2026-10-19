@@ -11,6 +11,19 @@ requires-python = ">=3.9"
 [project.optional-dependencies]
 image = ["pillow>=10"]
 
+# Test-only. The default dev group is the browserless lane; browser adds Playwright.
+# Floors stay open-ended (>=). Resolved versions are pinned in uv.lock.
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "PyYAML>=6.0.3",
+    "pillow>=10",
+    "pip>=23",
+]
+browser = [
+    "playwright>=1.63.0; python_version >= '3.10'",
+]
+
 [tool.setuptools]
 # Every scripts/*.py becomes a top-level module (src-layout discovery), so
 # `python -m check_png ...` works from any directory after installation.

@@ -15,10 +15,10 @@ See also [screenshot-evidence.md](screenshot-evidence.md) for how this fits next
 
 ## Regression tests
 
-Install test dependencies (`requirements-test.txt` includes Pillow) and run:
+Install test dependencies (`uv run --locked` includes Pillow) and run:
 
 ```bash
-python -m pytest tests/python/test_browser_test_kit_image_diff.py
+uv run --locked python -m pytest tests/python/test_browser_test_kit_image_diff.py
 ```
 
 The test module imports Pillow directly so a missing dependency fails collection instead of skipping regressions. Runtime imports remain lazy; the missing-Pillow exit-2 diagnostic is tested separately by blocking PIL imports.
