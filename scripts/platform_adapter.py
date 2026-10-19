@@ -72,9 +72,9 @@ def load_adapter(path: str | Path) -> dict:
     validate_url(config.get('url', ''))
     provenance = config.get('provenance')
     if provenance is not None:
-        path, field = (provenance.get('path'), provenance.get('field')) if isinstance(provenance, dict) else (None, None)
-        if (not isinstance(path, str) or not path or path.startswith('/') or '..' in path.split('/')
-                or urlsplit(path).scheme or urlsplit(path).netloc):
+        source, field = (provenance.get('path'), provenance.get('field')) if isinstance(provenance, dict) else (None, None)
+        if (not isinstance(source, str) or not source or source.startswith('/') or '..' in source.split('/')
+                or urlsplit(source).scheme or urlsplit(source).netloc):
             raise ValueError('provenance path must be a relative same-site path')
         if not isinstance(field, list) or not field or not all(isinstance(k, str) and k for k in field):
             raise ValueError('provenance field must be a nonempty list of keys')
