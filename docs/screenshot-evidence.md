@@ -11,7 +11,7 @@ and framework scroll adapters in the owning application.
 - `scripts/image_diff.py`: optional Pillow pixel diff for two PNGs (paths or
   `ZIP::member`). Prints one line (`size`, `changed`, `ratio`, `bbox`, `max_delta`);
   exit `0` when identical within `--tolerance`, `1` when they differ, `2` on input
-  errors. Install with `pip install pillow` or `pip install browser-test-kit-tools[image]`.
+  errors (including unsupported Python/Pillow). Requires Python 3.11+. Install with `python -m pip install 'pillow>=13'` or `python -m pip install 'browser-test-kit-tools[image]'`.
   Details: [image-diff.md](image-diff.md).
 
   ```sh

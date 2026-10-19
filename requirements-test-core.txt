@@ -1,4 +1,5 @@
+# Development and tests require Python >=3.11. Prefer uv run --locked.
 pytest>=8
 PyYAML>=6.0.3
-pillow>=10
-pip>=23
+pillow>=13
+pip>=26.2
