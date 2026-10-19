@@ -28,6 +28,13 @@ Routes and emojis follow flutter_navigation_basic's generated page identities
 it asks for geolocation permission. Screenshots are stored per page and environment
 (`app-results/<adapter>/<OS>-<browser>-<profile>/`).
 
+The report job then builds `compare/` in the `platform-app-matrix` artifact with two
+pinned tools: Ironmate's `browser_matrix.py` (rows = pages, columns = environments,
+`sheet.png`, tiles and tile-level differences in `report.json`) and web-ui's
+`tool/capture_matrix.py` (`viewer.html`, one section per page opened from its emoji,
+with each environment's pass/fail and deployed build). Both are checked out at merged
+main commits named in the workflow; update the SHAs together when either tool changes.
+
 This is deliberately a selected-control contract, not a guarantee for every screen,
 all painted text, or every app feature. Flutter's invisible semantics labels do not
 have the same glyph metrics as its canvas. Their `scrollWidth` is not treated as

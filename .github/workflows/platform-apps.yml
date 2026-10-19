@@ -105,6 +105,45 @@ jobs:
           python -S scripts/platform_probe.py render app-matrix/dataset.json --out app-matrix/index.html
           python -S scripts/platform_probe.py summary app-matrix/dataset.json > app-matrix/summary.txt || true
           { echo '```text'; cat app-matrix/summary.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      # Compare the same screenshots across environments (Ironmate) and view them by page
+      # emoji (web-ui). Both tools are pinned to merged main commits; bump the SHAs together
+      # with their tests when either tool changes.
+      - uses: actions/setup-python@v7
+        if: always()
+        with:
+          python-version: '3.13'
+      - uses: actions/checkout@v7
+        if: always()
+        with:
+          repository: myon-bioinformatics/Ironmate
+          ref: 4e238a0aba46284d74fa49a975d59cf5d752de0f
+          path: .compare-tools/ironmate
+          persist-credentials: false
+          sparse-checkout: |
+            /*.py
+          sparse-checkout-cone-mode: false
+      - uses: actions/checkout@v7
+        if: always()
+        with:
+          repository: myon-bioinformatics/web-ui
+          ref: ad72168cbdb86fc2404c24582a67b254741f3ebb
+          path: .compare-tools/web-ui
+          persist-credentials: false
+          sparse-checkout: |
+            /web_ui.py
+            /tool/capture_matrix.py
+            /css/
+            /examples/flutter-pages.json
+          sparse-checkout-cone-mode: false
+      - name: Build the comparison sheet and the page viewer
+        if: always()
+        run: |
+          # Screenshots that exist are compared even when some environments failed.
+          python -S .compare-tools/ironmate/browser_matrix.py app-results --out app-matrix/compare
+          python -S .compare-tools/web-ui/tool/capture_matrix.py --pages .compare-tools/web-ui/examples/flutter-pages.json \
+            --report app-matrix/compare/report.json --dataset app-matrix/dataset.json --embed-css \
+            > app-matrix/compare/viewer.html
+          echo "Comparison: artifact platform-app-matrix, compare/viewer.html (per page) and compare/sheet.png." >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v7
         if: always()
         with:

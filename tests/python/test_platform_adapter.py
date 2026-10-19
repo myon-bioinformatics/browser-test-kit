@@ -157,3 +157,16 @@ def test_summary_reports_narrow_width_click_and_layout_failure():
               'samples':[{'width':320,'layout':{'failed':['overlap:#a:#b']},'click':{'ok':False}}]}
     line = pp.summary_lines([record])[0]
     assert '320px:overlap:#a:#b' in line and '320px:click' in line
+
+
+def test_report_builds_the_ironmate_sheet_and_web_ui_viewer_from_pinned_commits():
+    import re
+    apps = (ROOT / '.github/workflows/platform-apps.yml').read_text()
+    pins = dict(re.findall(r'repository: myon-bioinformatics/(Ironmate|web-ui)\n\s+ref: ([0-9a-f]+)', apps))
+    assert set(pins) == {'Ironmate', 'web-ui'} and all(len(sha) == 40 for sha in pins.values())
+    assert 'browser_matrix.py app-results --out app-matrix/compare' in apps
+    assert '--dataset app-matrix/dataset.json --embed-css' in apps and 'compare/viewer.html' in apps
+    # The viewer joins on adapter ids: web-ui's page table must name exactly these adapters.
+    assert {p.stem for p in (ROOT / 'adapters').glob('flutter-*.json')} == {
+        'flutter-home', 'flutter-hub', 'flutter-clipboard-shelf', 'flutter-now-timeline', 'flutter-photo-studio',
+        'flutter-http-request-draft', 'flutter-ui-showcase', 'flutter-counter', 'flutter-screen1'}
