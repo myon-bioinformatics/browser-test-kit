@@ -75,3 +75,32 @@ def test_overlap_occlusion_missing_nodes_and_real_click_failure(application):
             assert any(s.startswith('missing_or_ambiguous:') for s in pa.layout(page, config)['failed'])
         finally:
             browser.close()
+
+
+@pytest.mark.browser
+def test_facts_probe_is_isolated_from_target_css_and_bindings_observe_null_transition(application):
+    from playwright.sync_api import sync_playwright
+    url, _, _ = application
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        try:
+            page = browser.new_page()
+            page.goto(url)
+            page.add_script_tag(path=str(ROOT/'scripts/platform_facts.js'))
+            before = page.locator('#increment').evaluate('(e) => window.__btkPlatformFacts(e)')
+            page.add_style_tag(content='div {border:10px solid red!important; padding:30px!important; box-sizing:border-box!important}')
+            after = page.locator('#increment').evaluate('(e) => window.__btkPlatformFacts(e)')
+            assert before['viewport']['scrollbar_classic'] == after['viewport']['scrollbar_classic']
+            assert before['safe_area'] == after['safe_area']
+            assert page.locator('btk-facts-probe').count() == 0
+            page.set_content('''<button id="up" onclick="document.querySelector('#reset').removeAttribute('aria-disabled')">Increase</button>
+                                <button id="reset" aria-disabled="true">Reset</button>''')
+            cfg = {'elements':['[data-btk-probe="up"]'],
+                   'bindings':{'up':{'selector':'button','text':'Increase'}, 'reset':{'selector':'button','text':'Reset'}},
+                   'click':{'target':'[data-btk-probe="up"]','observe':'[data-btk-probe="reset"]',
+                            'attribute':'aria-disabled','before':'true','after':None}}
+            pa.prepare(page,cfg)
+            assert pa.layout(page,cfg)['ok']
+            assert pa.click_check(page,cfg,False)['ok']
+        finally:
+            browser.close()

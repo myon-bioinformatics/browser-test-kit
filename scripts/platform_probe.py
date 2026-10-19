@@ -220,6 +220,14 @@ def _collect(browser_name: str, profile: str, *, headed: bool, channel: str | No
                 min_width = narrowest_ok_width(lambda w: measure(w)['ok'], MIN_SEARCH_WIDTH, size['width'])
             resolved_url = page.url
             version = browser.version
+        except Exception:
+            if config and evidence_dir and 'page' in locals():
+                try:
+                    Path(evidence_dir).mkdir(parents=True, exist_ok=True)
+                    page.screenshot(path=str(Path(evidence_dir) / 'failure.png'), timeout=5000)
+                except Exception:
+                    pass  # preserve the original navigation/adapter failure
+            raise
         finally:
             browser.close()
     record = {
@@ -434,6 +442,11 @@ def main(argv=None) -> int:
                 where = f"{args.browser}{'/' + args.channel if args.channel else ''} {args.profile}" \
                         f"{' headed' if args.headed else ''}"
                 first = str(exc).strip().splitlines()[0][:300] if str(exc).strip() else ""
+                Path(args.out).mkdir(parents=True, exist_ok=True)
+                tag = Path(args.adapter).stem if args.adapter else 'fixture'
+                error_path = Path(args.out) / f"error-{args.browser}-{args.profile}-{tag}.json"
+                error_path.write_text(json.dumps({'schema': 'btk-platform-error/1', 'environment': where,
+                                     'adapter': tag, 'error_type': type(exc).__name__, 'message': first}) + '\n', encoding='utf-8')
                 print(f"error: {where}: {type(exc).__name__}: {first}", file=sys.stderr)
                 if os.environ.get("GITHUB_ACTIONS"):
                     print(f"::error title=platform_probe collect::{where}: {type(exc).__name__}: {first}")

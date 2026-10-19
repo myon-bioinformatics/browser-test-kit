@@ -68,3 +68,12 @@ def test_fixture_workflow_remains_42_and_published_lane_is_separate():
     assert 'for profile in desktop iphone pixel' in fixture
     assert '--adapter' not in fixture
     assert '--adapter' in apps and 'needs: published-flutter' in apps
+
+
+def test_summary_reports_narrow_width_click_and_layout_failure():
+    record = {'env':{'id':'Linux-chromium-desktop-headless','browser_version':'1'},
+              'verdict':'fail', 'min_ok_width':300, 'facts':{'window':{'frame_width':0,'frame_height':0},
+              'viewport':{'scrollbar_width':0,'device_pixel_ratio':1}}, 'layout':{'failed':[]}, 'click':{'ok':True},
+              'samples':[{'width':320,'layout':{'failed':['overlap:#a:#b']},'click':{'ok':False}}]}
+    line = pp.summary_lines([record])[0]
+    assert '320px:overlap:#a:#b' in line and '320px:click' in line
