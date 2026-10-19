@@ -38,8 +38,8 @@ For a quick review the report job also writes `platform-app-digest`, a separate 
 artifact: `digest.html` is one self-contained page (every page x environment, thumbnail as
 a data URI, pass/fail, failure reasons, deployed build), with thumbnails starting at 64x128
 px and halved in each direction (a quarter of the pixels) until the page fits 1 MB, and
-`summary.md`, a short table that also goes to the job summary and to one updated comment
-on same-repository pull requests. The full matrix artifact stays for detailed checks.
+`summary.md`, a short table that also goes to the job summary and to one comment per run
+on same-repository pull requests (an exact repeated summary is skipped). The full matrix artifact stays for detailed checks.
 
 This is deliberately a selected-control contract, not a guarantee for every screen,
 all painted text, or every app feature. Flutter's invisible semantics labels do not
@@ -120,12 +120,16 @@ It is a convenience, so every value can be switched when the question needs it:
 
 flutter_navigation_basic itself branches at 420, 560, 620, 720, 760, 900, 1000 and
 1180 px; half of those (420, 620, 900, 1180) are not multiples of 8, so the 8 px grid
-reports them only to within 8 px. Use step 1 when the exact edge matters. Device
+reports only the first passing sample and can miss a passing interval between grid
+points. Use step 1 when an integer-pixel edge matters. Device
 profiles always keep their real viewports (iPhone 390, Pixel 412). Manual runs of the
 workflow take `width_step` and `widths` inputs; pull requests and the weekly schedule
-use the defaults. Records keep the grid used in `width_search.step` and `low`.
+use the defaults. Records keep the grid used in `width_search.step` and `low`. The screenshot comparison
+and digest use the last requested click width (384px by default), so custom device
+widths do not leave the report searching for an uncaptured 384px image.
 
-`min_ok_width` is **layout-only**, scoped to those bounds, the search grid and the current
+`min_ok_width` is the **first sampled passing width**, not an exact minimum for an
+8px search. It is **layout-only**, scoped to those bounds, the search grid and the current
 viewport height, with the tested failures retained in `width_search.observations`. A
 result at the search floor (256px, or 250px with step 1) is lower-bound-censored: it says
 nothing about narrower widths (Windows WebKit refuses viewports below 250). The first passing width and explicit

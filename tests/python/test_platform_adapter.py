@@ -163,7 +163,8 @@ def test_report_adds_the_web_ui_viewer_on_top_of_the_ironmate_comparison():
     import re
     apps = (ROOT / '.github/workflows/platform-apps.yml').read_text()
     pin = re.search(r'repository: myon-bioinformatics/web-ui\n\s+ref: ([0-9a-f]+)', apps)
-    assert pin and len(pin.group(1)) == 40
+    assert pin and pin.group(1) == 'b35ed9b77d4222b946d9813298243489a69e624a'
+    assert 'ref: edc47a267bd2f5a1e29ec3a5474cb24a73c6f50d' in apps
     assert apps.count('repository: myon-bioinformatics/Ironmate') == 1  # one comparison, not two
     assert '--report app-matrix/screenshots/report.json --dataset app-matrix/dataset.json --embed-css' in apps
     assert "hashFiles('app-matrix/screenshots/report.json')" in apps and 'screenshots/viewer.html' in apps
@@ -207,5 +208,39 @@ def test_manual_runs_can_switch_grid_and_widths_while_schedule_keeps_defaults():
 def test_report_publishes_a_small_digest_and_a_pr_summary():
     apps = (ROOT / '.github/workflows/platform-apps.yml').read_text()
     assert 'scripts/app_digest.py app-results --ironmate .ironmate' in apps and 'name: platform-app-digest' in apps
-    assert 'pull-requests: write' in apps and 'startswith("<!-- platform-apps-digest -->")' in apps
+    assert 'pull-requests: write' in apps and 'scripts/app_digest_comment.py' in apps
+    assert 'gh api' not in apps
     assert "github.event.pull_request.head.repo.full_name == github.repository" in apps
+
+
+def test_workflow_checks_inputs_before_fanout_and_matches_capture_width():
+    apps = (ROOT / '.github/workflows/platform-apps.yml').read_text()
+    plan = apps.split('  published-flutter:', 1)[0]
+    assert '^([1-9]|[1-5][0-9]|6[0-4])$' in plan
+    assert '10#$width >= 250 && 10#$width <= 3840' in plan
+    assert 'shot=width-$((10#$width))' in plan
+    assert apps.count('--shot "$SHOT"') == 2
+    assert "- 'scripts/app_digest.py'" in apps and "- 'scripts/app_digest_comment.py'" in apps
+    import re
+    assert all(re.match(r'[0-9a-f]{40} # v[0-9]+$', pin) for pin in re.findall(r'uses: actions/[^@]+@([^\n]+)', apps))
+
+
+@pytest.mark.parametrize('step,widths,expected', [('8', '320 384', 'width-384'), ('1', '390 412', 'width-412'),
+                                                  ('8', '0320 0384', 'width-384'), ('0', '320 384', None),
+                                                  ('65', '320 384', None), ('8', '249', None),
+                                                  ('8', '3841', None), ('8', '99999999999999999999', None)])
+def test_workflow_plan_validates_actual_inputs(tmp_path, step, widths, expected):
+    import os
+    import subprocess
+    import yaml
+    workflow = yaml.safe_load((ROOT / '.github/workflows/platform-apps.yml').read_text())
+    script = workflow['jobs']['plan']['steps'][0]['run']
+    output = tmp_path / 'outputs'
+    run = subprocess.run(['bash', '-e', '-o', 'pipefail', '-c', script], capture_output=True, text=True,
+                         env={**os.environ, 'WIDTH_STEP': step, 'WIDTHS': widths, 'EVENT': 'workflow_dispatch',
+                              'GITHUB_OUTPUT': str(output)})
+    if expected is None:
+        assert run.returncode == 2 and not output.exists()
+    else:
+        assert run.returncode == 0, run.stderr
+        assert f'shot={expected}\n' in output.read_text()

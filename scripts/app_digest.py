@@ -37,6 +37,8 @@ def _cells(records):
         if not target.get('adapter'):
             continue
         key = (target['adapter'], f"{env['os']}-{env.get('channel') or env['browser']}-{env['profile']}")
+        if key in cells:
+            raise ValueError(f'ambiguous observations for {key}')
         failures = list(record['layout']['failed'])
         if not record['click']['ok']:
             failures.append('initial_click')
@@ -65,8 +67,10 @@ def _page(pages, envs, cells, tiles, encode, tile, run_url):
                 img = f'<img src="data:image/png;base64,{data}" width="{tile[0]}" height="{tile[1]}" alt="">'
             verdict = cell['verdict'] if cell else 'no record'
             why = '<br>'.join(html.escape(f) for f in (cell or {}).get('failures', []))
+            build = (cell or {}).get('build')
+            build_note = f'<br><small>build {html.escape(build[:12])}</small>' if build else ''
             row.append(f'<td class="{html.escape(verdict)}">{img}<br>{html.escape(verdict)}'
-                       + (f'<br><small>{why}</small>' if why else '') + '</td>')
+                       + build_note + (f'<br><small>{why}</small>' if why else '') + '</td>')
         rows.append('<tr>' + ''.join(row) + '</tr>')
     builds = sorted({c['build'][:12] for c in cells.values() if c.get('build')})
     link = f' · <a href="{html.escape(run_url, quote=True)}">run</a>' if run_url else ''
@@ -83,7 +87,7 @@ def summary_markdown(pages, envs, cells, run_url=None):
     """A few lines for a PR comment: per page, passing environments, and each failure."""
     lines = ['<!-- platform-apps-digest -->', '### Published app digest', '']
     total = sum(1 for p in pages for e in envs)
-    passed = sum(1 for c in cells.values() if c['verdict'] == 'pass')
+    passed = sum(1 for p in pages for e in envs if cells.get((p, e), {}).get('verdict') == 'pass')
     builds = sorted({c['build'][:12] for c in cells.values() if c.get('build')})
     lines.append(f"{passed}/{total} page x environment checks passed; build {', '.join(builds) or 'unknown'}."
                  + (f' [Run]({run_url})' if run_url else ''))
@@ -102,8 +106,11 @@ def generate(root, out, *, ironmate, runners, adapter_dir, shot='width-384', max
     sys.path.insert(0, str(Path(ironmate).resolve()))
     matrix = importlib.import_module('browser_matrix')
     pages = [probe.adapters.load_adapter(p)['id'] for p in sorted(Path(adapter_dir).glob('flutter-*.json'))]
+    if not pages:
+        raise ValueError('no Flutter adapters found')
     envs = comparison.planned_envs(runners)
-    cells = _cells(probe.load_records([str(root)]))
+    cells = {key: cell for key, cell in _cells(probe.load_records([str(root)])).items()
+             if key[0] in pages and key[1] in envs}
     shots = matrix.find_shots(root, shot)
     tile = START_TILE
     while True:

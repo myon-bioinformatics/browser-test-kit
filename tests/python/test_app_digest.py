@@ -73,3 +73,18 @@ def test_digest_fits_one_page_and_quarters_thumbnails_until_it_fits(run, tmp_pat
     with pytest.raises(ValueError, match='max_bytes'):
         digest.generate(results, tmp_path / 'z', ironmate=ironmate, runners=['ubuntu-24.04'], adapter_dir=adapters,
                         max_bytes=10)
+
+
+def test_digest_counts_only_planned_cells_and_reports_each_build(run, tmp_path):
+    results, ironmate, adapters = run
+    (results / 'x' / 'outside.json').write_text(json.dumps(record('unplanned-page', 'OtherOS')), encoding='utf-8')
+    info = digest.generate(results, tmp_path / 'out', ironmate=ironmate, runners=['ubuntu-24.04'], adapter_dir=adapters)
+    assert info['passed'] == 1
+    page = (tmp_path / 'out' / 'digest.html').read_text(encoding='utf-8')
+    assert 'build cccccccccccc' in page
+    assert '1/10 page x environment checks passed' in (tmp_path / 'out' / 'summary.md').read_text()
+
+
+def test_digest_rejects_ambiguous_records():
+    with pytest.raises(ValueError, match='ambiguous'):
+        digest._cells([record('flutter-home', 'Linux', 'fail'), record('flutter-home', 'Linux', 'pass')])

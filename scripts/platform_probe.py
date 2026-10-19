@@ -11,9 +11,10 @@ width (page / always-scrolling probe), devicePixelRatio, visualViewport, safe-ar
 measured font widths, platform and browser version. The environment passes when
 the layout holds (no horizontal overflow, no overlap, nothing clipped) and a real
 click (a tap on touch profiles) at the integer centre of the button registers.
-`min_ok_width` is the narrowest viewport width on the search grid (8 px by default,
-`--width-step 1` for exact edges) at which the layout still holds, found by binary search
-over that grid (the checks are monotonic in width).
+`min_ok_width` is the first sampled passing viewport width on the search grid (8 px
+by default). Adapters scan in ascending order; only the monotonic local fixture uses
+binary search. Step 1 resolves integer-pixel edges within the tested bounds, not
+subpixel or untested widths.
 
 Only collect needs Playwright; merge, summary and render are stdlib-only.
 Exit codes: 0 OK; 1 an environment failed (collect, summary); 2 input error.

@@ -39,13 +39,16 @@ aria-hidden alone does not imply visual hiding.
 contains QUERY (case-insensitive), with each href resolved to an absolute
 URL against the page URL and ``<base href>``.
 
-Exit codes: 0 = OK; 1 = no ``--find`` match, or an HTTP error status (the
-page is still printed); 2 = usage, input, or network error.
+``--compare-rendered FILE`` compares static HTML extracted text against
+browser-rendered text (e.g. Playwright ``inner_text()``) from FILE or stdin.
+
+Exit codes: 0 = OK (or EQUAL comparison); 1 = no ``--find`` match, non-EQUAL comparison, or an HTTP error status (the page is still printed); 2 = usage, input, or network error.
 """
 from __future__ import annotations
 
 import argparse
 import datetime
+import difflib
 import http.client
 import json
 import re
@@ -488,6 +491,81 @@ def find_elements(html: str, query: str, *, url: str = "", limit: int = 20) -> l
     return matches
 
 
+def compare_rendered_text(static_text: str, rendered_text: str) -> dict:
+    """Compare static HTML extracted text against browser rendered inner_text.
+
+    Returns dict with classification, metrics, and detailed line differences.
+    Classifications:
+    - EQUAL: static and rendered text match exactly.
+    - JS_RENDERED_ADDED: rendered text contains content missing from static HTML (e.g. JS SPA rendering / dynamic hydration).
+    - CSS_HIDDEN_REMOVED: static HTML text contains content missing from rendered text (e.g. CSS display:none / stylesheet hiding).
+    - MUTATED_TEXT: both static-only and rendered-only differences exist.
+
+    Both sides go through the same whitespace normalization as the static extraction.
+    """
+    static_lines = [line.strip() for line in _normalize(static_text).splitlines() if line.strip()]
+    rendered_lines = [line.strip() for line in _normalize(rendered_text).splitlines() if line.strip()]
+
+    matcher = difflib.SequenceMatcher(None, static_lines, rendered_lines)
+    ratio = round(matcher.ratio(), 4)
+
+    only_static: list[str] = []
+    only_rendered: list[str] = []
+    matching: list[str] = []
+
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            matching.extend(static_lines[i1:i2])
+        elif tag in ("delete", "replace"):
+            only_static.extend(static_lines[i1:i2])
+        if tag in ("insert", "replace"):
+            only_rendered.extend(rendered_lines[j1:j2])
+
+    if not only_static and not only_rendered:
+        classification = "EQUAL"
+    elif only_rendered and not only_static:
+        classification = "JS_RENDERED_ADDED"
+    elif only_static and not only_rendered:
+        classification = "CSS_HIDDEN_REMOVED"
+    else:
+        classification = "MUTATED_TEXT"
+
+    return {
+        "classification": classification,
+        "similarity_ratio": ratio,
+        "static_line_count": len(static_lines),
+        "rendered_line_count": len(rendered_lines),
+        "matching_lines_count": len(matching),
+        "only_static_count": len(only_static),
+        "only_rendered_count": len(only_rendered),
+        "only_static": only_static,
+        "only_rendered": only_rendered,
+    }
+
+
+def rendered_input(raw: str) -> tuple[str, dict]:
+    """Return ``(rendered_text, info)`` for ``--compare-rendered`` input.
+
+    A JSON object with a ``visible`` key (the ``innerText`` that
+    ``examples/capture_browser_dom.py`` stores, schema ``btk-browser-dom/1``)
+    contributes that string; ``text`` (``textContent``) and ``html`` are not
+    rendered text and are never used. Anything else is taken as plain
+    rendered text. Raises ``ValueError`` when ``visible`` is not a string.
+    """
+    stripped = raw.lstrip()
+    if stripped.startswith("{"):
+        try:
+            data = json.loads(stripped)
+        except ValueError:
+            data = None
+        if isinstance(data, dict) and "visible" in data:
+            if not isinstance(data["visible"], str):
+                raise ValueError("captured DOM JSON has no innerText string in 'visible'")
+            return data["visible"], {"kind": "dom-json", "schema": data.get("schema"),
+                                     "selector": data.get("selector")}
+    return raw, {"kind": "text", "schema": None, "selector": None}
+
+
 def _positive(kind: Callable[[str], Any]) -> Callable[[str], Any]:
     def parse(value: str) -> Any:
         number = kind(value)
@@ -513,6 +591,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--find", metavar="QUERY", help="list links/buttons/headings whose text, aria-label or "
                                                         "title contains QUERY (\"\" lists every candidate)")
     parser.add_argument("--limit", type=_positive(int), default=20, help="maximum --find matches (default: 20)")
+    parser.add_argument("--compare-rendered", metavar="FILE",
+                        help="compare static extracted text against browser-rendered text from FILE (or - for "
+                             "stdin): plain text, or capture_browser_dom.py JSON (its 'visible' innerText)")
     return parser
 
 
@@ -554,6 +635,67 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if matches and not http_error else 1
 
     result = page_text(loaded["html"], url=url, max_chars=args.max_chars)
+
+    if args.compare_rendered is not None:
+        if loaded["byte_limit_hit"]:
+            print("error: static HTML was truncated by --max-bytes; raise --max-bytes to compare", file=sys.stderr)
+            return 2
+        if args.source == "-" and args.compare_rendered == "-":
+            print("error: cannot use stdin (-) for both source and --compare-rendered", file=sys.stderr)
+            return 2
+        try:
+            if args.compare_rendered == "-":
+                rendered_bytes = sys.stdin.buffer.read(args.max_bytes + 1)
+            else:
+                comp_path = Path(args.compare_rendered)
+                if not comp_path.is_file():
+                    print(f"error: no such file for --compare-rendered: {args.compare_rendered}", file=sys.stderr)
+                    return 2
+                rendered_bytes = _read_file(comp_path, args.compare_rendered, args.max_bytes)
+        except OSError as error:
+            print(f"error reading --compare-rendered input: {error}", file=sys.stderr)
+            return 2
+        if len(rendered_bytes) > args.max_bytes:
+            print(f"error: --compare-rendered input exceeds --max-bytes ({args.max_bytes})", file=sys.stderr)
+            return 2
+        rendered_raw = rendered_bytes.decode("utf-8", "replace")
+        if result["truncated"]:
+            print(f"error: static text was truncated to {args.max_chars} of {result['total_chars']} characters; "
+                  "raise --max-chars to compare", file=sys.stderr)
+            return 2
+        try:
+            rendered_text, rendered_info = rendered_input(rendered_raw)
+        except ValueError as error:
+            print(f"error: {error}", file=sys.stderr)
+            return 2
+        selector = rendered_info["selector"]
+        if selector is not None and selector != result["source_element"]:
+            print(f"note: rendered text was captured from selector {selector!r} but static text comes from "
+                  f"<{result['source_element']}>; differences may only reflect the different scope", file=sys.stderr)
+
+        comparison = compare_rendered_text(result["text"], rendered_text)
+        if args.json:
+            output = {
+                "source_url": url,
+                "title": result["title"],
+                "source_element": result["source_element"],
+                "rendered_input": rendered_info,
+                "comparison": comparison,
+            }
+            print(json.dumps(output, ensure_ascii=False, indent=2))
+        else:
+            print(f"Static vs Rendered Text Comparison:\nURL: {url or '-'}\nClassification: {comparison['classification']}\n"
+                  f"Similarity ratio: {comparison['similarity_ratio']}\n"
+                  f"Static lines: {comparison['static_line_count']} | Rendered lines: {comparison['rendered_line_count']} | Matching lines: {comparison['matching_lines_count']}")
+            if comparison["only_static"]:
+                print("Only in static text (e.g. CSS hidden):")
+                for line in comparison["only_static"]:
+                    print(f"- {line}")
+            if comparison["only_rendered"]:
+                print("Only in rendered text (e.g. JS added):")
+                for line in comparison["only_rendered"]:
+                    print(f"+ {line}")
+        return 0 if comparison["classification"] == "EQUAL" and not http_error else 1
     if not result["text"]:
         print(f"note: no text in <{result['source_element']}>; text rendered by JavaScript is not visible to "
               "static extraction (PAGE_TEXT_AS_RENDERED_TEXT)", file=sys.stderr)
