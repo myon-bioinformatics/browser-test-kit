@@ -2,8 +2,12 @@ name: platform-apps (published network lane)
 
 # Explicitly independent from the reproducible local 42-environment matrix.
 # Failures here may be app regressions OR deployment/network failures.
+# Pull requests check adapter changes on Linux; a manual run or the weekly schedule
+# measures the same pages on Linux, macOS and Windows.
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * 1'
   pull_request:
     paths:
       - 'adapters/**'
@@ -16,19 +20,41 @@ permissions:
   contents: read
 
 jobs:
-  published-flutter:
-    name: Published Flutter / ${{ matrix.browser }} / ${{ matrix.profile }}
+  plan:
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    outputs:
+      os: ${{ steps.os.outputs.os }}
+    steps:
+      - id: os
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT" = pull_request ]; then
+            echo 'os=["ubuntu-24.04"]' >> "$GITHUB_OUTPUT"
+          else
+            echo 'os=["ubuntu-24.04","macos-latest","windows-latest"]' >> "$GITHUB_OUTPUT"
+          fi
+
+  published-flutter:
+    name: Published Flutter / ${{ matrix.os }} / ${{ matrix.browser }} / ${{ matrix.profile }}
+    needs: plan
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - {browser: chromium, profile: desktop}
-          - {browser: firefox, profile: desktop}
-          - {browser: webkit, profile: desktop}
-          - {browser: chromium, profile: pixel}
-          - {browser: webkit, profile: iphone}
+        os: ${{ fromJSON(needs.plan.outputs.os) }}
+        browser: [chromium, firefox, webkit]
+        profile: [desktop, pixel, iphone]
+        exclude:
+          # Device descriptors: Pixel is a Chromium device, iPhone a WebKit one; Firefox has no mobile mode.
+          - {browser: firefox, profile: pixel}
+          - {browser: firefox, profile: iphone}
+          - {browser: chromium, profile: iphone}
+          - {browser: webkit, profile: pixel}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -48,7 +74,7 @@ jobs:
             name=$(basename "$adapter" .json)
             python scripts/platform_probe.py collect --browser "$BROWSER" --profile "$PROFILE" \
               --adapter "$adapter" --widths 320 390 --out app-results \
-              --evidence-dir "app-results/$name/screenshots" || status=1
+              --evidence-dir "app-results/$name/$RUNNER_OS-$BROWSER-$PROFILE" || status=1
           done
           python -S scripts/platform_probe.py summary app-results > app-results/summary.txt || status=1
           { echo 'Published-site observations; mobile profiles are emulation, not physical devices.'; echo '```text'; cat app-results/summary.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
@@ -56,7 +82,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: platform-app-${{ matrix.browser }}-${{ matrix.profile }}
+          name: platform-app-${{ runner.os }}-${{ matrix.browser }}-${{ matrix.profile }}
           path: app-results
           if-no-files-found: error
           retention-days: 30

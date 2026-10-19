@@ -7,12 +7,26 @@ No published-site request is added to that fixture lane.
 The application lane is `.github/workflows/platform-apps.yml`. It observes the
 published Flutter app separately on Chromium/Firefox/WebKit desktop plus Chromium
 Pixel and WebKit iPhone **emulation**. These are not physical phones, and Playwright
-WebKit is not Safari. The first adapters cover:
+WebKit is not Safari. Pull requests that touch adapters run it on Linux; a manual
+run (`workflow_dispatch`) or the weekly schedule runs the same five browser/profile
+lanes on Linux, macOS and Windows (15 jobs). The adapters cover representative pages:
 
-| Adapter | Layout scope | Real coordinate input and postcondition |
-| --- | --- | --- |
-| `flutter-home` | Shared title, Home, favorite and menu hit regions | Favorite text changes from `Favorite this page` to `Remove favorite` |
-| `flutter-counter` | Those shared regions plus Increase/Decrease body buttons | Press Increase; Reset changes from disabled to enabled |
+| Adapter | Route | Layout scope | Real coordinate input and postcondition |
+| --- | --- | --- | --- |
+| `flutter-home` | `/` 🏠 | Shared title, Home, favorite and menu hit regions | Favorite text changes from `Favorite this page` to `Remove favorite` |
+| `flutter-hub` | `/hub` 🗺️ | Same shared header | Same favorite transition |
+| `flutter-clipboard-shelf` | `/core/clipboard-shelf` 📋 | Same shared header | Same favorite transition |
+| `flutter-now-timeline` | `/tools/time/now-timeline` 🕒 | Same shared header | Same favorite transition |
+| `flutter-photo-studio` | `/tools/media/photo-studio` 🖼️ | Same shared header | Same favorite transition |
+| `flutter-http-request-draft` | `/tools/http/request-draft` 🌐 | Same shared header | Same favorite transition |
+| `flutter-ui-showcase` | `/examples/ui-showcase` 🎨 | Same shared header | Same favorite transition |
+| `flutter-screen1` | `/screen1` 🌍 (catalogue) | Same shared header | Same favorite transition |
+| `flutter-counter` | `/examples/counter-playground` 👾 | Shared regions plus Increase/Decrease body buttons | Press Increase; Reset changes from disabled to enabled |
+
+Routes and emojis follow flutter_navigation_basic's generated page identities
+(`lib/shared/navigation/page_identities.g.dart`). Coordinates (📍) is left out because
+it asks for geolocation permission. Screenshots are stored per page and environment
+(`app-results/<adapter>/<OS>-<browser>-<profile>/`).
 
 This is deliberately a selected-control contract, not a guarantee for every screen,
 all painted text, or every app feature. Flutter's invisible semantics labels do not
@@ -57,6 +71,13 @@ closed. Optional `bindings` map alphanumeric names to `{selector, text}` and res
 exact visible semantics text to `[data-btk-probe="name"]` markers; markers are
 refreshed after layout changes. This supports Flutter controls without stable ids.
 `flutter_semantics: true` waits for Flutter's accessibility tree before binding.
+Optional `provenance: {path, field}` names a same-site JSON file and the key path of
+the build identity in it; the Flutter adapters read
+`assets/assets/diagnostics/build_metadata.json` → `repository.revision.sha`, the commit
+the Pages deployment was built from. The record keeps it as
+`target.provenance` (`url`, `status`, `value`, `error`) and the summary prints
+`build=<sha>`. It is reported, never gating: a missing file or field gives
+`value: null` with the reason. Only relative paths without `..` are accepted.
 
 Browser/OS facts live in `scripts/platform_facts.js` and are used by both lanes:
 screen, window, viewport, DPR, safe areas, input/media preferences, platform and font

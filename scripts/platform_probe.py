@@ -156,6 +156,7 @@ def _collect(browser_name: str, profile: str, *, headed: bool, channel: str | No
             if response and not response.ok:
                 raise ValueError(f'target returned HTTP {response.status}')
             target = adapters.target_identity(config, url) if config else None
+            provenance = adapters.read_provenance(page, config, url) if config else None
             if config:
                 adapters.prepare(page, config)
                 page.add_script_tag(path=str(ROOT / 'scripts' / 'platform_facts.js'))
@@ -242,6 +243,8 @@ def _collect(browser_name: str, profile: str, *, headed: bool, channel: str | No
     }
     if target:
         record['target'] = {**target, 'resolved_url': resolved_url, 'config': config}
+        if provenance:
+            record['target']['provenance'] = provenance
         record['samples'] = samples
         record['width_search'] = {'method': 'ascending-exhaustive', 'low': MIN_SEARCH_WIDTH, 'high': size['width'],
                                   'observations': observations, 'scope': 'layout-only'}
@@ -272,6 +275,14 @@ def load_records(paths: list[str]) -> list[dict]:
     return [records[k] for k in sorted(records)]
 
 
+def _build_suffix(record: dict) -> str:
+    provenance = record.get('target', {}).get('provenance')
+    if not provenance:
+        return ''
+    value = provenance.get('value')
+    return f" build={str(value)[:12]}" if value is not None else f" build=unknown({provenance.get('error')})"
+
+
 def summary_lines(records: list[dict]) -> list[str]:
     out = []
     for r in records:
@@ -287,7 +298,8 @@ def summary_lines(records: list[dict]) -> list[str]:
         out.append(f"{r['verdict']:4} {r['env']['id']:38} v{r['env']['browser_version']} "
                    f"frame={w['frame_width']}x{w['frame_height']} scrollbar={v['scrollbar_width']}/{v.get('scrollbar_classic')} "
                    f"dpr={v['device_pixel_ratio']} sans={r['facts'].get('fonts', {}).get('sans')} "
-                   f"min_ok_width={r['min_ok_width']} failed={failed} target={r.get('target', {}).get('adapter', 'fixture')}")
+                   f"min_ok_width={r['min_ok_width']} failed={failed} target={r.get('target', {}).get('adapter', 'fixture')}"
+                   + _build_suffix(r))
     return out
 
 

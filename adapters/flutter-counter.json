@@ -3,6 +3,14 @@
   "id": "flutter-counter",
   "url": "https://myon-bioinformatics.github.io/flutter_navigation_basic/#/examples/counter-playground",
   "flutter_semantics": true,
+  "provenance": {
+    "path": "assets/assets/diagnostics/build_metadata.json",
+    "field": [
+      "repository",
+      "revision",
+      "sha"
+    ]
+  },
   "elements": [
     "[flt-semantics-identifier=\"shared-header-title\"]",
     "[flt-semantics-identifier=\"shared-header-home\"]",
