@@ -104,3 +104,30 @@ def test_facts_probe_is_isolated_from_target_css_and_bindings_observe_null_trans
             assert pa.click_check(page,cfg,False)['ok']
         finally:
             browser.close()
+
+
+@pytest.mark.browser
+@pytest.mark.parametrize('mobile', [False, True])
+def test_flutter_accessibility_activation_uses_one_appropriate_event(mobile):
+    from playwright.sync_api import sync_playwright
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        try:
+            page = browser.new_page(viewport={'width':393,'height':851},has_touch=mobile,is_mobile=mobile)
+            page.set_content('''<meta name="viewport" content="width=device-width,initial-scale=1">
+            <style>html,body{width:100%;height:100%;margin:0}</style><flt-glass-pane></flt-glass-pane>
+            <button id="action">Ready</button><script>window.activationEvents=0;
+            const p=document.createElement('flt-semantics-placeholder');p.setAttribute('aria-label','Enable accessibility');
+            p.style.cssText='position:absolute;inset:0';document.body.append(p);
+            p.addEventListener('click',e=>{window.activationEvents++;
+              const r=p.getBoundingClientRect();
+              if(window.mobile && (!e.isTrusted || Math.hypot(e.clientX-(r.x+r.width/2),e.clientY-(r.y+r.height/2))>=1)) return;
+              document.body.append(document.createElement('flt-semantics'));p.remove();
+            });</script>''')
+            page.evaluate('(mobile)=>{window.mobile=mobile;if(!mobile) document.querySelector("flt-semantics-placeholder").style.cssText="position:absolute;left:-1px;top:-1px;width:1px;height:1px"}',mobile)
+            cfg={'flutter_semantics':True,'elements':['#action']}
+            pa.prepare(page,cfg)
+            assert page.locator('flt-semantics').count()==1
+            assert page.evaluate('window.activationEvents')==1
+        finally:
+            browser.close()

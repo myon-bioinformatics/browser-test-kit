@@ -19,7 +19,9 @@ all painted text, or every app feature. Flutter's invisible semantics labels do 
 have the same glyph metrics as its canvas. Their `scrollWidth` is not treated as
 painted-text clipping; screenshots support visual inspection. No production Dart
 changes, forced application clicks, or synthetic application state updates are used.
-Only Flutter's opt-in accessibility placeholder is activated programmatically.
+Flutter's opt-in accessibility placeholder is activated once: a centre tap/click
+for Android's full-screen placeholder, or a DOM click for the off-screen desktop
+placeholder. Polling never repeatedly dispatches activation events.
 Application actions use measured integer centres with mouse or touch input and must
 satisfy the app-specific postcondition. Flutter bypasses the ordinary DOM
 `elementFromPoint` check because its semantics forward input to the canvas; its

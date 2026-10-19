@@ -89,11 +89,22 @@ def target_identity(config: dict, url: str) -> dict:
 def prepare(page, config: dict):
     if config.get('flutter_semantics'):
         page.wait_for_selector('flt-glass-pane', state='attached', timeout=60000)
-        page.wait_for_function("""() => {
-          if (document.querySelector('flt-semantics')) return true;
-          document.querySelector('flt-semantics-placeholder[aria-label="Enable accessibility"]')?.click();
-          return !!document.querySelector('flt-semantics');
-        }""", timeout=60000)
+        # Android Flutter uses a full-screen activation placeholder and accepts
+        # only an input event at its centre. HTMLElement.click() has offset 0,0;
+        # repeatedly polling with it eventually exhausts Flutter's attempt budget.
+        page.wait_for_function("""() => !!document.querySelector('flt-semantics') ||
+          !!document.querySelector('flt-semantics-placeholder[aria-label="Enable accessibility"]')""", timeout=60000)
+        if not page.locator('flt-semantics').count():
+            placeholder = page.locator('flt-semantics-placeholder[aria-label="Enable accessibility"]')
+            box = placeholder.bounding_box()
+            if box and box['width'] > 1 and box['height'] > 1:
+                x, y = box['x'] + box['width']/2, box['y'] + box['height']/2
+                touch = page.evaluate('navigator.maxTouchPoints > 0')
+                (page.touchscreen.tap if touch else page.mouse.click)(x, y)
+            else:
+                # Desktop Flutter puts a 1px accessibility placeholder off-screen.
+                placeholder.evaluate('(e) => e.click()')
+        page.wait_for_selector('flt-semantics', state='attached', timeout=60000)
     bind_elements(page, config)
     for selector in config['elements']:
         page.locator(selector).wait_for(state='visible')
