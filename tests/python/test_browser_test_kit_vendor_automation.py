@@ -88,11 +88,13 @@ def test_locked_baseline_runs_automatically_without_candidate_snapshot():
 
 def test_real_canonical_staging_preserves_locked_bytes(tmp_path):
     import shutil
+    tool_root = Path(os.environ.get('BTK_CANONICAL_TOOLS', str(ROOT / '.vendor-sync-tools')))
+    if not (tool_root / 'vendor_stage.py').is_file():
+        pytest.skip('BTK_CANONICAL_TOOLS / .vendor-sync-tools not available locally')
     for name in SNAPSHOT:
         path = tmp_path / name
         path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / name, path)
-    tool_root = Path(os.environ.get('BTK_CANONICAL_TOOLS', str(ROOT / '.vendor-sync-tools')))
     stage_argv = [sys.executable, '-S', str(tool_root / 'vendor_stage.py'),
                   '--root', str(tmp_path), '--kind', 'locked', '--output', 'build/staged']
     result = subprocess.run(stage_argv, capture_output=True, text=True, timeout=30)

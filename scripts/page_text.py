@@ -39,8 +39,10 @@ aria-hidden alone does not imply visual hiding.
 contains QUERY (case-insensitive), with each href resolved to an absolute
 URL against the page URL and ``<base href>``.
 
-Exit codes: 0 = OK; 1 = no ``--find`` match, or an HTTP error status (the
-page is still printed); 2 = usage, input, or network error.
+``--compare-rendered FILE`` compares static HTML extracted text against
+browser-rendered text (e.g. Playwright ``inner_text()``) from FILE or stdin.
+
+Exit codes: 0 = OK (or EQUAL comparison); 1 = no ``--find`` match, non-EQUAL comparison, or an HTTP error status (the page is still printed); 2 = usage, input, or network error.
 """
 from __future__ import annotations
 
@@ -488,6 +490,58 @@ def find_elements(html: str, query: str, *, url: str = "", limit: int = 20) -> l
     return matches
 
 
+def compare_rendered_text(static_text: str, rendered_text: str) -> dict:
+    """Compare static HTML extracted text against browser rendered inner_text.
+
+    Returns dict with classification, metrics, and detailed line differences.
+    Classifications:
+    - EQUAL: static and rendered text match exactly.
+    - JS_RENDERED_ADDED: rendered text contains content missing from static HTML (e.g. JS SPA rendering / dynamic hydration).
+    - CSS_HIDDEN_REMOVED: static HTML text contains content missing from rendered text (e.g. CSS display:none / stylesheet hiding).
+    - MUTATED_TEXT: both static-only and rendered-only differences exist.
+    """
+    import difflib
+
+    static_lines = [line.strip() for line in static_text.splitlines() if line.strip()]
+    rendered_lines = [line.strip() for line in rendered_text.splitlines() if line.strip()]
+
+    matcher = difflib.SequenceMatcher(None, static_lines, rendered_lines)
+    ratio = round(matcher.ratio(), 4)
+
+    only_static: list[str] = []
+    only_rendered: list[str] = []
+    matching: list[str] = []
+
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            matching.extend(static_lines[i1:i2])
+        elif tag in ("delete", "replace"):
+            only_static.extend(static_lines[i1:i2])
+        if tag in ("insert", "replace"):
+            only_rendered.extend(rendered_lines[j1:j2])
+
+    if not only_static and not only_rendered:
+        classification = "EQUAL"
+    elif only_rendered and not only_static:
+        classification = "JS_RENDERED_ADDED"
+    elif only_static and not only_rendered:
+        classification = "CSS_HIDDEN_REMOVED"
+    else:
+        classification = "MUTATED_TEXT"
+
+    return {
+        "classification": classification,
+        "similarity_ratio": ratio,
+        "static_line_count": len(static_lines),
+        "rendered_line_count": len(rendered_lines),
+        "matching_lines_count": len(matching),
+        "only_static_count": len(only_static),
+        "only_rendered_count": len(only_rendered),
+        "only_static": only_static,
+        "only_rendered": only_rendered,
+    }
+
+
 def _positive(kind: Callable[[str], Any]) -> Callable[[str], Any]:
     def parse(value: str) -> Any:
         number = kind(value)
@@ -513,6 +567,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--find", metavar="QUERY", help="list links/buttons/headings whose text, aria-label or "
                                                         "title contains QUERY (\"\" lists every candidate)")
     parser.add_argument("--limit", type=_positive(int), default=20, help="maximum --find matches (default: 20)")
+    parser.add_argument("--compare-rendered", metavar="FILE",
+                        help="compare static extracted text against browser-rendered text from FILE (or - for stdin)")
     return parser
 
 
@@ -554,6 +610,46 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if matches and not http_error else 1
 
     result = page_text(loaded["html"], url=url, max_chars=args.max_chars)
+
+    if args.compare_rendered is not None:
+        if args.source == "-" and args.compare_rendered == "-":
+            print("error: cannot use stdin (-) for both source and --compare-rendered", file=sys.stderr)
+            return 2
+        try:
+            if args.compare_rendered == "-":
+                rendered_raw = sys.stdin.read()
+            else:
+                comp_path = Path(args.compare_rendered)
+                if not comp_path.is_file():
+                    print(f"error: no such file for --compare-rendered: {args.compare_rendered}", file=sys.stderr)
+                    return 2
+                rendered_raw = comp_path.read_text(encoding="utf-8", errors="replace")
+        except OSError as error:
+            print(f"error reading --compare-rendered input: {error}", file=sys.stderr)
+            return 2
+
+        comparison = compare_rendered_text(result["text"], rendered_raw)
+        if args.json:
+            output = {
+                "source_url": url,
+                "title": result["title"],
+                "source_element": result["source_element"],
+                "comparison": comparison,
+            }
+            print(json.dumps(output, ensure_ascii=False, indent=2))
+        else:
+            print(f"Static vs Rendered Text Comparison:\nURL: {url or '-'}\nClassification: {comparison['classification']}\n"
+                  f"Similarity ratio: {comparison['similarity_ratio']}\n"
+                  f"Static lines: {comparison['static_line_count']} | Rendered lines: {comparison['rendered_line_count']} | Matching lines: {comparison['matching_lines_count']}")
+            if comparison["only_static"]:
+                print("Only in static text (e.g. CSS hidden):")
+                for line in comparison["only_static"]:
+                    print(f"- {line}")
+            if comparison["only_rendered"]:
+                print("Only in rendered text (e.g. JS added):")
+                for line in comparison["only_rendered"]:
+                    print(f"+ {line}")
+        return 0 if comparison["classification"] == "EQUAL" and not http_error else 1
     if not result["text"]:
         print(f"note: no text in <{result['source_element']}>; text rendered by JavaScript is not visible to "
               "static extraction (PAGE_TEXT_AS_RENDERED_TEXT)", file=sys.stderr)

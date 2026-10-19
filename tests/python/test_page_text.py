@@ -362,3 +362,79 @@ def test_textarea_content_is_not_page_text() -> None:
 def test_meta_utf16_label_is_read_as_utf8() -> None:
     assert page_text._decode(b'<meta charset="utf-16"><p>hi \xe2\x9c\x93</p>') == '<meta charset="utf-16"><p>hi ✓</p>'
     assert page_text._decode("x".encode("utf-16-le"), "text/html; charset=utf-16le") == "x"
+
+
+# -- compare_rendered_text unit & CLI tests ----------------------------------
+
+def test_compare_rendered_text_equal() -> None:
+    text = "Hello world\nSecond line"
+    res = page_text.compare_rendered_text(text, text)
+    assert res["classification"] == "EQUAL"
+    assert res["similarity_ratio"] == 1.0
+    assert res["only_static"] == []
+    assert res["only_rendered"] == []
+
+
+def test_compare_rendered_text_js_added() -> None:
+    static = "Static title"
+    rendered = "Static title\nDynamic SPA component"
+    res = page_text.compare_rendered_text(static, rendered)
+    assert res["classification"] == "JS_RENDERED_ADDED"
+    assert res["only_static"] == []
+    assert res["only_rendered"] == ["Dynamic SPA component"]
+
+
+def test_compare_rendered_text_css_hidden() -> None:
+    static = "Header\nHidden element\nFooter"
+    rendered = "Header\nFooter"
+    res = page_text.compare_rendered_text(static, rendered)
+    assert res["classification"] == "CSS_HIDDEN_REMOVED"
+    assert res["only_static"] == ["Hidden element"]
+    assert res["only_rendered"] == []
+
+
+def test_compare_rendered_text_mutated() -> None:
+    static = "Old text\nCommon line"
+    rendered = "Common line\nNew text"
+    res = page_text.compare_rendered_text(static, rendered)
+    assert res["classification"] == "MUTATED_TEXT"
+    assert res["only_static"] == ["Old text"]
+    assert res["only_rendered"] == ["New text"]
+
+
+def test_compare_rendered_cli_equal(tmp_path: Path) -> None:
+    static_text = page_text.page_text(SAMPLE.read_text(encoding="utf-8"))["text"]
+    rendered_file = tmp_path / "rendered.txt"
+    rendered_file.write_text(static_text, encoding="utf-8")
+    result = run_cli(str(SAMPLE), "--compare-rendered", str(rendered_file))
+    assert result.returncode == 0
+    assert "Classification: EQUAL" in result.stdout.decode("utf-8")
+
+
+def test_compare_rendered_cli_diff_and_json(tmp_path: Path) -> None:
+    static_text = page_text.page_text(SAMPLE.read_text(encoding="utf-8"))["text"]
+    rendered_file = tmp_path / "rendered.txt"
+    rendered_file.write_text(static_text + "\nExtra dynamic line", encoding="utf-8")
+    result = run_cli(str(SAMPLE), "--compare-rendered", str(rendered_file))
+    assert result.returncode == 1
+    out = result.stdout.decode("utf-8")
+    assert "Classification: JS_RENDERED_ADDED" in out
+    assert "+ Extra dynamic line" in out
+
+    json_result = run_cli(str(SAMPLE), "--compare-rendered", str(rendered_file), "--json")
+    assert json_result.returncode == 1
+    data = json.loads(json_result.stdout.decode("utf-8"))
+    assert data["comparison"]["classification"] == "JS_RENDERED_ADDED"
+    assert "Extra dynamic line" in data["comparison"]["only_rendered"]
+
+
+def test_compare_rendered_cli_stdin_conflict() -> None:
+    result = run_cli("-", "--compare-rendered", "-", stdin=b"<p>test</p>")
+    assert result.returncode == 2
+    assert "cannot use stdin (-) for both" in result.stderr.decode("utf-8")
+
+
+def test_compare_rendered_cli_missing_file() -> None:
+    result = run_cli(str(SAMPLE), "--compare-rendered", "nonexistent/file.txt")
+    assert result.returncode == 2
+    assert "no such file" in result.stderr.decode("utf-8")
