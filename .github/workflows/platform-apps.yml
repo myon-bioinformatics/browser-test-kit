@@ -47,11 +47,15 @@ jobs:
           [[ "$WIDTH_STEP" =~ ^([1-9]|[1-5][0-9]|6[0-4])$ && "$WIDTHS" =~ ^[0-9]+( [0-9]+)*$ ]] || { echo "::error::invalid width_step or widths"; exit 2; }
           read -ra widths <<< "$WIDTHS"
           for width in "${widths[@]}"; do
-            [[ ${#width} -le 4 ]] && (( 10#$width >= 250 && 10#$width <= 3840 )) || { echo "::error::widths must be 250..3840"; exit 2; }
+            if [[ ${#width} -gt 4 ]] || ! (( 10#$width >= 250 && 10#$width <= 3840 )); then
+              echo "::error::widths must be 250..3840"; exit 2
+            fi
           done
-          echo "width_step=$WIDTH_STEP" >> "$GITHUB_OUTPUT"
-          echo "widths=$WIDTHS" >> "$GITHUB_OUTPUT"
-          echo "shot=width-$((10#$width))" >> "$GITHUB_OUTPUT"
+          {
+            echo "width_step=$WIDTH_STEP"
+            echo "widths=$WIDTHS"
+            echo "shot=width-$((10#$width))"
+          } >> "$GITHUB_OUTPUT"
           if [ "$EVENT" = pull_request ]; then
             echo 'os=["ubuntu-24.04"]' >> "$GITHUB_OUTPUT"
           else
