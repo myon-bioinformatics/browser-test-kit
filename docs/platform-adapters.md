@@ -96,14 +96,33 @@ classic scrollbar measurement. Fixture-only library/SRI checks stay in the fixtu
 The fixture retains its original monotonic binary search. Application layouts can
 have passing islands around responsive breakpoints, so adapters scan widths in 8 px
 steps from 256px to the initial viewport width, stopping at the first layout pass.
-All widths this kit chooses are multiples of 8 (search steps, the 256px floor and the
-default `--widths` 320/384, which the CLI enforces), so results from different runs and
-tools line up on the same grid. Device profiles keep their real viewports (iPhone 390,
-Pixel 412): those are facts of the emulated device, not test parameters.
-`min_ok_width` is **layout-only**, scoped to those bounds, the 8 px grid and the current
+### Pixel values: an 8 px default, not a rule
+
+Widths this kit picks on its own default to multiples of 8: the search grid
+(`--width-step 8` from 256px, the first grid width above Windows WebKit's 250px floor)
+and the click widths 320/384. That keeps runs, Ironmate tiles (160x320, 8px gap) and
+the web-ui viewer on one grid, halves stay integral, and it matches Material's 8 dp
+grid (its 4 dp half-step and the Material 3 window classes at 600/840 are on it too).
+
+It is a convenience, so every value can be switched when the question needs it:
+
+| Question | Use |
+| --- | --- |
+| Compare runs, tools and environments side by side | defaults: `--width-step 8`, `--widths 320 384` |
+| Does a real device width work? | device widths, e.g. `--widths 390 412` (any width from 250) |
+| Where exactly does a breakpoint flip? | `--width-step 1` (search from 250) and widths either side, e.g. `--widths 419 420` |
+
+flutter_navigation_basic itself branches at 420, 560, 620, 720, 760, 900, 1000 and
+1180 px; half of those (420, 620, 900, 1180) are not multiples of 8, so the 8 px grid
+reports them only to within 8 px. Use step 1 when the exact edge matters. Device
+profiles always keep their real viewports (iPhone 390, Pixel 412). Manual runs of the
+workflow take `width_step` and `widths` inputs; pull requests and the weekly schedule
+use the defaults. Records keep the grid used in `width_search.step` and `low`.
+
+`min_ok_width` is **layout-only**, scoped to those bounds, the search grid and the current
 viewport height, with the tested failures retained in `width_search.observations`. A
-256px result is lower-bound-censored: it says nothing about narrower widths (Windows
-WebKit refuses viewports below 250). The first passing width and explicit
+result at the search floor (256px, or 250px with step 1) is lower-bound-censored: it says
+nothing about narrower widths (Windows WebKit refuses viewports below 250). The first passing width and explicit
 `--widths` also receive independent real clicks; a click failure
 makes the record fail, without relabelling the layout threshold as a click threshold.
 Each click sample uses a **fresh browser context**, isolating cookies and persistent

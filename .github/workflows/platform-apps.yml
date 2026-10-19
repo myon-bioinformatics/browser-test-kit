@@ -6,6 +6,13 @@ name: platform-apps (published network lane)
 # measures the same pages on Linux, macOS and Windows.
 on:
   workflow_dispatch:
+    inputs:
+      width_step:
+        description: 'Width search grid in px: 8 aligns results; 1 finds exact breakpoint edges'
+        default: '8'
+      widths:
+        description: 'Extra click widths, space separated (e.g. "320 384" or device widths "390 412")'
+        default: '320 384'
   schedule:
     - cron: '17 3 * * 1'
   pull_request:
@@ -68,12 +75,17 @@ jobs:
         env:
           BROWSER: ${{ matrix.browser }}
           PROFILE: ${{ matrix.profile }}
+          # Pull requests and the schedule use the defaults; a manual run may change them.
+          WIDTH_STEP: ${{ inputs.width_step || '8' }}
+          WIDTHS: ${{ inputs.widths || '320 384' }}
         run: |
+          [[ "$WIDTH_STEP" =~ ^[0-9]+$ && "$WIDTHS" =~ ^[0-9]+( [0-9]+)*$ ]] || { echo "::error::invalid width_step or widths"; exit 2; }
+          read -ra widths <<< "$WIDTHS"
           status=0
           for adapter in adapters/flutter-*.json; do
             name=$(basename "$adapter" .json)
             python scripts/platform_probe.py collect --browser "$BROWSER" --profile "$PROFILE" \
-              --adapter "$adapter" --widths 320 384 --out app-results \
+              --adapter "$adapter" --widths "${widths[@]}" --width-step "$WIDTH_STEP" --out app-results \
               --evidence-dir "app-results/$name/$RUNNER_OS-$BROWSER-$PROFILE" || status=1
           done
           python -S scripts/platform_probe.py summary app-results > app-results/summary.txt || status=1

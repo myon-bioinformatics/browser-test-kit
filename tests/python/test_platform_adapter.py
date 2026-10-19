@@ -170,3 +170,34 @@ def test_report_builds_the_ironmate_sheet_and_web_ui_viewer_from_pinned_commits(
     assert {p.stem for p in (ROOT / 'adapters').glob('flutter-*.json')} == {
         'flutter-home', 'flutter-hub', 'flutter-clipboard-shelf', 'flutter-now-timeline', 'flutter-photo-studio',
         'flutter-http-request-draft', 'flutter-ui-showcase', 'flutter-counter', 'flutter-screen1'}
+
+
+@pytest.mark.parametrize('step,floor', [(1, 250), (2, 250), (8, 256), (10, 250), (64, 256)])
+def test_search_grid_is_a_default_that_can_be_switched(step, floor):
+    assert pp.search_floor(step) == floor and pp.WIDTH_STEP == 8 and pp.MIN_SEARCH_WIDTH == 256
+
+
+@pytest.mark.parametrize('step', [0, 65, 8.0, True])
+def test_invalid_width_step_fails_before_browser_launch(step):
+    with pytest.raises(ValueError, match='width_step'):
+        pp.collect('chromium', 'desktop', width_step=step)
+
+
+def test_cli_accepts_device_and_edge_widths_and_rejects_below_250(tmp_path, monkeypatch, capsys):
+    seen = {}
+    def fake_collect(*args, **kwargs):
+        seen.update(kwargs)
+        raise RuntimeError('stop before a browser')
+    monkeypatch.setattr(pp, 'collect', fake_collect)
+    pp.main(['collect', '--browser', 'chromium', '--out', str(tmp_path), '--widths', '390', '419', '420',
+             '--width-step', '1'])
+    assert seen['widths'] == (390, 419, 420) and seen['width_step'] == 1
+    seen.clear()
+    pp.main(['collect', '--browser', 'chromium', '--out', str(tmp_path), '--widths', '249'])
+    assert not seen
+
+
+def test_manual_runs_can_switch_grid_and_widths_while_schedule_keeps_defaults():
+    apps = (ROOT / '.github/workflows/platform-apps.yml').read_text()
+    assert "WIDTH_STEP: ${{ inputs.width_step || '8' }}" in apps and "WIDTHS: ${{ inputs.widths || '320 384' }}" in apps
+    assert '--widths "${widths[@]}" --width-step "$WIDTH_STEP"' in apps and '^[0-9]+( [0-9]+)*$' in apps
