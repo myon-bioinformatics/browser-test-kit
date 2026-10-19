@@ -1,0 +1,88 @@
+name: platform-apps (published network lane)
+
+# Explicitly independent from the reproducible local 42-environment matrix.
+# Failures here may be app regressions OR deployment/network failures.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'adapters/**'
+      - 'scripts/platform_probe.py'
+      - 'scripts/platform_adapter.py'
+      - 'scripts/platform_facts.js'
+      - '.github/workflows/platform-apps.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  published-flutter:
+    name: Published Flutter / ${{ matrix.browser }} / ${{ matrix.profile }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {browser: chromium, profile: desktop}
+          - {browser: firefox, profile: desktop}
+          - {browser: webkit, profile: desktop}
+          - {browser: chromium, profile: pixel}
+          - {browser: webkit, profile: iphone}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - run: python -m pip install -r requirements-test.txt
+      - run: python -m playwright install --with-deps --only-shell ${{ matrix.browser }}
+      - name: Measure representative published pages
+        env:
+          BROWSER: ${{ matrix.browser }}
+          PROFILE: ${{ matrix.profile }}
+        run: |
+          status=0
+          for adapter in adapters/flutter-*.json; do
+            name=$(basename "$adapter" .json)
+            python scripts/platform_probe.py collect --browser "$BROWSER" --profile "$PROFILE" \
+              --adapter "$adapter" --widths 320 390 --out app-results \
+              --evidence-dir "app-results/$name/screenshots" || status=1
+          done
+          python -S scripts/platform_probe.py summary app-results > app-results/summary.txt || status=1
+          { echo 'Published-site observations; mobile profiles are emulation, not physical devices.'; echo '```text'; cat app-results/summary.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: platform-app-${{ matrix.browser }}-${{ matrix.profile }}
+          path: app-results
+          if-no-files-found: error
+          retention-days: 30
+
+  report:
+    needs: published-flutter
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: platform-app-*
+          path: app-results
+      - name: Render observed results (job failures remain failures)
+        run: |
+          python -S scripts/platform_probe.py merge app-results --out app-matrix/dataset.json
+          python -S scripts/platform_probe.py render app-matrix/dataset.json --out app-matrix/index.html
+          python -S scripts/platform_probe.py summary app-matrix/dataset.json > app-matrix/summary.txt || true
+          { echo '```text'; cat app-matrix/summary.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: platform-app-matrix
+          path: app-matrix
+          if-no-files-found: error
+          retention-days: 30
