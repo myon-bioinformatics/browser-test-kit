@@ -74,7 +74,9 @@ _HIT = """(el, [x, y]) => { const top = document.elementFromPoint(x, y);
 
 
 def _round(value):
-    return round(value, 3)
+    # Same float operations as interaction.mjs: round() ties to even, Math.round ties up
+    # (9/16 gave 0.562 here and 0.563 in Node).
+    return math.floor(value * 1000 + 0.5) / 1000
 
 
 def press_point(box, viewport, ratio=0.9):

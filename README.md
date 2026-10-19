@@ -182,6 +182,18 @@ python -S scripts/platform_probe.py render platform-results --out matrix.html
 - Adopted third-party JS (`js-adopt`, see the parent's `js_adopt.py`) is checked here too: the fixture loads every file in `js.lock.json` with its SRI, and an environment passes only if DOMPurify sanitizes, seedrandom returns the same first value as every other engine, and a tag with a deliberately wrong `integrity` is refused. `collect` serves the fixture over a local HTTP server because SRI with `crossorigin` does not apply to `file://` pages.
 - Only `collect` needs Playwright. Exit codes: 0 OK; 1 an environment failed; 2 input error.
 
+### Python / Node twin parity (`scripts/twin_parity.py`)
+
+Twins (`interaction.py` / `interaction.mjs`, `route_trail.py` / `route_trail_node.mjs`) promise the same records for the same inputs. `twin_parity.py` checks that promise without files: Node runs once, every case goes in on stdin and every result comes back on stdout, and the Python twin's results are compared in memory. Twins must agree on accept/reject and on each accepted value (as JSON); error wording may differ unless `--messages` is given.
+
+```bash
+python -S scripts/twin_parity.py scripts/interaction.py:press_point scripts/interaction.mjs:pressPoint < cases.json
+```
+
+- `tests/python/test_twin_parity.py` runs both twin pairs on hundreds of generated inputs plus every divergence found so far, and checks that the shared URL regex is the same source in both files.
+- The first run found two real drifts, now fixed and recorded: `TWIN_PARSER_DRIFT` (27 of 250 URLs) and `ROUNDING_TIE_DRIFT` (0.562 vs 0.563).
+- Library: `node_calls(module, export, cases)`, `python_calls(fn, cases)`, `mismatches(a, b)`. Exit codes: 0 agree; 1 mismatch; 2 input error.
+
 ### Planned sequence
 
 1. Documentation/evidence contract.
