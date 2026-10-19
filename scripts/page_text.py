@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import difflib
 import http.client
 import json
 import re
@@ -488,6 +489,76 @@ def find_elements(html: str, query: str, *, url: str = "", limit: int = 20) -> l
     return matches
 
 
+def extract_rendered_text(source: str) -> str:
+    """Extract rendered text string from a file path, JSON structure, or raw string."""
+    path = Path(source)
+    if path.is_file():
+        content = path.read_text(encoding="utf-8")
+        try:
+            data = json.loads(content)
+            if isinstance(data, dict):
+                for key in ("visible", "innerText", "text", "html"):
+                    if key in data and isinstance(data[key], str):
+                        if key == "html":
+                            return page_text(data[key])["text"]
+                        return data[key]
+        except (json.JSONDecodeError, ValueError):
+            pass
+        return content
+    return source
+
+
+def compare_text(static_text: str, rendered_text: str) -> dict[str, Any]:
+    """Compare static extracted page text with browser-rendered text (e.g. innerText).
+
+    Returns metrics, line diffs, and rendering status notes:
+    {"exact_match": bool, "similarity": float, "static_chars": int, "rendered_chars": int,
+     "static_lines": int, "rendered_lines": int, "common_lines": list[str],
+     "static_only_lines": list[str], "rendered_only_lines": list[str],
+     "status_notes": list[str]}
+    """
+    s_norm = _normalize(static_text or "")
+    r_norm = _normalize(rendered_text or "")
+
+    s_lines = [line.strip() for line in s_norm.split("\n") if line.strip()]
+    r_lines = [line.strip() for line in r_norm.split("\n") if line.strip()]
+
+    s_set = set(s_lines)
+    r_set = set(r_lines)
+
+    static_only = [line for line in s_lines if line not in r_set]
+    rendered_only = [line for line in r_lines if line not in s_set]
+    common = [line for line in s_lines if line in r_set]
+
+    exact = s_norm == r_norm
+    ratio = round(difflib.SequenceMatcher(None, s_norm, r_norm).ratio(), 4)
+
+    status_notes = []
+    if rendered_only:
+        status_notes.append("PAGE_TEXT_AS_RENDERED_TEXT: text rendered by JavaScript is missing from static HTML")
+        if common:
+            status_notes.append("DYNAMIC_CONTENT_DIFF: browser rendered content not present in static HTML")
+
+    if static_only:
+        status_notes.append("CSS_HIDDEN_IN_BROWSER: static HTML includes text hidden or absent in rendered output")
+
+    if exact:
+        status_notes.append("EXACT_MATCH: static and rendered text are identical")
+
+    return {
+        "exact_match": exact,
+        "similarity": ratio,
+        "static_chars": len(s_norm),
+        "rendered_chars": len(r_norm),
+        "static_lines": len(s_lines),
+        "rendered_lines": len(r_lines),
+        "common_lines": common,
+        "static_only_lines": static_only,
+        "rendered_only_lines": rendered_only,
+        "status_notes": status_notes,
+    }
+
+
 def _positive(kind: Callable[[str], Any]) -> Callable[[str], Any]:
     def parse(value: str) -> Any:
         number = kind(value)
@@ -513,6 +584,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--find", metavar="QUERY", help="list links/buttons/headings whose text, aria-label or "
                                                         "title contains QUERY (\"\" lists every candidate)")
     parser.add_argument("--limit", type=_positive(int), default=20, help="maximum --find matches (default: 20)")
+    parser.add_argument("--compare", metavar="RENDERED",
+                        help="compare static text with rendered text or captured DOM JSON file")
     return parser
 
 
@@ -552,6 +625,42 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(f'No matches for "{args.find}".')
         return 0 if matches and not http_error else 1
+
+    if args.compare is not None:
+        result = page_text(loaded["html"], url=url, max_chars=args.max_chars)
+        rendered_raw = extract_rendered_text(args.compare)
+        diff = compare_text(result["text"], rendered_raw)
+        if args.json:
+            result.update(diff)
+            result.update(bytes=loaded["bytes"], byte_limit_hit=loaded["byte_limit_hit"], status=status,
+                          content_type=content_type or None,
+                          fetched_at=datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"))
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        else:
+            print(f"Title: {result['title']}\nURL: {result['url'] or '-'}\n"
+                  f"Source element: {result['source_element']}\n---")
+            print("Static vs Rendered Text Comparison:")
+            print(f"- Exact match: {diff['exact_match']}")
+            print(f"- Similarity score: {diff['similarity']}")
+            print(f"- Static: {diff['static_chars']} chars ({diff['static_lines']} lines)")
+            print(f"- Rendered: {diff['rendered_chars']} chars ({diff['rendered_lines']} lines)")
+            if diff["static_only_lines"]:
+                print(f"\nStatic-only lines ({len(diff['static_only_lines'])}):")
+                for line in diff["static_only_lines"][:10]:
+                    print(f"  - {line}")
+                if len(diff["static_only_lines"]) > 10:
+                    print(f"  ... and {len(diff['static_only_lines']) - 10} more")
+            if diff["rendered_only_lines"]:
+                print(f"\nRendered-only lines ({len(diff['rendered_only_lines'])}):")
+                for line in diff["rendered_only_lines"][:10]:
+                    print(f"  - {line}")
+                if len(diff["rendered_only_lines"]) > 10:
+                    print(f"  ... and {len(diff['rendered_only_lines']) - 10} more")
+            if diff["status_notes"]:
+                print("\nStatus notes:")
+                for note in diff["status_notes"]:
+                    print(f"- {note}")
+        return 0 if not http_error else 1
 
     result = page_text(loaded["html"], url=url, max_chars=args.max_chars)
     if not result["text"]:

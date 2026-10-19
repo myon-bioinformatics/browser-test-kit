@@ -29,7 +29,7 @@ commit. `browser_version` is always recorded.
 python examples/capture_browser_dom.py http://127.0.0.1:8000/index.html --aria-snapshot --same-origin-only --output page.json
 ```
 
-Use existing `scripts/page_text.py` for static extraction without a browser.
+Use existing `scripts/page_text.py` for static extraction without a browser. Use `python scripts/page_text.py <URL> --compare <page.json>` to automatically compare static text extraction against browser-rendered text (`visible`/`innerText`).
 GHI's selected-body HTML reader remains a separate downstream consumer. No GHI
 import or vendor update is required here. Local fixture coverage runs in the
 existing Python Playwright CI lane; external sites are not core test fixtures.

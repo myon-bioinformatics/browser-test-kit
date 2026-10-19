@@ -362,3 +362,61 @@ def test_textarea_content_is_not_page_text() -> None:
 def test_meta_utf16_label_is_read_as_utf8() -> None:
     assert page_text._decode(b'<meta charset="utf-16"><p>hi \xe2\x9c\x93</p>') == '<meta charset="utf-16"><p>hi ✓</p>'
     assert page_text._decode("x".encode("utf-16-le"), "text/html; charset=utf-16le") == "x"
+
+
+# -- compare static vs rendered text ------------------------------------------
+
+def test_compare_text_exact_match() -> None:
+    text = "Line 1\nLine 2"
+    res = page_text.compare_text(text, text)
+    assert res["exact_match"] is True
+    assert res["similarity"] == 1.0
+    assert any("EXACT_MATCH" in note for note in res["status_notes"])
+
+
+def test_compare_text_csr_missing_content() -> None:
+    static = "Header"
+    rendered = "Header\nRendered by JavaScript"
+    res = page_text.compare_text(static, rendered)
+    assert res["exact_match"] is False
+    assert res["rendered_only_lines"] == ["Rendered by JavaScript"]
+    assert any("PAGE_TEXT_AS_RENDERED_TEXT" in note for note in res["status_notes"])
+
+
+def test_compare_text_css_hidden_content() -> None:
+    static = "Header\n¶ Section Permalink"
+    rendered = "Header"
+    res = page_text.compare_text(static, rendered)
+    assert res["exact_match"] is False
+    assert res["static_only_lines"] == ["¶ Section Permalink"]
+    assert any("CSS_HIDDEN_IN_BROWSER" in note for note in res["status_notes"])
+
+
+def test_extract_rendered_text_from_json_and_plain_text(tmp_path: Path) -> None:
+    txt_file = tmp_path / "rendered.txt"
+    txt_file.write_text("Hello rendered", encoding="utf-8")
+    assert page_text.extract_rendered_text(str(txt_file)) == "Hello rendered"
+
+    json_file = tmp_path / "dom.json"
+    json_file.write_text(json.dumps({"visible": "Visible DOM text", "html": "<p>x</p>"}), encoding="utf-8")
+    assert page_text.extract_rendered_text(str(json_file)) == "Visible DOM text"
+
+
+def test_cli_compare_plain_text_and_json_output(tmp_path: Path) -> None:
+    html_file = tmp_path / "page.html"
+    html_file.write_text("<main><h1>Title</h1><p>Static body</p></main>", encoding="utf-8")
+    rendered_file = tmp_path / "dom.json"
+    rendered_file.write_text(json.dumps({"visible": "Title\nStatic body\nDynamic JS badge"}), encoding="utf-8")
+
+    result = run_cli(str(html_file), "--compare", str(rendered_file))
+    assert result.returncode == 0
+    stdout = result.stdout.decode("utf-8")
+    assert "Static vs Rendered Text Comparison:" in stdout
+    assert "Rendered-only lines (1):" in stdout
+    assert "Dynamic JS badge" in stdout
+
+    result_json = run_cli(str(html_file), "--compare", str(rendered_file), "--json")
+    assert result_json.returncode == 0
+    data = json.loads(result_json.stdout.decode("utf-8"))
+    assert data["exact_match"] is False
+    assert data["rendered_only_lines"] == ["Dynamic JS badge"]
