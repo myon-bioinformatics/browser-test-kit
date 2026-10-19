@@ -11,8 +11,8 @@ width (page / always-scrolling probe), devicePixelRatio, visualViewport, safe-ar
 measured font widths, platform and browser version. The environment passes when
 the layout holds (no horizontal overflow, no overlap, nothing clipped) and a real
 click (a tap on touch profiles) at the integer centre of the button registers.
-`min_ok_width` is the narrowest viewport width at which the layout still holds,
-found by binary search (the checks are monotonic in width).
+`min_ok_width` is the narrowest viewport width (a multiple of 8 px) at which the layout
+still holds, found by binary search over 8 px steps (the checks are monotonic in width).
 
 Only collect needs Playwright; merge, summary and render are stdlib-only.
 Exit codes: 0 OK; 1 an environment failed (collect, summary); 2 input error.
@@ -44,9 +44,11 @@ ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / "fixtures" / "platform_probe.html"
 PROFILES = {"desktop": None, "iphone": "iPhone 13", "pixel": "Pixel 7"}
 DESKTOP_VIEWPORT = {"width": 1280, "height": 800}
+# Widths are tested in multiples of 8 px so results line up across runs, tools and tiles.
 # WebKit on Windows refuses viewports below 250x240 ("minimal viewport of 250x240"), so the
-# width search starts there on every platform to keep results comparable.
-MIN_SEARCH_WIDTH = 250
+# search starts at the next multiple of 8 on every platform to keep results comparable.
+WIDTH_STEP = 8
+MIN_SEARCH_WIDTH = 256
 
 
 def os_name() -> str:
@@ -109,7 +111,7 @@ class _QuietHandler(SimpleHTTPRequestHandler):
 
 def collect(browser_name: str, profile: str, *, headed: bool = False, channel: str | None = None,
             adapter: str | None = None, url: str | None = None,
-            widths: tuple[int, ...] = (320, 390), evidence_dir: str | None = None) -> dict:
+            widths: tuple[int, ...] = (320, 384), evidence_dir: str | None = None) -> dict:
     if profile not in PROFILES:
         raise ValueError(f"profile must be one of {sorted(PROFILES)}")
     config = adapters.load_adapter(adapter) if adapter else None
@@ -198,7 +200,7 @@ def _collect(browser_name: str, profile: str, *, headed: bool, channel: str | No
                 capture('initial')
                 # Ascending exhaustive search: responsive apps need not be monotonic.
                 min_width = None
-                for width in range(MIN_SEARCH_WIDTH, size['width'] + 1):
+                for width in range(MIN_SEARCH_WIDTH, size['width'] + 1, WIDTH_STEP):
                     result = measure(width)
                     observations.append({'width': width, 'ok': result['ok'], 'failed': result['failed']})
                     if result['ok']:
@@ -218,7 +220,9 @@ def _collect(browser_name: str, profile: str, *, headed: bool, channel: str | No
                 (page.touchscreen.tap if touch else page.mouse.click)(x, y)
                 clicks = int(page.locator("#action").get_attribute("data-clicks"))
                 click_result = {"ok": clicks == 1, "count": clicks, "input": "touch" if touch else "mouse", "point": [x, y]}
-                min_width = narrowest_ok_width(lambda w: measure(w)['ok'], MIN_SEARCH_WIDTH, size['width'])
+                step = narrowest_ok_width(lambda k: measure(k * WIDTH_STEP)['ok'],
+                                          MIN_SEARCH_WIDTH // WIDTH_STEP, size['width'] // WIDTH_STEP)
+                min_width = None if step is None else step * WIDTH_STEP
             resolved_url = page.url
             version = browser.version
         except Exception:
@@ -246,7 +250,8 @@ def _collect(browser_name: str, profile: str, *, headed: bool, channel: str | No
         if provenance:
             record['target']['provenance'] = provenance
         record['samples'] = samples
-        record['width_search'] = {'method': 'ascending-exhaustive', 'low': MIN_SEARCH_WIDTH, 'high': size['width'],
+        record['width_search'] = {'method': 'ascending-exhaustive', 'step': WIDTH_STEP, 'low': MIN_SEARCH_WIDTH,
+                                  'high': size['width'],
                                   'observations': observations, 'scope': 'layout-only'}
         record['observed_at'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
     record["env"]["id"] = env_id(record["env"])
@@ -429,7 +434,7 @@ def main(argv=None) -> int:
     c.add_argument("--headed", action="store_true", help="a real window, so the frame size is measured")
     c.add_argument('--adapter', help='JSON adapter for an application (default: original local fixture)')
     c.add_argument('--url', help='override adapter HTTP(S) target URL')
-    c.add_argument('--widths', nargs='+', type=int, default=[320, 390], help='additional real-click widths')
+    c.add_argument('--widths', nargs='+', type=int, default=[320, 384], help='additional real-click widths (multiples of 8)')
     c.add_argument('--evidence-dir', help='screenshots; use a separate directory per environment')
     c.add_argument("--out", required=True, help="directory for <env-id>.json")
     m = sub.add_parser("merge", help="combine records into one dataset")
@@ -446,8 +451,8 @@ def main(argv=None) -> int:
             if args.channel and args.browser != "chromium":
                 raise ValueError("--channel needs --browser chromium")
             try:
-                if any(w < MIN_SEARCH_WIDTH or w > 3840 for w in args.widths):
-                    raise ValueError('widths must be between 250 and 3840')
+                if any(w < MIN_SEARCH_WIDTH or w > 3840 or w % WIDTH_STEP for w in args.widths):
+                    raise ValueError('widths must be multiples of 8 between 256 and 3840')
                 record = collect(args.browser, args.profile, headed=args.headed, channel=args.channel,
                                  adapter=args.adapter, url=args.url, widths=tuple(args.widths), evidence_dir=args.evidence_dir)
             except Exception as exc:  # a browser that cannot launch or navigate is a finding, not a crash

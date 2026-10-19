@@ -73,7 +73,7 @@ jobs:
           for adapter in adapters/flutter-*.json; do
             name=$(basename "$adapter" .json)
             python scripts/platform_probe.py collect --browser "$BROWSER" --profile "$PROFILE" \
-              --adapter "$adapter" --widths 320 390 --out app-results \
+              --adapter "$adapter" --widths 320 384 --out app-results \
               --evidence-dir "app-results/$name/$RUNNER_OS-$BROWSER-$PROFILE" || status=1
           done
           python -S scripts/platform_probe.py summary app-results > app-results/summary.txt || status=1

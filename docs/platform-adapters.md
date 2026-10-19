@@ -43,7 +43,7 @@ real-input postcondition still fails when an overlay blocks the action.
 
 ```sh
 python scripts/platform_probe.py collect --browser chromium --profile desktop \
-  --adapter adapters/flutter-counter.json --widths 320 390 \
+  --adapter adapters/flutter-counter.json --widths 320 384 \
   --out app-results --evidence-dir app-results/counter/screenshots
 python -S scripts/platform_probe.py merge app-results --out app-matrix/dataset.json
 python -S scripts/platform_probe.py render app-matrix/dataset.json --out app-matrix/index.html
@@ -87,13 +87,17 @@ classic scrollbar measurement. Fixture-only library/SRI checks stay in the fixtu
 ## Width search, evidence and failures
 
 The fixture retains its original monotonic binary search. Application layouts can
-have passing islands around responsive breakpoints, so adapters scan each integer
-width from 250px to the initial viewport width, stopping at the first layout pass.
-`min_ok_width` is **layout-only**, scoped to those bounds and the current viewport
-height, with the tested failures retained in `width_search.observations`. A 250px
-result is lower-bound-censored: it says nothing about narrower widths. Widths below
-250 are unsupported by Windows WebKit. The first passing width and explicit
-`--widths` (default 320/390) also receive independent real clicks; a click failure
+have passing islands around responsive breakpoints, so adapters scan widths in 8 px
+steps from 256px to the initial viewport width, stopping at the first layout pass.
+All widths this kit chooses are multiples of 8 (search steps, the 256px floor and the
+default `--widths` 320/384, which the CLI enforces), so results from different runs and
+tools line up on the same grid. Device profiles keep their real viewports (iPhone 390,
+Pixel 412): those are facts of the emulated device, not test parameters.
+`min_ok_width` is **layout-only**, scoped to those bounds, the 8 px grid and the current
+viewport height, with the tested failures retained in `width_search.observations`. A
+256px result is lower-bound-censored: it says nothing about narrower widths (Windows
+WebKit refuses viewports below 250). The first passing width and explicit
+`--widths` also receive independent real clicks; a click failure
 makes the record fail, without relabelling the layout threshold as a click threshold.
 Each click sample uses a **fresh browser context**, isolating cookies and persistent
 browser storage. Records contain per-width boxes, failure reasons and click before/

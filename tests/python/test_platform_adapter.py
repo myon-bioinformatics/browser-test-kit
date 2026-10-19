@@ -142,7 +142,7 @@ def test_read_provenance_reports_value_or_reason_without_raising():
 
 def test_summary_shows_the_build_the_page_came_from():
     record = {'env': {'id': 'Linux-chromium-desktop-headless', 'browser_version': '1'}, 'verdict': 'pass',
-              'min_ok_width': 250, 'facts': {'window': {'frame_width': 0, 'frame_height': 0},
+              'min_ok_width': 256, 'facts': {'window': {'frame_width': 0, 'frame_height': 0},
               'viewport': {'scrollbar_width': 0, 'device_pixel_ratio': 1}}, 'layout': {'failed': []},
               'click': {'ok': True}, 'target': {'adapter': 'flutter-hub', 'provenance': {'value': 'b' * 40}}}
     assert pp.summary_lines([record])[0].endswith('target=flutter-hub build=' + 'b' * 12)
