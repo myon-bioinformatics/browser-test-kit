@@ -64,7 +64,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@v7
         with: { python-version: '3.13' }
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - uses: astral-sh/setup-uv@v10.3.0
         with: { python-version: '3.13' }
       - name: Fetch pinned shared vendor tool
         uses: actions/checkout@v7
@@ -136,7 +136,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@v7
         with: { python-version: '3.13' }
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - uses: astral-sh/setup-uv@v10.3.0
         with: { python-version: '3.13' }
       - run: uv run --locked --group browser python -m playwright install --with-deps --only-shell chromium firefox webkit
       - name: Run Python browser tests with JUnit
@@ -180,7 +180,7 @@ jobs:
     - uses: actions/setup-python@v7
       with:
         python-version: '3.13'
-    - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+    - uses: astral-sh/setup-uv@v10.3.0
       with:
         python-version: '3.13'
     - name: Fetch pinned shared vendor tool

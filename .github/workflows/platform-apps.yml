@@ -83,13 +83,13 @@ jobs:
           - {browser: chromium, profile: iphone}
           - {browser: webkit, profile: pixel}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.13'
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - uses: astral-sh/setup-uv@v10.3.0
         with:
           python-version: '3.13'
       - run: uv run --locked --group browser python -m playwright install --with-deps --only-shell ${{ matrix.browser }}
@@ -111,7 +111,7 @@ jobs:
           python -S scripts/platform_probe.py summary app-results > app-results/summary.txt || status=1
           { echo 'Published-site observations; mobile profiles are emulation, not physical devices.'; echo '```text'; cat app-results/summary.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
           exit "$status"
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: platform-app-${{ runner.os }}-${{ matrix.browser }}-${{ matrix.profile }}
@@ -127,17 +127,17 @@ jobs:
       contents: read
       pull-requests: write  # one digest comment per run on same-repository pull requests
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Check out pinned Ironmate comparison tools
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        uses: actions/checkout@v7
         with:
           repository: myon-bioinformatics/Ironmate
           ref: edc47a267bd2f5a1e29ec3a5474cb24a73c6f50d
           path: .ironmate
           persist-credentials: false
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+      - uses: actions/download-artifact@v8
         with:
           pattern: platform-app-*
           path: app-results
@@ -160,7 +160,7 @@ jobs:
       # a merged main commit; bump the SHA together with its test when web-ui's viewer changes.
       - name: Check out pinned web-ui page viewer
         if: always() && hashFiles('app-matrix/screenshots/report.json') != ''
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        uses: actions/checkout@v7
         with:
           repository: myon-bioinformatics/web-ui
           ref: b35ed9b77d4222b946d9813298243489a69e624a
@@ -192,7 +192,7 @@ jobs:
           python -S scripts/app_digest.py app-results --ironmate .ironmate --runners-json "$RUNNERS_JSON" \
             --shot "$SHOT" --out app-digest --run-url "$RUN_URL"
           cat app-digest/summary.md >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+      - uses: actions/upload-artifact@v7
         if: always() && steps.digest.outcome == 'success'
         with:
           name: platform-app-digest
@@ -206,7 +206,7 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
         run: |
           python -S scripts/app_digest_comment.py "$GITHUB_REPOSITORY" "$PR" --file app-digest/summary.md
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: platform-app-matrix
