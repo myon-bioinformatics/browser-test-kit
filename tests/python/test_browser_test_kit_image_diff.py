@@ -206,7 +206,7 @@ def test_missing_pillow_exit_two(tmp_path: Path) -> None:
     )
     proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
     assert proc.returncode == 2
-    assert proc.stderr.strip() == "image_diff: Pillow is required (pip install pillow)"
+    assert proc.stderr.strip() == "image_diff: Pillow >=13 is required (python -m pip install 'pillow>=13')"
 
 
 def _png_bytes(image: Image.Image) -> bytes:
@@ -295,3 +295,22 @@ def test_invalid_image_bytes_exit_two(tmp_path, in_zip):
     assert proc.returncode == 2
     assert "image_diff:" in proc.stderr
     assert "Traceback" not in proc.stderr
+
+
+@pytest.mark.parametrize("version", [(3, 9), (3, 10)])
+def test_unsupported_python_fails_before_pillow(monkeypatch, capsys, version):
+    monkeypatch.setattr(image_diff.sys, "version_info", version)
+    with pytest.raises(SystemExit) as error:
+        image_diff.load("does-not-exist.png")
+    assert error.value.code == 2
+    assert "Python >=3.11 is required" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("version", ["11.3.0", "12.3.0", "unknown"])
+def test_unsupported_pillow_fails_before_decode(monkeypatch, capsys, version):
+    import PIL
+    monkeypatch.setattr(PIL, "__version__", version)
+    with pytest.raises(SystemExit) as error:
+        image_diff.load("does-not-exist.png")
+    assert error.value.code == 2
+    assert "Pillow >=13 is required" in capsys.readouterr().err

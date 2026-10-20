@@ -6,23 +6,33 @@ build-backend = "setuptools.build_meta"
 name = "browser-test-kit-tools"
 version = "0.1.0"
 description = "browser-test-kit's stdlib-only scripts, installed as top-level modules for `python -m <script>`"
-requires-python = ">=3.11"
+requires-python = ">=3.9"
 
 [project.optional-dependencies]
-image = ["pillow>=10"]
+image = ["pillow>=13"]
 
 # Test-only. The default dev group is the browserless lane; browser adds Playwright.
 # Floors stay open-ended (>=). Resolved versions are pinned in uv.lock.
 [dependency-groups]
 dev = [
-    "pytest>=8",
+    "pytest>=9.0.3",
     "PyYAML>=6.0.3",
-    "pillow>=10",
-    "pip>=23",
+    "pillow>=13",
+    "pip>=26.2",
 ]
 browser = [
     "playwright>=1.63.0",
 ]
+
+# The installed stdlib API remains 3.9+, but project/uv environments are 3.11+.
+# Keep Pillow unconditional: requesting [image] on older Python must fail,
+# not silently install the base package without image support.
+[tool.uv]
+environments = ["python_version >= '3.11'"]
+
+[tool.uv.dependency-groups]
+dev = { requires-python = ">=3.11" }
+browser = { requires-python = ">=3.11" }
 
 [tool.setuptools]
 # Every scripts/*.py becomes a top-level module (src-layout discovery), so

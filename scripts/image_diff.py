@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Compare two images (files or zip members) and print one line: size, changed pixels, bbox, max delta.
 
-Needs Pillow (only dependency). Optional --clip X,Y,W,H in CSS px, scaled by
+Needs Python >=3.11 and Pillow >=13 (only dependency). Optional --clip X,Y,W,H in CSS px, scaled by
 image width / --viewport-width (screenshots taken at devicePixelRatio != 1).
 Source forms: PATH or ZIP::member. Exit 0 = identical (within --tolerance), 1 = differs, 2 = input error.
 """
@@ -29,11 +29,23 @@ def finite_positive(value: str) -> float:
 
 
 def _require_pillow_import():
+    if sys.version_info < (3, 11):
+        print("image_diff: Python >=3.11 is required for image features", file=sys.stderr)
+        raise SystemExit(2)
     try:
+        import PIL
         from PIL import Image  # noqa: F401
     except ImportError:
-        print("image_diff: Pillow is required (pip install pillow)", file=sys.stderr)
+        print("image_diff: Pillow >=13 is required (python -m pip install 'pillow>=13')", file=sys.stderr)
         raise SystemExit(2) from None
+
+    try:
+        supported = int(PIL.__version__.split(".", 1)[0]) >= 13
+    except (AttributeError, ValueError):
+        supported = False
+    if not supported:
+        print("image_diff: Pillow >=13 is required (python -m pip install 'pillow>=13')", file=sys.stderr)
+        raise SystemExit(2)
 
 
 def parse_clip(value: str) -> tuple[float, float, float, float]:

@@ -2,10 +2,10 @@
 
 Compare two screenshots (`PATH` or `ZIP::member`) and print one line: size, changed pixels, bbox, max channel delta.
 
-Canonical implementation lives in this repository (`scripts/image_diff.py`). Pillow is the only runtime dependency and is imported lazily when diffing; without it the CLI exits `2` with an install hint. The tool is not part of the stdlib-only vendor catalog (`vendor.lock.json`).
+Canonical implementation lives in this repository (`scripts/image_diff.py`). Python 3.11+ is required. Pillow 13+ is the only runtime dependency and is imported lazily when diffing; without it the CLI exits `2` with an install hint. The tool is not part of the stdlib-only vendor catalog (`vendor.lock.json`).
 
 ```bash
-pip install pillow   # or: pip install browser-test-kit-tools[image]
+python -m pip install 'pillow>=13'   # or: python -m pip install 'browser-test-kit-tools[image]'
 python scripts/image_diff.py a.png b.png [--clip X,Y,W,H] [--viewport-width CSS_PX] [--tolerance N]
 ```
 

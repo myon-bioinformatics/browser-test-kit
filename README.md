@@ -3,7 +3,29 @@ Cross-browser testing reference kit for Playwright Node/Python, Stagehand, Repla
 
 ## Scope
 
-The kit's center is browser testing: Playwright lanes, evidence acquisition and validation, execution strategy, and reproducible diagnostics. It also hosts stdlib-only engineering utilities that the same agents and CI jobs use around that work, such as repository orientation, GitHub/CI operations, log digests, Python-version matrices, HTML fixture building, and explicit-file commits. Every script must run under `python -S`, stay bounded in its output, and have unit tests. A utility that grows its own dependencies or domain belongs in its own repository.
+The kit's center is browser testing: Playwright lanes, evidence acquisition and validation, execution strategy, and reproducible diagnostics. It also hosts stdlib-only engineering utilities that the same agents and CI jobs use around that work, such as repository orientation, GitHub/CI operations, log digests, Python-version matrices, HTML fixture building, and explicit-file commits. Stdlib utilities must run under `python -S`, stay bounded in their output, and have unit tests. A utility that grows its own dependencies or domain belongs in its own repository.
+
+## Python support
+
+- Stdlib-only modules and the base package: **Python 3.9+**, with no runtime dependencies.
+  Run a source script with `python -S scripts/check_png.py --help`, or install the
+  base package with `python -m pip install .` and use `python -m check_png --help`.
+- Optional image diff: **Python 3.11+ and Pillow 13+**. Install with
+  `python -m pip install '.[image]'`. The unconditional Pillow floor deliberately
+  makes image installs fail on Python 3.9/3.10; it must not be hidden behind a
+  Python marker that silently omits the feature. Direct image use also rejects
+  unsupported Python/Pillow versions with exit 2, before decoding any image.
+- Development, tests, browser integrations, and this repository's **uv project
+  environment/lockfile: Python 3.11+**. Use
+  `uv run --locked --python 3.11 python -m pytest tests/python -q -m "not browser"`. Add `--group browser` for browser
+  integration dependencies. The requirements-test files have the same floor.
+  Python 3.9/3.10 consumers should install the base package with pip, not `uv sync`.
+
+The Python support CI checks actual 3.9/3.10 stdlib execution and base wheel
+installation without test dependencies, rejection of unsupported image installs,
+and the complete browserless test suite at the 3.11 floor. Existing browser CI
+continues on 3.13. `py_matrix.py` can still probe older interpreters for independent
+stdlib consumers; that does not extend this repository's development support.
 
 ## Fast Init
 
