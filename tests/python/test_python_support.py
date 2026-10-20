@@ -18,6 +18,7 @@ def test_metadata_support_split():
     requirements = (ROOT / 'requirements-test-core.txt').read_text()
     assert 'pillow>=13' in requirements
     assert 'pip>=26.2' in requirements
+    assert 'pytest>=9.0.3' in requirements
 
 
 def test_lock_has_no_legacy_pillow_or_pip():
@@ -29,6 +30,8 @@ def test_lock_has_no_legacy_pillow_or_pip():
             assert version >= (13,)
         if package['name'] == 'pip':
             assert version >= (26, 2)
+        if package['name'] == 'pytest':
+            assert version >= (9, 0, 3)
 
 
 def test_built_wheel_metadata_when_present():

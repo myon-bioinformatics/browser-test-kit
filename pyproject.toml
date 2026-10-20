@@ -15,7 +15,7 @@ image = ["pillow>=13"]
 # Floors stay open-ended (>=). Resolved versions are pinned in uv.lock.
 [dependency-groups]
 dev = [
-    "pytest>=8",
+    "pytest>=9.0.3",
     "PyYAML>=6.0.3",
     "pillow>=13",
     "pip>=26.2",

@@ -43,7 +43,7 @@ browser = [{ name = "playwright", marker = "python_full_version >= '3.11'", spec
 dev = [
     { name = "pillow", marker = "python_full_version >= '3.11'", specifier = ">=13" },
     { name = "pip", marker = "python_full_version >= '3.11'", specifier = ">=26.2" },
-    { name = "pytest", marker = "python_full_version >= '3.11'", specifier = ">=8" },
+    { name = "pytest", marker = "python_full_version >= '3.11'", specifier = ">=9.0.3" },
     { name = "pyyaml", marker = "python_full_version >= '3.11'", specifier = ">=6.0.3" },
 ]
 
