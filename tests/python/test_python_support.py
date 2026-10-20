@@ -16,7 +16,7 @@ def test_metadata_support_split():
     assert 'pillow>=13' in project['dependency-groups']['dev']
     assert 'pip>=26.2' in project['dependency-groups']['dev']
     requirements = (ROOT / 'requirements-test-core.txt').read_text()
-    assert 'pillow>=12.2' in requirements
+    assert 'pillow>=13' in requirements
     assert 'pip>=26.2' in requirements
     assert 'pytest>=9.0.3' in requirements
 
