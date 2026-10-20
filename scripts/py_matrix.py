@@ -10,8 +10,8 @@ prints its last ``--tail`` lines.
 
 Stdlib only; runs under ``python -S``::
 
-    python -S scripts/py_matrix.py 3.9 3.13 -- tests/python/test_browser_test_kit_gh_ops.py
-    python -S scripts/py_matrix.py 3.9 3.12 3.13 --with 'pytest>=8' --timeout 300
+    python -S scripts/py_matrix.py 3.11 3.13 -- tests/python/test_browser_test_kit_gh_ops.py
+    python -S scripts/py_matrix.py 3.11 3.12 3.13 --with 'pytest>=8' --timeout 300
 
 Exit codes: 0 = every version passed; 1 = a version failed or timed out;
 2 = uv not found or usage error.
@@ -59,7 +59,7 @@ def main(argv: list[str] | None = None, *, which: Callable[[str], str | None] = 
         argv, pytest_args = argv[:split], argv[split + 1:]
     parser = argparse.ArgumentParser(description="Run pytest under several Python versions via uv.",
                                      usage="%(prog)s [VERSION ...] [options] [-- PYTEST_ARGS]")
-    parser.add_argument("versions", nargs="*", default=[DEFAULT_VERSION], help=f"Python versions, e.g. 3.9 3.13 (default: {DEFAULT_VERSION})")
+    parser.add_argument("versions", nargs="*", default=[DEFAULT_VERSION], help=f"Python versions, e.g. 3.11 3.13 (default: {DEFAULT_VERSION})")
     parser.add_argument("--with", dest="packages", action="append", help="package for uv --with (default: pytest)")
     parser.add_argument("--timeout", type=float, default=300.0, help="seconds per version (default: 300)")
     parser.add_argument("--tail", type=int, default=15, help="output lines shown for a failing version")

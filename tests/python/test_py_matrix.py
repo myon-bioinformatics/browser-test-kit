@@ -28,24 +28,24 @@ class FakeRun:
 
 
 def test_exact_uv_argv_and_one_summary_line_per_version(capsys) -> None:
-    run = FakeRun({"3.9": (0, "....\n39 passed in 1.61s\n"), "3.13": (0, "39 passed in 1.69s\n")})
-    code = py_matrix.main(["3.9", "3.13", "--with", "pytest>=8", "--", "tests/python/test_browser_test_kit_gh_ops.py", "-k", "merge"],
+    run = FakeRun({"3.11": (0, "....\n39 passed in 1.61s\n"), "3.13": (0, "39 passed in 1.69s\n")})
+    code = py_matrix.main(["3.11", "3.13", "--with", "pytest>=8", "--", "tests/python/test_browser_test_kit_gh_ops.py", "-k", "merge"],
                           which=lambda name: "/usr/bin/uv", run=run)
     assert code == 0
-    assert capsys.readouterr().out == "py3.9: 39 passed in 1.61s\npy3.13: 39 passed in 1.69s\n"
+    assert capsys.readouterr().out == "py3.11: 39 passed in 1.61s\npy3.13: 39 passed in 1.69s\n"
     argv, kwargs = run.calls[0]
-    assert argv == ["uv", "run", "--no-project", "--quiet", "--python", "3.9", "--with", "pytest>=8", "python",
+    assert argv == ["uv", "run", "--no-project", "--quiet", "--python", "3.11", "--with", "pytest>=8", "python",
                     "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests/python/test_browser_test_kit_gh_ops.py", "-k", "merge"]
     assert kwargs["env"]["PYTHONDONTWRITEBYTECODE"] == "1"
 
 
 def test_failure_and_timeout_are_reported_and_exit_1(capsys) -> None:
     failing = "\n".join(f"line {n}" for n in range(30)) + "\n1 failed, 38 passed in 1.7s\n"
-    run = FakeRun({"3.9": (1, failing), "3.12": "timeout", "3.13": (0, "39 passed in 1.6s\n")})
-    assert py_matrix.main(["3.9", "3.12", "3.13", "--tail", "2", "--timeout", "5"],
+    run = FakeRun({"3.11": (1, failing), "3.12": "timeout", "3.13": (0, "39 passed in 1.6s\n")})
+    assert py_matrix.main(["3.11", "3.12", "3.13", "--tail", "2", "--timeout", "5"],
                           which=lambda name: "/usr/bin/uv", run=run) == 1
     assert capsys.readouterr().out.splitlines() == [
-        "py3.9: FAILED (exit 1): 1 failed, 38 passed in 1.7s",
+        "py3.11: FAILED (exit 1): 1 failed, 38 passed in 1.7s",
         "  line 29",
         "  1 failed, 38 passed in 1.7s",
         "py3.12: TIMEOUT after 5s",
@@ -55,7 +55,7 @@ def test_failure_and_timeout_are_reported_and_exit_1(capsys) -> None:
 
 
 def test_missing_uv_is_exit_2(capsys) -> None:
-    assert py_matrix.main(["3.9"], which=lambda name: None, run=FakeRun({})) == 2
+    assert py_matrix.main(["3.11"], which=lambda name: None, run=FakeRun({})) == 2
     assert "uv not found" in capsys.readouterr().err
 
 
