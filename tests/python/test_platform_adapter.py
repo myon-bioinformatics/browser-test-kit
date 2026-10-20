@@ -222,7 +222,7 @@ def test_workflow_checks_inputs_before_fanout_and_matches_capture_width():
     assert apps.count('--shot "$SHOT"') == 2
     assert "- 'scripts/app_digest.py'" in apps and "- 'scripts/app_digest_comment.py'" in apps
     import re
-    assert all(re.match(r'[0-9a-f]{40} # v[0-9]+$', pin) for pin in re.findall(r'uses: actions/[^@]+@([^\n]+)', apps))
+    assert all(re.fullmatch(r'[0-9a-f]{40} # v[0-9]+(?:\.[0-9]+){0,2}', pin) for pin in re.findall(r'uses: actions/[^@]+@([^\n]+)', apps))
 
 
 @pytest.mark.parametrize('step,widths,expected', [('8', '320 384', 'width-384'), ('1', '390 412', 'width-412'),
