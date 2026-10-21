@@ -1,5 +1,37 @@
 # Discover files and production entry points by convention
 
+## Built-in Git-aware path selection
+
+```sh
+python -S scripts/repo_overview.py . --paths-only --match 'scripts/*probe*' --match '*.toml' --json
+python -S scripts/repo_overview.py . --paths-only --match '*.py' --exclude 'tests/*'
+```
+
+`repo_overview.select_files(root, patterns=('*.py',), exclude=('tests/*',))`
+filters the existing combined tracked/untracked Git inventory. Git ignore rules
+and the established dependency/cache/result exclusions remain in force; a plain
+directory retains the existing walk fallback. Repeated matches are ORed once,
+then exclusions are applied. Rules match relative paths or basenames using
+case-sensitive fnmatch semantics (`*` spans `/`).
+
+`--paths-only` prints paths without rendering about/key-file contents. `--json`
+returns `files`, `total` and `truncated`; text mode keeps one line per path,
+escaping control characters. `--max-files` applies after selection (default
+400). Exact-limit/empty output returns 0; truncated output, invalid roots or
+inventory errors return 2. The inventory's own shared limit is preserved, and
+paths-only cannot be mixed with content/stats/churn options. This uses the
+repository's installed Git inspector and needs no sibling xprobe checkout.
+
+The first command was run on this checkout: it selected 5 paths (pyproject.toml
+and four probe scripts), with no truncation.
+
+Validation: **36 repo_overview pytest tests** passed, including tracked/untracked
+Git inventory and ignore rules, default overview behavior, OR/exclusion rules,
+exact limits, shared-inventory failures, mixed-mode errors and direct
+`python -S` path extraction.
+
+## Optional source-symbol inspection
+
 Find probing, capture and validation entry points across browser engineering scripts.
 
 Use a sibling xprobe checkout with the convention-discovery API from

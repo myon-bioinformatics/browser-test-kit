@@ -108,6 +108,66 @@ def test_cli_on_this_repository_runs_without_site_packages() -> None:
     assert missing.returncode == 2
 
 
+def test_select_files_reuses_git_inventory_and_ored_patterns(tmp_path):
+    make_tree(tmp_path)
+    subprocess.run(['git', 'init', '-q', str(tmp_path)], check=True, env=git_env())
+    (tmp_path / '.gitignore').write_text('hidden.py\n', encoding='utf-8')
+    (tmp_path / 'hidden.py').write_text('do not list', encoding='utf-8')
+    result = repo_overview.select_files(tmp_path, patterns=('*.py', '*.json', 'src/*'), exclude=('package*',))
+    assert result == ['src/app.py']  # OR is deduplicated; Git ignores and built-in skips apply.
+    assert repo_overview.select_files(tmp_path, patterns=()) == []
+    assert repo_overview.select_files(tmp_path, patterns=('SRC/*',)) == []
+
+
+def test_paths_only_cli_does_not_read_contents_and_reports_exact_limits(tmp_path, monkeypatch, capsys):
+    make_tree(tmp_path)
+    def no_content(*args, **kwargs):
+        raise AssertionError('paths-only must not render contents')
+    monkeypatch.setattr(repo_overview, 'overview', no_content)
+    args = [str(tmp_path), '--paths-only', '--match', '*.py', '--match', '*.json', '--json']
+    assert repo_overview.main(args + ['--max-files', '2']) == 0
+    assert json.loads(capsys.readouterr().out) == {'files': ['package.json', 'src/app.py'], 'total': 2, 'truncated': False}
+    assert repo_overview.main(args + ['--max-files', '1']) == 2
+    assert json.loads(capsys.readouterr().out)['truncated']
+    plain = [str(tmp_path), '--paths-only', '--match', '*.py']
+    assert repo_overview.main(plain) == 0
+    assert capsys.readouterr().out == 'src/app.py\n'
+    assert repo_overview.main([str(tmp_path), '--paths-only', '--max-files', '1']) == 2
+    assert 'truncated' in capsys.readouterr().err
+
+
+def test_paths_only_preserves_shared_inventory_failures(tmp_path, monkeypatch, capsys):
+    def failed(*args, **kwargs):
+        raise RuntimeError('inventory truncated')
+    monkeypatch.setattr(repo_overview, 'list_files', failed)
+    assert repo_overview.main([str(tmp_path), '--paths-only', '--json']) == 2
+    out = capsys.readouterr()
+    assert out.out == '' and 'inventory truncated' in out.err
+
+
+def test_paths_only_direct_cli_without_site_packages(tmp_path):
+    make_tree(tmp_path)
+    result = subprocess.run([sys.executable, '-S', str(SCRIPT), str(tmp_path), '--paths-only',
+                             '--match', '*.py', '--json'], capture_output=True, text=True, encoding='utf-8')
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)['files'] == ['src/app.py']
+
+
+@pytest.mark.parametrize('options,error', [
+    ({'patterns': '*.py'}, TypeError), ({'exclude': [None]}, ValueError), ({'patterns': ['']}, ValueError),
+])
+def test_bad_path_rules(tmp_path, options, error):
+    with pytest.raises(error):
+        repo_overview.select_files(tmp_path, **options)
+
+
+@pytest.mark.parametrize('options', [['--match', '*.py'], ['--json'], ['--paths-only', '--stats']])
+def test_paths_only_rejects_mixed_modes(tmp_path, options):
+    with pytest.raises(SystemExit) as error:
+        repo_overview.main([str(tmp_path), *options])
+    assert error.value.code == 2
+
+
 def test_shared_combined_inventory_matches_previous_git_contract(tmp_path: Path) -> None:
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, env=git_env())
     tracked = ["z tracked.txt", "日本語/記録.txt", "tab\tname.txt", "line\nname.txt", "build/tracked.txt"]

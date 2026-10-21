@@ -314,4 +314,8 @@ Application adapters for the platform matrix (including published Flutter Home a
 
 ## Discover production entry points
 
-[Convention-driven file and symbol discovery](docs/convention-discovery.md) gives verified one-liners for this repository. Supply filename/name rules to inspect production code, configuration and workflows with the shared stdlib-only xprobe tool.
+```sh
+python -S scripts/repo_overview.py . --paths-only --match 'scripts/*probe*' --match '*.toml' --json
+```
+
+Select paths from the existing Git-aware inventory without rendering file contents. [Discovery usage and optional source inspection](docs/convention-discovery.md).
