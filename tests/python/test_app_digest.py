@@ -14,7 +14,7 @@ spec.loader.exec_module(digest)
 
 FAKE_IRONMATE = '''
 from pathlib import Path
-def find_shots(root, shot):
+def find_shots(root, shot, *, pages=('*',), environments=('*',)):
     return {(p.parent.parent.name, p.parent.name): p for p in Path(root).rglob(shot + '.png')}
 def build(shots, *, tile_w, tile_h, expected_pages=(), expected_envs=()):
     return None, None, {key: (tile_w, tile_h, b'') for key in shots}

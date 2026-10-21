@@ -100,18 +100,15 @@ def summary_markdown(pages, envs, cells, run_url=None):
     return '\n'.join(lines) + '\n'
 
 
-def generate(root, out, *, ironmate, runners, adapter_dir, shot='width-384', max_bytes=1_000_000, run_url=None):
+def generate(root, out, *, ironmate, runners, adapter_dir, shot='width-384', max_bytes=1_000_000, run_url=None, pages=None, environments=('*',)):
     if type(max_bytes) is not int or not 50_000 <= max_bytes <= 20_000_000:
         raise ValueError('max_bytes must be 50000..20000000')
     sys.path.insert(0, str(Path(ironmate).resolve()))
     matrix = importlib.import_module('browser_matrix')
-    pages = [probe.adapters.load_adapter(p)['id'] for p in sorted(Path(adapter_dir).glob('flutter-*.json'))]
-    if not pages:
-        raise ValueError('no Flutter adapters found')
-    envs = comparison.planned_envs(runners)
-    cells = {key: cell for key, cell in _cells(probe.load_records([str(root)])).items()
-             if key[0] in pages and key[1] in envs}
-    shots = matrix.find_shots(root, shot)
+    pages, envs = comparison.select_targets(adapter_dir, runners, pages=pages, environments=environments)
+    records = comparison.select_records(probe.load_records([str(root)]), pages, envs)
+    cells = _cells(records)
+    shots = matrix.find_shots(root, shot, pages=pages, environments=envs)
     tile = START_TILE
     while True:
         tiles = matrix.build(shots, tile_w=tile[0], tile_h=tile[1], expected_pages=pages, expected_envs=envs)[2] if shots else {}
@@ -135,17 +132,20 @@ def generate(root, out, *, ironmate, runners, adapter_dir, shot='width-384', max
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument('root', type=Path)
-    parser.add_argument('--out', required=True, type=Path)
-    parser.add_argument('--ironmate', required=True, type=Path)
+    parser.add_argument('--out', type=Path)
+    parser.add_argument('--ironmate', type=Path)
     parser.add_argument('--runners-json', required=True)
     parser.add_argument('--adapters', type=Path, default=probe.ROOT / 'adapters')
     parser.add_argument('--shot', default='width-384')
     parser.add_argument('--max-bytes', type=int, default=1_000_000)
     parser.add_argument('--run-url')
+    comparison.selection_arguments(parser)
     args = parser.parse_args(argv)
     try:
+        if comparison.selected_plan(args, parser):
+            return 0
         info = generate(args.root, args.out, ironmate=args.ironmate, runners=json.loads(args.runners_json),
-                        adapter_dir=args.adapters, shot=args.shot, max_bytes=args.max_bytes, run_url=args.run_url)
+                        adapter_dir=args.adapters, shot=args.shot, max_bytes=args.max_bytes, run_url=args.run_url, pages=args.page, environments=args.env or ('*',))
     except (OSError, ValueError, ImportError, TypeError, KeyError) as error:
         print(f'error: {error}', file=sys.stderr)
         return 2
