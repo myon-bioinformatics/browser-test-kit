@@ -1,5 +1,10 @@
 # browser-test-kit
+
+<img src="docs/assets/brand/validation-buddy.png" alt="Validation Buddy: browser, desktop, and mobile inputs leading to screenshot validation" width="191" height="212">
+
 Cross-browser testing reference kit for Playwright Node/Python, Stagehand, Replay, screenshots, mobile web, and GitHub Actions.
+
+[Artwork and icon usage](docs/assets/brand/README.md) describes the supplied visual marks and their separate roles.
 
 ## Scope
 
