@@ -311,3 +311,7 @@ Emoji identities and ordered page movement continue to use `route_trail.py`.
 Application adapters for the platform matrix (including published Flutter Home and Counter):
 [configuration, scope and independent network lane](docs/platform-adapters.md).
 
+
+## Discover production entry points
+
+[Convention-driven file and symbol discovery](docs/convention-discovery.md) gives verified one-liners for this repository. Supply filename/name rules to inspect production code, configuration and workflows with the shared stdlib-only xprobe tool.
