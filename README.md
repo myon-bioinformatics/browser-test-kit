@@ -148,14 +148,21 @@ python scripts/page_text.py <URL> --compare-rendered page.json   # capture_brows
 - JavaScript is not run and CSS is not evaluated, so an empty result on a single-page app is `PAGE_TEXT_AS_RENDERED_TEXT`, not an empty page. Core tests use only local fixtures and a local HTTP server.
 - `--compare-rendered FILE` compares static extracted text against Playwright's `inner_text()` (or terminal-browser's rendered text) from a file or stdin, classifying differences into `EQUAL`, `JS_RENDERED_ADDED`, `CSS_HIDDEN_REMOVED`, or `MUTATED_TEXT`. A `capture_browser_dom.py` JSON file contributes its `visible` (`innerText`); `textContent` and `html` are never used as rendered text. A truncated static text (`--max-chars`) is refused with exit 2.
 
-### Hit maps with few probes (`scripts/hit_probe.py`, `littlebit-approx`)
+### Hit maps with few probes (`scripts/hit_probe.py` / `scripts/hit_probe.mjs`, `littlebit-approx`)
 
 Stdlib-only (`python -S`) search for where a target really receives clicks, Minesweeper-style: probe a coarse lattice, infer blocks whose corners agree, and split and probe again only where they disagree or score near the threshold. Scores are 0..1 (in the browser test, the fraction of a cell's 2x2 sub-points that `elementFromPoint` lands on the target), so a near-threshold cell is treated like a low-confidence Jev decision. The map is then described LittleBit-style as a few binary row-mask x column-mask rectangles with a scale (mean probed score); a plain box is rank 1 with no residual, while rounded corners, rotation, or an overlay leave a residual or need more rank.
 
 ```bash
 python -S scripts/hit_probe.py factorize test-results/hit-probe/map.json --rank 3
+node scripts/hit_probe.mjs factorize test-results/hit-probe/map.json --rank 3
+node --test tests/node-unit/hit_probe.test.mjs
 ```
 
+- The Node ES module uses only Node standard modules (Node 18+); it exports `refine`, `exhaustive`, `factorize`, `boundary_pairs`, `ranges`, `render`, `rows_from_map`, and `to_json`. `await refine(width, height, probe, {stride: 8, margin: 0.25})` accepts a synchronous or asynchronous `probe(points)` returning one numeric score per integer `[x, y]` cell. `exhaustive` is also awaited. There is no Playwright runtime dependency in the module.
+- Python integer bitsets become Node `BigInt` rows/factor masks, including columns beyond 32/53 bits. Node scores are a `Map` keyed by `"x,y"`. Use `to_json(result, {rank: 3})` for JSON-safe `btk-hit-probe/1` evidence (same map strings, factor ranges, scale rounding, sorted/truncated uncertain cells and metadata as Python); raw BigInt results cannot be JSON-stringified. Node options use the Python names, including `max_probes`. The CLI accepts the same saved map and emits the same summary/ranges with exit 0 or 2.
+- Node validates dimensions/stride/budgets as safe integers, thresholds/margins and callback scores as finite numeric 0..1 values, and masks as non-negative BigInt values. It rejects coercible strings/booleans and malformed callback lengths; Python's existing coercion behavior is unchanged. Compatibility covers valid numeric inputs, not Python-specific permissive coercions.
+- `tests/node-unit/hit_probe.test.mjs` compares Python/Node evidence, full uncertainty lists, raw masks, factors, boundary pairs and ordered probe batches on 84 deterministic cases: tiny/wide grids, thresholds, ties, low confidence, rotated boxes, overlays and seeded score matrices. It also checks repeated-run determinism, exhaustive maps, malformed inputs, budgets and CLI parity. The existing browserless Playwright CI runs this suite through `tests/browserless/hit-probe.spec.ts`; Python is used only as a test oracle.
+- `tests/node/hit-probe.spec.ts` observes the same four fixture targets using integer origins/sub-points, compares live Node adaptive maps with exhaustive observations and Python results from those same observations, and verifies real boundary clicks. Existing Node browser projects execute it, including their existing emulated profiles; this adds no device configuration or Flutter integration. It records fractional-edge behavior without assuming equality across engines. Evidence is saved as `hit-probe.json` / `fractional-edge.json` under each test output directory.
 - `tests/python/test_hit_probe_browser.py` maps four targets in `fixtures/hit_probe.html` (plain, rounded, covered by a blocker plus a `pointer-events:none` ghost, rotated) on Chromium, Firefox, and WebKit. It asserts that the map equals an exhaustive probe, uses under half the probes, and that real clicks on cells either side of the boundary match the map. Evidence goes to `test-results/hit-probe/<browser>.json`.
 - Assumption: no feature thinner than the starting stride; the exhaustive comparison is what guards it. Only the computation is borrowed; there is no model or special runtime.
 - Lessons from the first CI runs (PR #57), kept as regression tests:
@@ -302,3 +309,4 @@ Emoji identities and ordered page movement continue to use `route_trail.py`.
 
 Application adapters for the platform matrix (including published Flutter Home and Counter):
 [configuration, scope and independent network lane](docs/platform-adapters.md).
+
