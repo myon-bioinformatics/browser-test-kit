@@ -113,6 +113,17 @@ function round6(value) {
   return Number(q + (r * 2n > denominator || (r * 2n === denominator && q % 2n) ? 1n : 0n)) / 1e6;
 }
 
+// CPython 3.12+ float sum (Neumaier compensated summation), as used by CI.
+function sum(values) {
+  let hi = 0, lo = 0;
+  for (const x of values) {
+    const t = hi + x;
+    lo += Math.abs(hi) >= Math.abs(x) ? (hi - t) + x : (x - t) + hi;
+    hi = t;
+  }
+  return hi + lo;
+}
+
 export function factorize(rows, {rank = 3, scores = null} = {}) {
   masks(rows); integer('rank', rank, 0);
   const residual = [...rows], factors = [];
@@ -135,7 +146,7 @@ export function factorize(rows, {rank = 3, scores = null} = {}) {
         const value = scores.get(key(x, y)); unit('score', value); known.push(value);
       }
     }
-    factors.push({rows: rowMask, cols, scale: known.length ? round6(known.reduce((a, b) => a + b, 0) / known.length) : null});
+    factors.push({rows: rowMask, cols, scale: known.length ? round6(sum(known) / known.length) : null});
   }
   return {factors, residual: residual.reduce((n, r) => n + count(r), 0), ones: rows.reduce((n, r) => n + count(r), 0)};
 }
@@ -191,4 +202,6 @@ export function main(argv = process.argv.slice(2)) {
     return 0;
   } catch (error) { console.error(`error: ${error.message}`); return 2; }
 }
-if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) process.exitCode = main();
+let entryURL;
+try { if (process.argv[1]) entryURL = pathToFileURL(realpathSync(process.argv[1])).href; } catch { /* stdin, eval or a removed caller path */ }
+if (import.meta.url === entryURL) process.exitCode = main();

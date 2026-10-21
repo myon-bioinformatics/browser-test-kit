@@ -81,6 +81,20 @@ test('invalid dimensions, options, callback responses, masks and JSON fail promp
   assert.deepEqual(hp.boundary_pairs([1n], 2, {limit: 0}), []);
 });
 
+test('scale uses modern Python compensated sum and imports have no CLI side effects', async () => {
+  const values = [0.1859062658947177, 0.9925434121760651, 0.35391282192921714];
+  const result = await hp.refine(3, 1, p => p.map(([x]) => values[x]), {stride: 1, threshold: 0});
+  assert.equal(hp.to_json(result).factors[0].scale, 0.510788);
+  const version = spawnSync(python, ['-c', 'import sys; print(int(sys.version_info >= (3,12)))'], {encoding: 'utf8'});
+  assert.equal(version.status, 0, version.stderr);
+  if (version.stdout.trim() === '1') assert.deepEqual(await evaluate(make(3, 1, x => values[x], {stride: 1, threshold: 0})),
+    oracle([make(3, 1, x => values[x], {stride: 1, threshold: 0})])[0]);
+  for (const args of [['--input-type=module', '-'], ['--input-type=module', '-e', 'await import("./scripts/hit_probe.mjs")']]) {
+    const run = spawnSync(process.execPath, args, {input: 'await import("./scripts/hit_probe.mjs")', encoding: 'utf8'});
+    assert.equal(run.status, 0, run.stderr); assert.equal(run.stdout, '');
+  }
+});
+
 test('CLI output and error exits agree with Python', () => {
   const dir = mkdtempSync(join(tmpdir(), 'hit-probe-')), path = join(dir, 'map.json');
   const run = args => spawnSync(process.execPath, ['scripts/hit_probe.mjs', ...args], {encoding: 'utf8'});
