@@ -46,17 +46,6 @@ const tapResult = assertElements(elements, { min_count: 1, assert_role: 'button'
 
 ## Evidence Schema (`btk-element-overlay/1`)
 
-Both twins accept finite numeric coordinates, excluding booleans. Elements with
-missing or invalid coordinates, non-positive dimensions, or overflowing bounds
-are skipped; invalid viewport dimensions are ignored. An explicitly supplied
-coordinate takes precedence over its alias even when invalid.
-
-Coordinates and centers use the same binary64 operations in both languages:
-`floor(value * 100 + 0.5) / 100`, with half ties toward positive infinity
-(`0.125` → `0.13`, `-0.125` → `-0.12`). Values with magnitude at least `2**52`
-are already integral and bypass scaling. This is a binary floating-point rule,
-not exact decimal arithmetic.
-
 Output data adheres to schema `btk-element-overlay/1`:
 
 ```json
@@ -82,24 +71,3 @@ Output data adheres to schema `btk-element-overlay/1`:
   ]
 }
 ```
-
-### Numeric and output parity
-
-- Geometry uses binary64 numbers. Booleans, strings, null, NaN and infinities
-  are invalid coordinates. Width and height must be strictly positive before
-  rounding; a tiny positive dimension can therefore be reported as zero.
-- An invalid element is skipped without consuming an index. Invalid viewports
-  become `null`. Viewport strings use ASCII digits in `WxH` form (case-insensitive
-  `x`) with optional surrounding ASCII whitespace; viewport objects use positive finite dimensions without rounding.
-- Clipping compares the original, unrounded bounds with the viewport. Touching
-  its edge is allowed; any negative origin or right/bottom bound beyond the
-  edge is clipped. No viewport means `clipped: false`.
-- JSON parity means equal records parsed as binary64, including every numeric value;
-  whitespace and representations such as `1` versus `1.0` may differ.
-- SVG parity means identical strings. Integral values use exact decimal text;
-  fractional values use 17 significant digits, half-away-from-zero formatting,
-  and normalized exponents. This preserves binary64 precision instead of
-  truncating geometry to six significant digits. Negative zero renders as `0`.
-- Text metadata (`name`, `label`, `text`, `innerText`, `role`, `selector`, `id`)
-  is expected to contain strings. Empty names/selectors fall back to the next
-  name field or element ID in both twins.

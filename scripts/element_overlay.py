@@ -17,42 +17,11 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import re
 import sys
-from decimal import Decimal, ROUND_HALF_UP, localcontext
 from typing import Any, Dict, List, Optional, Union
 
 SCHEMA = "btk-element-overlay/1"
-
-
-def _finite_number(value: Any) -> bool:
-    if type(value) not in (int, float):
-        return False
-    try:
-        return math.isfinite(value)
-    except OverflowError:
-        return False
-
-
-def _round_coordinate(value: float) -> float:
-    # Match the Node twin's binary64 operations, including ties toward +infinity.
-    if abs(value) >= 2 ** 52:
-        return value  # Already integral; avoid overflowing the scale operation.
-    return math.floor(value * 100 + 0.5) / 100
-
-
-def _svg_number(value: float) -> str:
-    """Round-trip binary64 text shared with Node's toExponential(16)."""
-    value = float(value)
-    if not math.isfinite(value):
-        raise ValueError("SVG numbers must be finite")
-    if value.is_integer():
-        return str(int(value))  # Also normalizes negative zero.
-    with localcontext() as context:
-        context.rounding = ROUND_HALF_UP
-        mantissa, exponent = format(Decimal.from_float(value), ".16e").split("e")
-    return mantissa.rstrip("0").rstrip(".") + "e" + str(int(exponent))
 
 
 def _extract_element_list(data: Any) -> List[Dict[str, Any]]:
@@ -71,16 +40,14 @@ def _extract_element_list(data: Any) -> List[Dict[str, Any]]:
 
 def _parse_viewport(viewport: Any) -> Optional[Dict[str, float]]:
     if isinstance(viewport, dict):
-        w = viewport.get("width", viewport.get("w"))
-        h = viewport.get("height", viewport.get("h"))
-        if _finite_number(w) and _finite_number(h) and w > 0 and h > 0:
+        w = viewport.get("width") or viewport.get("w")
+        h = viewport.get("height") or viewport.get("h")
+        if isinstance(w, (int, float)) and isinstance(h, (int, float)) and w > 0 and h > 0:
             return {"width": float(w), "height": float(h)}
     elif isinstance(viewport, str):
-        match = re.match(r"^([0-9]+(?:\.[0-9]+)?)x([0-9]+(?:\.[0-9]+)?)$", viewport.strip(" \t\n\r\v\f"), re.IGNORECASE)
+        match = re.match(r"^(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)$", viewport.strip(), re.IGNORECASE)
         if match:
-            w, h = float(match.group(1)), float(match.group(2))
-            if _finite_number(w) and _finite_number(h) and w > 0 and h > 0:
-                return {"width": w, "height": h}
+            return {"width": float(match.group(1)), "height": float(match.group(2))}
     return None
 
 
@@ -105,7 +72,8 @@ def annotate_elements(
         h = raw.get("height", raw.get("h"))
 
         # Skip elements missing numeric position or non-positive dimensions
-        if not all(_finite_number(value) for value in (x, y, w, h)):
+        if not (isinstance(x, (int, float)) and isinstance(y, (int, float)) and
+                isinstance(w, (int, float)) and isinstance(h, (int, float))):
             continue
 
         fx, fy, fw, fh = float(x), float(y), float(w), float(h)
@@ -121,10 +89,8 @@ def annotate_elements(
             if query not in searchable:
                 continue
 
-        if not all(math.isfinite(value) for value in (fx + fw, fy + fh, fx + fw / 2, fy + fh / 2)):
-            continue
-        cx = _round_coordinate(fx + fw / 2.0)
-        cy = _round_coordinate(fy + fh / 2.0)
+        cx = round(fx + fw / 2.0, 2)
+        cy = round(fy + fh / 2.0, 2)
 
         clipped = False
         if viewport:
@@ -138,10 +104,10 @@ def annotate_elements(
             "name": name,
             "role": role,
             "selector": selector,
-            "x": _round_coordinate(fx),
-            "y": _round_coordinate(fy),
-            "width": _round_coordinate(fw),
-            "height": _round_coordinate(fh),
+            "x": round(fx, 2),
+            "y": round(fy, 2),
+            "width": round(fw, 2),
+            "height": round(fh, 2),
             "cx": cx,
             "cy": cy,
             "clipped": clipped,
@@ -215,7 +181,7 @@ def render_svg_overlay(
     bg_opacity = float(opts.get("fill_opacity", 0.15))
 
     lines = [
-        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {_svg_number(width)} {_svg_number(height)}" width="{_svg_number(width)}" height="{_svg_number(height)}">',
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width:g} {height:g}" width="{width:g}" height="{height:g}">',
         f'  <style>.btk-badge {{ font-family: sans-serif; font-size: 12px; font-weight: bold; fill: #ffffff; }}</style>',
     ]
 
@@ -226,15 +192,15 @@ def render_svg_overlay(
         name = item.get("name") or item.get("role") or f"Target {idx}"
 
         # Bounding box
-        lines.append(f'  <rect x="{_svg_number(x)}" y="{_svg_number(y)}" width="{_svg_number(w)}" height="{_svg_number(h)}" fill="{color}" fill-opacity="{_svg_number(bg_opacity)}" stroke="{color}" stroke-width="2" rx="3" />')
+        lines.append(f'  <rect x="{x:g}" y="{y:g}" width="{w:g}" height="{h:g}" fill="{color}" fill-opacity="{bg_opacity:g}" stroke="{color}" stroke-width="2" rx="3" />')
         # Center dot
-        lines.append(f'  <circle cx="{_svg_number(cx)}" cy="{_svg_number(cy)}" r="3" fill="{color}" />')
+        lines.append(f'  <circle cx="{cx:g}" cy="{cy:g}" r="3" fill="{color}" />')
         # Badge background
         badge_w = max(20.0, 10.0 + len(str(idx)) * 8.0)
         badge_x = max(0.0, x)
         badge_y = max(0.0, y - 18.0) if y >= 18.0 else y
-        lines.append(f'  <rect x="{_svg_number(badge_x)}" y="{_svg_number(badge_y)}" width="{_svg_number(badge_w)}" height="16" fill="{color}" rx="3" />')
-        lines.append(f'  <text x="{_svg_number(badge_x + 5)}" y="{_svg_number(badge_y + 12)}" class="btk-badge">{idx}</text>')
+        lines.append(f'  <rect x="{badge_x:g}" y="{badge_y:g}" width="{badge_w:g}" height="16" fill="{color}" rx="3" />')
+        lines.append(f'  <text x="{badge_x + 5:g}" y="{badge_y + 12:g}" class="btk-badge">{idx}</text>')
 
     lines.append('</svg>')
     return "\n".join(lines)
