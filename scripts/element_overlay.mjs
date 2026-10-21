@@ -11,6 +11,13 @@ function roundCoordinate(value) {
   return Math.floor(value * 100 + 0.5) / 100;
 }
 
+function svgNumber(value) {
+  if (!Number.isFinite(value)) throw new Error('SVG numbers must be finite');
+  if (Number.isInteger(value)) return BigInt(value).toString();
+  const [mantissa, exponent] = value.toExponential(16).split('e');
+  return mantissa.replace(/0+$/, '').replace(/\.$/, '') + 'e' + Number(exponent);
+}
+
 function extractElementList(data) {
   if (Array.isArray(data)) {
     return data.filter(item => item && typeof item === 'object' && !Array.isArray(item));
@@ -37,7 +44,7 @@ function parseViewport(viewport) {
       return { width: Number(w), height: Number(h) };
     }
   } else if (typeof viewport === 'string') {
-    const match = viewport.trim().match(/^(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)$/i);
+    const match = viewport.replace(/^[ \t\n\r\v\f]+|[ \t\n\r\v\f]+$/g, '').match(/^(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)$/i);
     if (match) {
       const w = Number(match[1]), h = Number(match[2]);
       if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) {
@@ -76,9 +83,9 @@ export function annotateElements(elements, options = {}) {
       continue;
     }
 
-    const name = String(raw.name ?? raw.label ?? raw.text ?? raw.innerText ?? '').trim();
-    const role = String(raw.role ?? '').trim();
-    const selector = String(raw.selector ?? (raw.id ? `#${raw.id}` : '')).trim();
+    const name = String(raw.name || raw.label || raw.text || raw.innerText || '').trim();
+    const role = String(raw.role || '').trim();
+    const selector = String(raw.selector || (raw.id ? `#${raw.id}` : '')).trim();
 
     if (query) {
       const searchable = `${name} ${role} ${selector}`.toLowerCase();
@@ -180,7 +187,7 @@ export function renderSvgOverlay(annotationData, options = {}) {
   const bgOpacity = Number(opts.fill_opacity ?? 0.15);
 
   const lines = [
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}">`,
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${svgNumber(width)} ${svgNumber(height)}" width="${svgNumber(width)}" height="${svgNumber(height)}">`,
     `  <style>.btk-badge { font-family: sans-serif; font-size: 12px; font-weight: bold; fill: #ffffff; }</style>`,
   ];
 
@@ -190,10 +197,10 @@ export function renderSvgOverlay(annotationData, options = {}) {
     const badgeX = Math.max(0.0, x);
     const badgeY = y >= 18.0 ? y - 18.0 : y;
 
-    lines.push(`  <rect x="${x}" y="${y}" width="${w}" height="${h}" fill="${color}" fill-opacity="${bgOpacity}" stroke="${color}" stroke-width="2" rx="3" />`);
-    lines.push(`  <circle cx="${cx}" cy="${cy}" r="3" fill="${color}" />`);
-    lines.push(`  <rect x="${badgeX}" y="${badgeY}" width="${badgeW}" height="16" fill="${color}" rx="3" />`);
-    lines.push(`  <text x="${badgeX + 5}" y="${badgeY + 12}" class="btk-badge">${idx}</text>`);
+    lines.push(`  <rect x="${svgNumber(x)}" y="${svgNumber(y)}" width="${svgNumber(w)}" height="${svgNumber(h)}" fill="${color}" fill-opacity="${svgNumber(bgOpacity)}" stroke="${color}" stroke-width="2" rx="3" />`);
+    lines.push(`  <circle cx="${svgNumber(cx)}" cy="${svgNumber(cy)}" r="3" fill="${color}" />`);
+    lines.push(`  <rect x="${svgNumber(badgeX)}" y="${svgNumber(badgeY)}" width="${svgNumber(badgeW)}" height="16" fill="${color}" rx="3" />`);
+    lines.push(`  <text x="${svgNumber(badgeX + 5)}" y="${svgNumber(badgeY + 12)}" class="btk-badge">${idx}</text>`);
   }
 
   lines.push('</svg>');

@@ -20,6 +20,7 @@ import json
 import math
 import re
 import sys
+from decimal import Decimal, ROUND_HALF_UP, localcontext
 from typing import Any, Dict, List, Optional, Union
 
 SCHEMA = "btk-element-overlay/1"
@@ -39,6 +40,19 @@ def _round_coordinate(value: float) -> float:
     if abs(value) >= 2 ** 52:
         return value  # Already integral; avoid overflowing the scale operation.
     return math.floor(value * 100 + 0.5) / 100
+
+
+def _svg_number(value: float) -> str:
+    """Round-trip binary64 text shared with Node's toExponential(16)."""
+    value = float(value)
+    if not math.isfinite(value):
+        raise ValueError("SVG numbers must be finite")
+    if value.is_integer():
+        return str(int(value))  # Also normalizes negative zero.
+    with localcontext() as context:
+        context.rounding = ROUND_HALF_UP
+        mantissa, exponent = format(Decimal.from_float(value), ".16e").split("e")
+    return mantissa.rstrip("0").rstrip(".") + "e" + str(int(exponent))
 
 
 def _extract_element_list(data: Any) -> List[Dict[str, Any]]:
@@ -62,7 +76,7 @@ def _parse_viewport(viewport: Any) -> Optional[Dict[str, float]]:
         if _finite_number(w) and _finite_number(h) and w > 0 and h > 0:
             return {"width": float(w), "height": float(h)}
     elif isinstance(viewport, str):
-        match = re.match(r"^(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)$", viewport.strip(), re.IGNORECASE)
+        match = re.match(r"^([0-9]+(?:\.[0-9]+)?)x([0-9]+(?:\.[0-9]+)?)$", viewport.strip(" \t\n\r\v\f"), re.IGNORECASE)
         if match:
             w, h = float(match.group(1)), float(match.group(2))
             if _finite_number(w) and _finite_number(h) and w > 0 and h > 0:
@@ -201,7 +215,7 @@ def render_svg_overlay(
     bg_opacity = float(opts.get("fill_opacity", 0.15))
 
     lines = [
-        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width:g} {height:g}" width="{width:g}" height="{height:g}">',
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {_svg_number(width)} {_svg_number(height)}" width="{_svg_number(width)}" height="{_svg_number(height)}">',
         f'  <style>.btk-badge {{ font-family: sans-serif; font-size: 12px; font-weight: bold; fill: #ffffff; }}</style>',
     ]
 
@@ -212,15 +226,15 @@ def render_svg_overlay(
         name = item.get("name") or item.get("role") or f"Target {idx}"
 
         # Bounding box
-        lines.append(f'  <rect x="{x:g}" y="{y:g}" width="{w:g}" height="{h:g}" fill="{color}" fill-opacity="{bg_opacity:g}" stroke="{color}" stroke-width="2" rx="3" />')
+        lines.append(f'  <rect x="{_svg_number(x)}" y="{_svg_number(y)}" width="{_svg_number(w)}" height="{_svg_number(h)}" fill="{color}" fill-opacity="{_svg_number(bg_opacity)}" stroke="{color}" stroke-width="2" rx="3" />')
         # Center dot
-        lines.append(f'  <circle cx="{cx:g}" cy="{cy:g}" r="3" fill="{color}" />')
+        lines.append(f'  <circle cx="{_svg_number(cx)}" cy="{_svg_number(cy)}" r="3" fill="{color}" />')
         # Badge background
         badge_w = max(20.0, 10.0 + len(str(idx)) * 8.0)
         badge_x = max(0.0, x)
         badge_y = max(0.0, y - 18.0) if y >= 18.0 else y
-        lines.append(f'  <rect x="{badge_x:g}" y="{badge_y:g}" width="{badge_w:g}" height="16" fill="{color}" rx="3" />')
-        lines.append(f'  <text x="{badge_x + 5:g}" y="{badge_y + 12:g}" class="btk-badge">{idx}</text>')
+        lines.append(f'  <rect x="{_svg_number(badge_x)}" y="{_svg_number(badge_y)}" width="{_svg_number(badge_w)}" height="16" fill="{color}" rx="3" />')
+        lines.append(f'  <text x="{_svg_number(badge_x + 5)}" y="{_svg_number(badge_y + 12)}" class="btk-badge">{idx}</text>')
 
     lines.append('</svg>')
     return "\n".join(lines)
