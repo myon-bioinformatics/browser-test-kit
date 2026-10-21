@@ -28,6 +28,7 @@ def _load(name):
 tp = _load("twin_parity")
 interaction = _load("interaction")
 route_trail = _load("route_trail")
+element_overlay = _load("element_overlay")
 # Locally a missing node skips; on CI it must fail, or the parity check would pass by not running.
 needs_node = pytest.mark.skipif(shutil.which("node") is None and not os.environ.get("CI"),
                                 reason="node is not installed")
@@ -92,6 +93,38 @@ def url_cases(seed=5, count=400):
 def test_press_point_twins_agree_including_rounding_ties():
     results = assert_twins_agree(interaction.press_point, "interaction.mjs", "pressPoint", press_cases())
     assert results[0] == {"ok": True, "value": {"x": 8, "y": 8, "visible_ratio": 0.563}}
+
+
+def overlay_cases():
+    return [
+        [[[{"x": 10, "y": 20, "width": 100, "height": 40, "name": "Submit", "role": "button"}]], {"viewport": "800x600"}],
+        [[[{"x": -10, "y": -5, "width": 50, "height": 20, "label": "Off", "id": "o1"}]], {"viewport": {"width": 800, "height": 600}}],
+        [[[{"x": 0, "y": 0, "width": 0, "height": 10}, "invalid"]], {}],
+        [[[{"x": 10, "y": 10, "width": 50, "height": 20, "name": "Search"}]], {"find": "search"}],
+    ]
+
+
+@needs_node
+def test_element_overlay_annotate_twins_agree():
+    assert_twins_agree(element_overlay.annotate_elements, "element_overlay.mjs", "annotateElements", overlay_cases())
+
+
+@needs_node
+def test_element_overlay_highlight_css_twins_agree():
+    cases = [
+        [["#btn-1", {"selector": ".btn-2"}], "#ff0055", 2],
+        [[], "#000000", 1],
+    ]
+    assert_twins_agree(element_overlay.build_highlight_css, "element_overlay.mjs", "buildHighlightCss", cases)
+
+
+@needs_node
+def test_element_overlay_assert_twins_agree():
+    cases = [
+        [[[{"x": 10, "y": 20, "width": 100, "height": 40, "name": "Submit", "role": "button"}]], {"min_count": 1, "assert_role": "button"}],
+        [[[]], {"min_count": 1}],
+    ]
+    assert_twins_agree(element_overlay.assert_elements, "element_overlay.mjs", "assertElements", cases)
 
 
 @needs_node

@@ -214,9 +214,20 @@ python -S scripts/platform_probe.py render platform-results --out matrix.html
 - Adopted third-party JS (`js-adopt`, see the parent's `js_adopt.py`) is checked here too: the fixture loads every file in `js.lock.json` with its SRI, and an environment passes only if DOMPurify sanitizes, seedrandom returns the same first value as every other engine, and a tag with a deliberately wrong `integrity` is refused. `collect` serves the fixture over a local HTTP server because SRI with `crossorigin` does not apply to `file://` pages.
 - Only `collect` needs Playwright. Exit codes: 0 OK; 1 an environment failed; 2 input error.
 
+### Element annotation overlay, DOM highlight CSS, and TAP assertions (`scripts/element_overlay.py` / `scripts/element_overlay.mjs`)
+
+Target coordinate calculation, SVG annotation overlays, DOM element highlight CSS, and Poku-style TAP element assertions: [element overlay](docs/element-overlay.md) (`scripts/element_overlay.py` / `scripts/element_overlay.mjs`). Absorbs patterns from SeleniumBase, Callstack agent-device, Midscene, Poku, and PuppetSharp.
+
+```bash
+python -S scripts/element_overlay.py --file elements.json --viewport 1280x720
+python -S scripts/element_overlay.py --file elements.json --format svg --out overlay.svg
+python -S scripts/element_overlay.py --file elements.json --assert-role button --format tap
+python -m element_overlay --file elements.json --format css
+```
+
 ### Python / Node twin parity (`scripts/twin_parity.py`)
 
-Twins (`interaction.py` / `interaction.mjs`, `route_trail.py` / `route_trail_node.mjs`) promise the same records for the same inputs. `twin_parity.py` checks that promise without files: Node runs once, every case goes in on stdin and every result comes back on stdout, and the Python twin's results are compared in memory. Twins must agree on accept/reject and on each accepted value (as JSON); error wording may differ unless `--messages` is given.
+Twins (`interaction.py` / `interaction.mjs`, `route_trail.py` / `route_trail_node.mjs`, `element_overlay.py` / `element_overlay.mjs`) promise the same records for the same inputs. `twin_parity.py` checks that promise without files: Node runs once, every case goes in on stdin and every result comes back on stdout, and the Python twin's results are compared in memory. Twins must agree on accept/reject and on each accepted value (as JSON); error wording may differ unless `--messages` is given.
 
 ```bash
 python -S scripts/twin_parity.py scripts/interaction.py:press_point scripts/interaction.mjs:pressPoint < cases.json
