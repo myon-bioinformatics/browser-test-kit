@@ -6,6 +6,7 @@ Pixel differences are diagnostic only and never override platform-probe verdicts
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import html
 import importlib
 import json
@@ -27,6 +28,59 @@ def planned_envs(runners):
     if not runners or any(r not in OS_NAMES for r in runners):
         raise ValueError('expected known runner OS names')
     return sorted(f'{OS_NAMES[r]}-{browser}-{profile}' for r in runners for browser, profile in LANES)
+
+
+
+def select_targets(adapter_dir, runners, *, pages=None, environments=('*',)):
+    """Select adapter filename stems and planned environments; OR within each group."""
+    pages = ('flutter-*',) if pages is None else pages
+    if isinstance(pages, str) or isinstance(environments, str):
+        raise TypeError('selection rules must be sequences')
+    pages, environments = tuple(pages), tuple(environments)
+    if any(not isinstance(rule, str) or not rule for rule in pages + environments):
+        raise ValueError('selection rules must be nonempty strings')
+    directory = Path(adapter_dir)
+    if not directory.is_dir():
+        raise ValueError('adapter directory must exist')
+    selected = []
+    for path in sorted(directory.glob('*.json')):
+        if path.is_symlink() or not path.is_file() or not any(fnmatch.fnmatchcase(path.stem, rule) for rule in pages):
+            continue
+        identifier = probe.adapters.load_adapter(path)['id']
+        if identifier in selected:
+            raise ValueError(f'duplicate selected adapter id: {identifier}')
+        selected.append(identifier)
+    envs = sorted({env for env in planned_envs(runners)
+                   if any(fnmatch.fnmatchcase(env, rule) for rule in environments)})
+    if not selected or not envs:
+        raise ValueError('no selected adapters or planned environments')
+    return selected, envs
+
+
+def select_records(records, pages, envs):
+    return [r for r in records if (r.get('target') or {}).get('adapter') in pages
+            and f"{r['env']['os']}-{r['env'].get('channel') or r['env']['browser']}-{r['env']['profile']}" in envs]
+
+
+def selection_arguments(parser):
+    parser.add_argument('--page', action='append', help='adapter filename-stem glob; repeat for OR (default flutter-*)')
+    parser.add_argument('--env', action='append', help='planned environment glob; repeat for OR')
+    parser.add_argument('--list', action='store_true', help='list selected plan without loading records or images')
+
+
+def selected_plan(args, parser):
+    if args.list and (args.out is not None or args.ironmate is not None):
+        parser.error('--list cannot be combined with --out or --ironmate')
+    if not args.list and (args.out is None or args.ironmate is None):
+        parser.error('--out and --ironmate are required unless --list is used')
+    if args.list:
+        if not args.root.is_dir():
+            raise ValueError('results root must be a directory')
+        pages, envs = select_targets(args.adapters, json.loads(args.runners_json),
+                                    pages=args.page, environments=args.env or ('*',))
+        print(json.dumps({'pages': pages, 'envs': envs}))
+        return True
+    return False
 
 
 def observation(record, shot):
@@ -84,16 +138,14 @@ def evidence_html(report):
             + '</tr>' + ''.join(rows) + '</table>\n')
 
 
-def generate(root, out, *, ironmate, runners, adapter_dir, shot='width-384'):
+def generate(root, out, *, ironmate, runners, adapter_dir, shot='width-384', pages=None, environments=('*',)):
     # Explicit checkout is trusted executable code, like the workflow's pinned tools.
     sys.path.insert(0, str(Path(ironmate).resolve()))
     matrix = importlib.import_module('browser_matrix')
-    pages = [probe.adapters.load_adapter(p)['id'] for p in sorted(Path(adapter_dir).glob('flutter-*.json'))]
-    if not pages:
-        raise ValueError('no Flutter adapters found')
-    records = probe.load_records([str(root)])
-    report, sheet, tiles = matrix.build(matrix.find_shots(root, shot), expected_pages=pages,
-                                        expected_envs=planned_envs(runners))
+    pages, envs = select_targets(adapter_dir, runners, pages=pages, environments=environments)
+    records = select_records(probe.load_records([str(root)]), pages, envs)
+    shots = matrix.find_shots(root, shot, pages=pages, environments=envs)
+    report, sheet, tiles = matrix.build(shots, expected_pages=pages, expected_envs=envs)
     annotate(report, records, shot)
     matrix.write(out, report, sheet, tiles)  # validates output before creating anything
     index = Path(out) / 'index.html'
@@ -105,15 +157,18 @@ def generate(root, out, *, ironmate, runners, adapter_dir, shot='width-384'):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument('root', type=Path)
-    parser.add_argument('--out', required=True, type=Path)
-    parser.add_argument('--ironmate', required=True, type=Path)
+    parser.add_argument('--out', type=Path)
+    parser.add_argument('--ironmate', type=Path)
     parser.add_argument('--runners-json', required=True, help='the plan job OS JSON, including failed lanes')
     parser.add_argument('--adapters', type=Path, default=probe.ROOT / 'adapters')
     parser.add_argument('--shot', default='width-384')
+    selection_arguments(parser)
     args = parser.parse_args(argv)
     try:
+        if selected_plan(args, parser):
+            return 0
         report = generate(args.root, args.out, ironmate=args.ironmate, runners=json.loads(args.runners_json),
-                          adapter_dir=args.adapters, shot=args.shot)
+                          adapter_dir=args.adapters, shot=args.shot, pages=args.page, environments=args.env or ('*',))
     except (OSError, ValueError, ImportError, TypeError, KeyError) as error:
         print(f'error: {error}', file=sys.stderr)
         return 2

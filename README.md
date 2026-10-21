@@ -319,3 +319,6 @@ python -S scripts/repo_overview.py . --paths-only --match 'scripts/*probe*' --ma
 ```
 
 Select paths from the existing Git-aware inventory without rendering file contents. [Discovery usage and optional source inspection](docs/convention-discovery.md).
+
+Comparison and digest selection now accept `--page`, `--env`, and a read-only
+`--list` plan. See [selected comparison plans](docs/platform-adapters.md#select-a-comparison-or-digest-plan).

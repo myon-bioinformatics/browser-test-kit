@@ -164,7 +164,7 @@ def test_report_adds_the_web_ui_viewer_on_top_of_the_ironmate_comparison():
     apps = (ROOT / '.github/workflows/platform-apps.yml').read_text()
     pin = re.search(r'repository: myon-bioinformatics/web-ui\n\s+ref: ([0-9a-f]+)', apps)
     assert pin and pin.group(1) == 'b35ed9b77d4222b946d9813298243489a69e624a'
-    assert 'ref: edc47a267bd2f5a1e29ec3a5474cb24a73c6f50d' in apps
+    assert 'ref: e77d2a3f7b66f37c899832b261450b2bcd29f3dc' in apps
     assert apps.count('repository: myon-bioinformatics/Ironmate') == 1  # one comparison, not two
     assert '--report app-matrix/screenshots/report.json --dataset app-matrix/dataset.json --embed-css' in apps
     assert "hashFiles('app-matrix/screenshots/report.json')" in apps and 'screenshots/viewer.html' in apps

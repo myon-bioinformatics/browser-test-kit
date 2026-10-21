@@ -183,3 +183,36 @@ whole UI. OS fonts, engine rendering, DPR, different viewport heights, animation
 capture timing can all cause differences. Width fitting crops/pads content, and
 cropped content is outside the metric. Inspect the original PNG and relevant
 layout/click failure before attributing a difference to an application defect.
+
+## Select a comparison or digest plan
+
+```sh
+python -S scripts/app_comparison.py app-results --runners-json '["ubuntu-24.04"]' --page 'portal-*' --env '*-chromium-*' --list
+python -S scripts/app_digest.py app-results --runners-json '["ubuntu-24.04"]' --page 'flutter-home' --env 'Linux-*' --ironmate .ironmate --out digest
+```
+
+Both commands accept repeatable case-sensitive `--page` adapter filename-stem
+and `--env` planned-environment globs. Rules are ORed within each group; groups
+intersect. The default page rule remains `flutter-*`; explicit rules allow
+other valid adapters. Repeated matches do not duplicate targets, while duplicate
+selected adapter ids are errors. Missing planned cells remain missing, and the
+coverage denominator is the selected plan. Empty selections are input errors.
+
+`--list` lists the selected pages/environments without importing Ironmate,
+loading result JSON or decoding PNGs. It needs a results directory, adapters and
+runner plan, but neither `--ironmate` nor `--out`; either output argument with
+`--list` is rejected. Generation keeps the existing strict JSON result loader,
+selects observation records before joining them, and filters screenshots before
+duplicate detection or decoding. Unrelated malformed JSON still causes the
+existing input error; page filtering is not permission to hide invalid receipts.
+
+Generation requires Ironmate's page/environment-aware `find_shots` API. The
+explicit workflow checkout now uses merged commit
+`e77d2a3f7b66f37c899832b261450b2bcd29f3dc`; use that revision for a local `.ironmate`
+checkout too. Vendor locks, workflow permissions and the web-ui source pin are
+unchanged. The selected comparison retains platform verdicts and provenance.
+
+Validation: 64 focused tests and actionlint passed. A real stdlib-only integration
+with that Ironmate implementation selected a non-Flutter adapter and one Linux
+lane, produced comparison and digest coverage of 1/1, and ignored corrupt PNGs
+and duplicate screenshot keys outside the selected plan.
