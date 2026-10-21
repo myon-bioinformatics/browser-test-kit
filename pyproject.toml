@@ -40,4 +40,5 @@ browser = { requires-python = ">=3.11" }
 package-dir = { "" = "scripts" }
 
 [tool.setuptools.data-files]
-"share/browser-test-kit" = ["scripts/route_trail_node.mjs", "scripts/interaction.mjs", "scripts/mirror_facts.mjs"]
+"share/browser-test-kit" = ["scripts/route_trail_node.mjs", "scripts/interaction.mjs", "scripts/mirror_facts.mjs", "scripts/hit_probe.mjs"]
+
