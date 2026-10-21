@@ -145,6 +145,96 @@ def test_paths_only_preserves_shared_inventory_failures(tmp_path, monkeypatch, c
     assert out.out == '' and 'inventory truncated' in out.err
 
 
+def test_paths_only_corrupt_git_index_cannot_expose_ignored_files(tmp_path):
+    subprocess.run(['git', 'init', '-q', str(tmp_path)], check=True, env=git_env())
+    (tmp_path / '.gitignore').write_text('ignored.py\n', encoding='utf-8')
+    for name in ('tracked.py', 'ignored.py'):
+        (tmp_path / name).write_text('fixture', encoding='utf-8')
+    subprocess.run(['git', '-C', str(tmp_path), 'add', '--', '.gitignore', 'tracked.py'],
+                   check=True, env=git_env())
+    (tmp_path / '.git' / 'index').write_bytes(b'broken-index')
+    result = subprocess.run([sys.executable, '-S', str(SCRIPT), str(tmp_path),
+                             '--paths-only', '--match', '*.py', '--json'],
+                            capture_output=True, text=True, env=git_env())
+    assert result.returncode == 2 and result.stdout == ''
+    assert 'git exited' in result.stderr
+
+
+@pytest.mark.parametrize('nested,linked', [(False, False), (True, False), (False, True)])
+def test_strict_inventory_does_not_fallback_inside_failed_git_tree(tmp_path, monkeypatch, nested, linked):
+    marker = tmp_path / '.git'
+    marker.write_text('gitdir: missing\n') if linked else marker.mkdir()
+    root = tmp_path / 'subdir' if nested else tmp_path
+    root.mkdir(exist_ok=True)
+    (root / 'ignored.py').write_text('fixture')
+    def failed(*args, **kwargs):
+        raise repo_overview.gh_identity.GitInspectionError('failed inventory')
+    monkeypatch.setattr(repo_overview.gh_identity, 'git_ls_files', failed)
+    with pytest.raises(repo_overview.gh_identity.GitInspectionError, match='failed inventory'):
+        repo_overview.select_files(root)
+    # Existing overview retains its original best-effort behavior.
+    assert 'ignored.py' in repo_overview.list_files(root)
+
+
+def test_paths_only_walk_error_is_not_an_empty_success(tmp_path, monkeypatch, capsys):
+    def failed_git(*args, **kwargs):
+        raise repo_overview.gh_identity.GitInspectionError('not a git repository')
+    def failed_walk(root, *, onerror=None):
+        if onerror is not None:
+            onerror(PermissionError('unreadable subtree'))
+        return iter(())
+    monkeypatch.setattr(repo_overview.gh_identity, 'git_ls_files', failed_git)
+    monkeypatch.setattr(repo_overview.os, 'walk', failed_walk)
+    assert repo_overview.main([str(tmp_path), '--paths-only', '--json']) == 2
+    out = capsys.readouterr()
+    assert out.out == '' and 'unreadable subtree' in out.err
+
+
+def test_paths_only_missing_git_plain_directory_fallback(tmp_path, monkeypatch):
+    make_tree(tmp_path)
+    monkeypatch.setenv('PATH', '')
+    assert repo_overview.select_files(tmp_path, patterns=('*.py',)) == ['src/app.py']
+
+
+def test_strict_inventory_rejects_missing_root_and_skips_absent_paths(tmp_path, monkeypatch):
+    with pytest.raises(ValueError, match='directory'):
+        repo_overview.select_files(tmp_path / 'missing')
+    monkeypatch.setattr(repo_overview.gh_identity, 'git_ls_files',
+                        lambda *args, **kwargs: {'paths': ['vanished.py'], 'truncated': False})
+    assert repo_overview.select_files(tmp_path) == []
+
+
+def test_paths_only_retains_unstaged_deletion_and_dangling_link_behavior(tmp_path):
+    subprocess.run(['git', 'init', '-q', str(tmp_path)], check=True, env=git_env())
+    for name in ('deleted.py', 'present.py'):
+        (tmp_path / name).write_text('fixture')
+    subprocess.run(['git', '-C', str(tmp_path), 'add', '.'], check=True, env=git_env())
+    (tmp_path / 'deleted.py').unlink()
+    try:
+        (tmp_path / 'dangling.py').symlink_to(tmp_path / 'missing')
+    except (OSError, NotImplementedError):
+        pass
+    result = subprocess.run([sys.executable, '-S', str(SCRIPT), str(tmp_path),
+                             '--paths-only', '--match', 'present.py', '--json'],
+                            capture_output=True, text=True, env=git_env())
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)['files'] == ['present.py']
+    assert repo_overview.select_files(tmp_path, patterns=('*.py',)) == ['present.py']
+
+
+def test_strict_inventory_propagates_file_stat_permissions(tmp_path, monkeypatch):
+    monkeypatch.setattr(repo_overview.gh_identity, 'git_ls_files',
+                        lambda *args, **kwargs: {'paths': ['denied.py'], 'truncated': False})
+    original_stat = Path.stat
+    def denied(path, *args, **kwargs):
+        if path.name == 'denied.py':
+            raise PermissionError('denied file stat')
+        return original_stat(path, *args, **kwargs)
+    monkeypatch.setattr(Path, 'stat', denied)
+    with pytest.raises(PermissionError, match='denied file stat'):
+        repo_overview.select_files(tmp_path)
+
+
 def test_paths_only_direct_cli_without_site_packages(tmp_path):
     make_tree(tmp_path)
     result = subprocess.run([sys.executable, '-S', str(SCRIPT), str(tmp_path), '--paths-only',

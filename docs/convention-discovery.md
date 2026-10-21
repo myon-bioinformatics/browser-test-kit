@@ -18,17 +18,23 @@ case-sensitive fnmatch semantics (`*` spans `/`).
 returns `files`, `total` and `truncated`; text mode keeps one line per path,
 escaping control characters. `--max-files` applies after selection (default
 400). Exact-limit/empty output returns 0; truncated output, invalid roots or
-inventory errors return 2. The inventory's own shared limit is preserved, and
+inventory errors return 2. In paths-only mode, a Git failure inside a worktree
+(including ancestor and linked-worktree `.git` markers) never falls back to a
+walk that could expose ignored files. Plain-directory walk/stat errors also
+return 2; plain directories still work when Git is unavailable. The inventory's own shared limit is preserved, and
 paths-only cannot be mixed with content/stats/churn options. This uses the
 repository's installed Git inspector and needs no sibling xprobe checkout.
 
 The first command was run on this checkout: it selected 5 paths (pyproject.toml
 and four probe scripts), with no truncation.
 
-Validation: **36 repo_overview pytest tests** passed, including tracked/untracked
+Validation: **45 repo_overview pytest tests** passed, including tracked/untracked
 Git inventory and ignore rules, default overview behavior, OR/exclusion rules,
 exact limits, shared-inventory failures, mixed-mode errors and direct
-`python -S` path extraction.
+`python -S` path extraction. Regression checks include a real corrupt Git
+index, ancestor/linked-worktree markers, missing Git on a plain directory,
+unstaged deletions/dangling links, stat permission failures and injected walk errors. Existing overview fallback behavior
+is preserved.
 
 ## Optional source-symbol inspection
 

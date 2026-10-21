@@ -42,6 +42,7 @@ import importlib.util
 import json
 import os
 import re
+import stat
 import sys
 from pathlib import Path
 
@@ -148,13 +149,29 @@ def about(root: Path) -> str | None:
     return "\n".join(["=== about ===", *lines]) if lines else None
 
 
-def list_files(root: Path) -> list[str]:
-    """Repository files relative to ``root``, sorted, without dependency/cache/result directories."""
+def list_files(root: Path, *, strict: bool = False) -> list[str]:
+    """Repository paths; strict selection never hides a failed Git/walk observation."""
+    root = Path(root)
+    if strict and not root.is_dir():
+        raise ValueError("root must be a directory")
     try:
         inventory = gh_identity.git_ls_files(root, include_untracked=True)
     except gh_identity.GitInspectionError:
+        if strict:
+            # A worktree's .git can be a directory, a linked-worktree file,
+            # or an ancestor marker. If Git failed here, walking would drop
+            # ignore semantics. Plain directories (also without Git installed)
+            # retain the established fallback.
+            for directory in (root.resolve(), *root.resolve().parents):
+                try:
+                    (directory / ".git").lstat()
+                except FileNotFoundError:
+                    continue
+                raise
+        def walk_failed(error):
+            raise error
         files = set()
-        for directory, subdirs, names in os.walk(root):
+        for directory, subdirs, names in os.walk(root, onerror=walk_failed if strict else None):
             subdirs[:] = [name for name in subdirs if name not in SKIP_DIRS]
             files.update(Path(directory, name).relative_to(root).as_posix() for name in names)
     else:
@@ -163,6 +180,20 @@ def list_files(root: Path) -> list[str]:
             # successful but incomplete Git observation or hide partial output.
             raise RuntimeError("repository file inventory exceeds shared inspector limits")
         files = set(inventory["paths"])
+    if strict:
+        selected = []
+        for path in sorted(files):
+            if _skipped(path):
+                continue
+            try:
+                mode = (root / path).stat().st_mode
+            except (FileNotFoundError, NotADirectoryError):
+                # Git can list tracked files deleted from the worktree and
+                # dangling links. Preserve their established exclusion.
+                continue
+            if stat.S_ISREG(mode):
+                selected.append(path)
+        return selected
     return sorted(path for path in files if not _skipped(path) and (root / path).is_file())
 
 
@@ -186,7 +217,7 @@ def select_files(root: Path, *, patterns: tuple[str, ...] = ("*",),
         raise ValueError('path patterns must be non-empty strings')
     def matches(path, rules):
         return any(fnmatch.fnmatchcase(path, rule) or fnmatch.fnmatchcase(Path(path).name, rule) for rule in rules)
-    return [path for path in list_files(root) if matches(path, patterns) and not matches(path, exclude)]
+    return [path for path in list_files(root, strict=True) if matches(path, patterns) and not matches(path, exclude)]
 
 
 def render_file(root: Path, relative: str, max_lines: int) -> str:
