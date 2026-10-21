@@ -311,3 +311,11 @@ Emoji identities and ordered page movement continue to use `route_trail.py`.
 Application adapters for the platform matrix (including published Flutter Home and Counter):
 [configuration, scope and independent network lane](docs/platform-adapters.md).
 
+
+## Discover production entry points
+
+```sh
+python -S scripts/repo_overview.py . --paths-only --match 'scripts/*probe*' --match '*.toml' --json
+```
+
+Select paths from the existing Git-aware inventory without rendering file contents. [Discovery usage and optional source inspection](docs/convention-discovery.md).

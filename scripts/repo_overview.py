@@ -27,16 +27,22 @@ Stdlib only; runs under ``python -S``::
     python -S scripts/repo_overview.py ../other-repo --max-lines 40 --no-files
     python -S scripts/repo_overview.py --include 'docs/*.md'
     python -S scripts/repo_overview.py --stats --churn 10 --since '3 months ago'
+    python -S scripts/repo_overview.py --paths-only --match 'scripts/*probe*' --match '*.toml' --json
 
-Exit codes: 0 = OK, 2 = ROOT is not a directory.
+``--paths-only`` filters the existing Git-aware inventory without rendering
+file contents. Repeat ``--match`` for OR and ``--exclude`` to remove paths;
+``--json`` reports files/total/truncated. Globs match relative paths or basenames
+case-sensitively. Exit codes: 0 = OK, 2 = invalid root/error or truncated paths-only output.
 """
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import importlib.util
 import json
 import os
 import re
+import stat
 import sys
 from pathlib import Path
 
@@ -143,13 +149,29 @@ def about(root: Path) -> str | None:
     return "\n".join(["=== about ===", *lines]) if lines else None
 
 
-def list_files(root: Path) -> list[str]:
-    """Repository files relative to ``root``, sorted, without dependency/cache/result directories."""
+def list_files(root: Path, *, strict: bool = False) -> list[str]:
+    """Repository paths; strict selection never hides a failed Git/walk observation."""
+    root = Path(root)
+    if strict and not root.is_dir():
+        raise ValueError("root must be a directory")
     try:
         inventory = gh_identity.git_ls_files(root, include_untracked=True)
     except gh_identity.GitInspectionError:
+        if strict:
+            # A worktree's .git can be a directory, a linked-worktree file,
+            # or an ancestor marker. If Git failed here, walking would drop
+            # ignore semantics. Plain directories (also without Git installed)
+            # retain the established fallback.
+            for directory in (root.resolve(), *root.resolve().parents):
+                try:
+                    (directory / ".git").lstat()
+                except FileNotFoundError:
+                    continue
+                raise
+        def walk_failed(error):
+            raise error
         files = set()
-        for directory, subdirs, names in os.walk(root):
+        for directory, subdirs, names in os.walk(root, onerror=walk_failed if strict else None):
             subdirs[:] = [name for name in subdirs if name not in SKIP_DIRS]
             files.update(Path(directory, name).relative_to(root).as_posix() for name in names)
     else:
@@ -158,6 +180,20 @@ def list_files(root: Path) -> list[str]:
             # successful but incomplete Git observation or hide partial output.
             raise RuntimeError("repository file inventory exceeds shared inspector limits")
         files = set(inventory["paths"])
+    if strict:
+        selected = []
+        for path in sorted(files):
+            if _skipped(path):
+                continue
+            try:
+                mode = (root / path).stat().st_mode
+            except (FileNotFoundError, NotADirectoryError):
+                # Git can list tracked files deleted from the worktree and
+                # dangling links. Preserve their established exclusion.
+                continue
+            if stat.S_ISREG(mode):
+                selected.append(path)
+        return selected
     return sorted(path for path in files if not _skipped(path) and (root / path).is_file())
 
 
@@ -169,6 +205,19 @@ def key_files(root: Path, patterns: tuple[str, ...]) -> list[str]:
             if path.is_file() and relative not in found and not _skipped(relative):
                 found.append(relative)
     return found
+
+
+def select_files(root: Path, *, patterns: tuple[str, ...] = ("*",),
+                 exclude: tuple[str, ...] = ()) -> list[str]:
+    """Filter the existing Git-aware inventory by case-sensitive path/name rules."""
+    if isinstance(patterns, str) or isinstance(exclude, str):
+        raise TypeError('patterns and exclude must be sequences')
+    patterns, exclude = tuple(patterns), tuple(exclude)
+    if any(not isinstance(rule, str) or not rule for rule in patterns + exclude):
+        raise ValueError('path patterns must be non-empty strings')
+    def matches(path, rules):
+        return any(fnmatch.fnmatchcase(path, rule) or fnmatch.fnmatchcase(Path(path).name, rule) for rule in rules)
+    return [path for path in list_files(root, strict=True) if matches(path, patterns) and not matches(path, exclude)]
 
 
 def render_file(root: Path, relative: str, max_lines: int) -> str:
@@ -305,6 +354,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-lines", type=_positive, default=120, help="lines shown per file (default: 120)")
     parser.add_argument("--max-files", type=_positive, default=400, help="paths listed (default: 400)")
     parser.add_argument("--no-files", action="store_true", help="skip the file list")
+    parser.add_argument("--paths-only", action="store_true", help="print selected inventory paths without reading key-file contents")
+    parser.add_argument("--match", action="append", metavar="GLOB", help="--paths-only: filename/path rule; repeat for OR")
+    parser.add_argument("--exclude", action="append", metavar="GLOB", help="--paths-only: exclude matching filename/path")
+    parser.add_argument("--json", action="store_true", help="--paths-only: JSON files/total/truncated report")
     parser.add_argument("--include", action="append", default=[], metavar="GLOB",
                         help="extra key-file glob relative to ROOT (repeatable)")
     parser.add_argument("--stats", action="store_true", help="add per-extension file/line/byte stats")
@@ -313,10 +366,30 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--since", metavar="WHEN",
                         help="limit --churn to commits after WHEN, e.g. '3 months ago' (needs --churn)")
     args = parser.parse_args(argv)
+    if not args.paths_only and (args.match is not None or args.exclude is not None or args.json):
+        parser.error('--match/--exclude/--json require --paths-only')
+    if args.paths_only and (args.no_files or args.include or args.stats or args.churn or args.since):
+        parser.error('--paths-only cannot be combined with overview content/stats/churn options')
     root = Path(args.root)
     if not root.is_dir():
         print(f"error: not a directory: {args.root}", file=sys.stderr)
         return 2
+    if args.paths_only:
+        try:
+            paths = select_files(root.resolve(), patterns=tuple(args.match) if args.match is not None else ('*',),
+                                 exclude=tuple(args.exclude or ()))
+        except (OSError, ValueError, RuntimeError) as error:
+            print(f'error: {error}', file=sys.stderr)
+            return 2
+        report = {'files': paths[:args.max_files], 'total': len(paths), 'truncated': len(paths) > args.max_files}
+        if args.json:
+            print(json.dumps(report, ensure_ascii=True))
+        else:
+            for path in report['files']:
+                print(_churn_path(path))
+            if report['truncated']:
+                print('truncated: raise --max-files', file=sys.stderr)
+        return 2 if report['truncated'] else 0
     print(overview(root.resolve(), max_lines=args.max_lines, max_files=args.max_files, files=not args.no_files,
                    include=tuple(args.include), show_stats=args.stats, churn_top=args.churn, since=args.since))
     return 0
