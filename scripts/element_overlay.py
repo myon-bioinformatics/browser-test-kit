@@ -17,11 +17,28 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import sys
 from typing import Any, Dict, List, Optional, Union
 
 SCHEMA = "btk-element-overlay/1"
+
+
+def _finite_number(value: Any) -> bool:
+    if type(value) not in (int, float):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
+
+
+def _round_coordinate(value: float) -> float:
+    # Match the Node twin's binary64 operations, including ties toward +infinity.
+    if abs(value) >= 2 ** 52:
+        return value  # Already integral; avoid overflowing the scale operation.
+    return math.floor(value * 100 + 0.5) / 100
 
 
 def _extract_element_list(data: Any) -> List[Dict[str, Any]]:
@@ -40,14 +57,16 @@ def _extract_element_list(data: Any) -> List[Dict[str, Any]]:
 
 def _parse_viewport(viewport: Any) -> Optional[Dict[str, float]]:
     if isinstance(viewport, dict):
-        w = viewport.get("width") or viewport.get("w")
-        h = viewport.get("height") or viewport.get("h")
-        if isinstance(w, (int, float)) and isinstance(h, (int, float)) and w > 0 and h > 0:
+        w = viewport.get("width", viewport.get("w"))
+        h = viewport.get("height", viewport.get("h"))
+        if _finite_number(w) and _finite_number(h) and w > 0 and h > 0:
             return {"width": float(w), "height": float(h)}
     elif isinstance(viewport, str):
         match = re.match(r"^(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)$", viewport.strip(), re.IGNORECASE)
         if match:
-            return {"width": float(match.group(1)), "height": float(match.group(2))}
+            w, h = float(match.group(1)), float(match.group(2))
+            if _finite_number(w) and _finite_number(h) and w > 0 and h > 0:
+                return {"width": w, "height": h}
     return None
 
 
@@ -72,8 +91,7 @@ def annotate_elements(
         h = raw.get("height", raw.get("h"))
 
         # Skip elements missing numeric position or non-positive dimensions
-        if not (isinstance(x, (int, float)) and isinstance(y, (int, float)) and
-                isinstance(w, (int, float)) and isinstance(h, (int, float))):
+        if not all(_finite_number(value) for value in (x, y, w, h)):
             continue
 
         fx, fy, fw, fh = float(x), float(y), float(w), float(h)
@@ -89,8 +107,10 @@ def annotate_elements(
             if query not in searchable:
                 continue
 
-        cx = round(fx + fw / 2.0, 2)
-        cy = round(fy + fh / 2.0, 2)
+        if not all(math.isfinite(value) for value in (fx + fw, fy + fh, fx + fw / 2, fy + fh / 2)):
+            continue
+        cx = _round_coordinate(fx + fw / 2.0)
+        cy = _round_coordinate(fy + fh / 2.0)
 
         clipped = False
         if viewport:
@@ -104,10 +124,10 @@ def annotate_elements(
             "name": name,
             "role": role,
             "selector": selector,
-            "x": round(fx, 2),
-            "y": round(fy, 2),
-            "width": round(fw, 2),
-            "height": round(fh, 2),
+            "x": _round_coordinate(fx),
+            "y": _round_coordinate(fy),
+            "width": _round_coordinate(fw),
+            "height": _round_coordinate(fh),
             "cx": cx,
             "cy": cy,
             "clipped": clipped,

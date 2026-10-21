@@ -5,6 +5,12 @@
 
 export const SCHEMA = "btk-element-overlay/1";
 
+function roundCoordinate(value) {
+  // Same binary64 operations as Python, including ties toward +infinity.
+  if (Math.abs(value) >= 2 ** 52) return value;
+  return Math.floor(value * 100 + 0.5) / 100;
+}
+
 function extractElementList(data) {
   if (Array.isArray(data)) {
     return data.filter(item => item && typeof item === 'object' && !Array.isArray(item));
@@ -25,15 +31,18 @@ function extractElementList(data) {
 
 function parseViewport(viewport) {
   if (viewport && typeof viewport === 'object') {
-    const w = viewport.width ?? viewport.w;
-    const h = viewport.height ?? viewport.h;
-    if (typeof w === 'number' && typeof h === 'number' && w > 0 && h > 0) {
+    const w = 'width' in viewport ? viewport.width : viewport.w;
+    const h = 'height' in viewport ? viewport.height : viewport.h;
+    if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) {
       return { width: Number(w), height: Number(h) };
     }
   } else if (typeof viewport === 'string') {
     const match = viewport.trim().match(/^(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)$/i);
     if (match) {
-      return { width: parseFloat(match[1]), height: parseFloat(match[2]) };
+      const w = Number(match[1]), h = Number(match[2]);
+      if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) {
+        return { width: w, height: h };
+      }
     }
   }
   return null;
@@ -49,12 +58,12 @@ export function annotateElements(elements, options = {}) {
   let index = 1;
 
   for (const raw of rawList) {
-    const x = raw.x ?? raw.left;
-    const y = raw.y ?? raw.top;
-    const w = raw.width ?? raw.w;
-    const h = raw.height ?? raw.h;
+    const x = 'x' in raw ? raw.x : raw.left;
+    const y = 'y' in raw ? raw.y : raw.top;
+    const w = 'width' in raw ? raw.width : raw.w;
+    const h = 'height' in raw ? raw.height : raw.h;
 
-    if (typeof x !== 'number' || typeof y !== 'number' || typeof w !== 'number' || typeof h !== 'number') {
+    if (![x, y, w, h].every(Number.isFinite)) {
       continue;
     }
 
@@ -78,8 +87,9 @@ export function annotateElements(elements, options = {}) {
       }
     }
 
-    const cx = Math.round((fx + fw / 2.0) * 100) / 100;
-    const cy = Math.round((fy + fh / 2.0) * 100) / 100;
+    if (![fx + fw, fy + fh, fx + fw / 2, fy + fh / 2].every(Number.isFinite)) continue;
+    const cx = roundCoordinate(fx + fw / 2.0);
+    const cy = roundCoordinate(fy + fh / 2.0);
 
     let clipped = false;
     if (viewport) {
@@ -95,10 +105,10 @@ export function annotateElements(elements, options = {}) {
       name,
       role,
       selector,
-      x: Math.round(fx * 100) / 100,
-      y: Math.round(fy * 100) / 100,
-      width: Math.round(fw * 100) / 100,
-      height: Math.round(fh * 100) / 100,
+      x: roundCoordinate(fx),
+      y: roundCoordinate(fy),
+      width: roundCoordinate(fw),
+      height: roundCoordinate(fh),
       cx,
       cy,
       clipped,

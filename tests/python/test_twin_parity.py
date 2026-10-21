@@ -96,17 +96,65 @@ def test_press_point_twins_agree_including_rounding_ties():
 
 
 def overlay_cases():
-    return [
-        [[[{"x": 10, "y": 20, "width": 100, "height": 40, "name": "Submit", "role": "button"}]], {"viewport": "800x600"}],
-        [[[{"x": -10, "y": -5, "width": 50, "height": 20, "label": "Off", "id": "o1"}]], {"viewport": {"width": 800, "height": 600}}],
-        [[[{"x": 0, "y": 0, "width": 0, "height": 10}, "invalid"]], {}],
-        [[[{"x": 10, "y": 10, "width": 50, "height": 20, "name": "Search"}]], {"find": "search"}],
+    cases = [
+        [[{"x": 10, "y": 20, "width": 100, "height": 40, "name": "Submit", "role": "button"}], {"viewport": "800x600"}],
+        [[{"x": -10, "y": -5, "width": 50, "height": 20, "label": "Off", "id": "o1"}], {"viewport": {"width": 800, "height": 600}}],
+        [[{"x": 0, "y": 0, "width": 0, "height": 10}, "invalid"], {}],
+        [[{"x": 10, "y": 10, "width": 50, "height": 20, "name": "Search"}], {"find": "search"}],
     ]
+    for x in (0.125, -0.125, 0.375, -0.375, 2.675, -0.005, 1e308):
+        cases.append([[{"x": x, "y": x, "width": 0.25, "height": 0.75}], {}])
+    for field in ("x", "y", "width", "height"):
+        for value in (True, False, None, "1"):
+            cases.append([[{"x": 0, "y": 0, "width": 2, "height": 2} | {field: value}], {}])
+    box = {"x": 0, "y": 0, "width": 2, "height": 2}
+    for value in (True, False, None, 0, "1"):
+        cases.append([[box], {"viewport": {"width": value, "w": 800, "height": 600}}])
+    rng = random.Random(109)
+    for _ in range(100):
+        box = {key: rng.randint(-1000, 1000) / 16 for key in ("x", "y")}
+        box.update({key: rng.randint(1, 1000) / 16 for key in ("width", "height")})
+        cases.append([[box], {"viewport": "390x844"}])
+    return cases
 
 
 @needs_node
 def test_element_overlay_annotate_twins_agree():
-    assert_twins_agree(element_overlay.annotate_elements, "element_overlay.mjs", "annotateElements", overlay_cases())
+    results = assert_twins_agree(element_overlay.annotate_elements, "element_overlay.mjs", "annotateElements", overlay_cases())
+    assert [row["value"]["count"] for row in results[:4]] == [1, 1, 0, 1]
+    assert results[4]["value"]["items"][0]["x"] == 0.13
+    assert results[5]["value"]["items"][0]["x"] == -0.12
+
+
+@needs_node
+def test_element_overlay_rejects_non_finite_and_boolean_geometry_in_both_apis():
+    # Non-finite values cannot travel through JSON; exercise each API directly.
+    invalid = [True, False, float("nan"), float("inf"), -float("inf")]
+    base = {"x": 0, "y": 0, "width": 2, "height": 2}
+    counts = [element_overlay.annotate_elements([base | {field: value}])["count"]
+              for field in base for value in invalid]
+    viewports = [element_overlay.annotate_elements([base], {"viewport": {"width": value, "height": 600}})["viewport"]
+                 for value in invalid]
+    overflowing = {"x": 1e308, "y": 0, "width": 1e308, "height": 2}
+    counts.append(element_overlay.annotate_elements([overflowing])["count"])
+    assert counts == [0] * 21
+    assert viewports == [None] * 5
+    program = """
+      const {annotateElements} = await import(process.argv[1]);
+      const invalid = [true, false, NaN, Infinity, -Infinity];
+      const base = {x:0, y:0, width:2, height:2};
+      const counts = Object.keys(base).flatMap(field => invalid.map(value =>
+        annotateElements([{...base, [field]:value}]).count));
+      const viewports = invalid.map(value =>
+        annotateElements([base], {viewport:{width:value, height:600}}).viewport);
+      counts.push(annotateElements([{x:1e308,y:0,width:1e308,height:2}]).count);
+      console.log(JSON.stringify({counts,viewports}));
+    """
+    done = subprocess.run(["node", "--input-type=module", "-e", program,
+                           (ROOT / "scripts/element_overlay.mjs").as_uri()],
+                          text=True, capture_output=True, timeout=10)
+    assert done.returncode == 0, done.stderr
+    assert json.loads(done.stdout) == {"counts": counts, "viewports": viewports}
 
 
 @needs_node
@@ -121,10 +169,12 @@ def test_element_overlay_highlight_css_twins_agree():
 @needs_node
 def test_element_overlay_assert_twins_agree():
     cases = [
-        [[[{"x": 10, "y": 20, "width": 100, "height": 40, "name": "Submit", "role": "button"}]], {"min_count": 1, "assert_role": "button"}],
-        [[[]], {"min_count": 1}],
+        [[{"x": 10, "y": 20, "width": 100, "height": 40, "name": "Submit", "role": "button"}], {"min_count": 1, "assert_role": "button"}],
+        [[], {"min_count": 1}],
     ]
-    assert_twins_agree(element_overlay.assert_elements, "element_overlay.mjs", "assertElements", cases)
+    results = assert_twins_agree(element_overlay.assert_elements, "element_overlay.mjs", "assertElements", cases)
+    assert results[0]["value"]["ok"] is True
+    assert results[1]["value"]["ok"] is False
 
 
 @needs_node

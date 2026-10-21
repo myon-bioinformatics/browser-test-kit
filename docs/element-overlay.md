@@ -46,6 +46,17 @@ const tapResult = assertElements(elements, { min_count: 1, assert_role: 'button'
 
 ## Evidence Schema (`btk-element-overlay/1`)
 
+Both twins accept finite numeric coordinates, excluding booleans. Elements with
+missing or invalid coordinates, non-positive dimensions, or overflowing bounds
+are skipped; invalid viewport dimensions are ignored. An explicitly supplied
+coordinate takes precedence over its alias even when invalid.
+
+Coordinates and centers use the same binary64 operations in both languages:
+`floor(value * 100 + 0.5) / 100`, with half ties toward positive infinity
+(`0.125` → `0.13`, `-0.125` → `-0.12`). Values with magnitude at least `2**52`
+are already integral and bypass scaling. This is a binary floating-point rule,
+not exact decimal arithmetic.
+
 Output data adheres to schema `btk-element-overlay/1`:
 
 ```json
