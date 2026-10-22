@@ -40,6 +40,52 @@ def test_channel_chromium_needs_full_build_only_where_the_config_is_used(tmp_pat
     assert ("warn", ".github/workflows/ci.yml:5", "installs firefox but no config project uses it") in rows
 
 
+MIXED = """name: x
+jobs:
+  collect:
+    steps:
+      - run: python -m playwright install --with-deps chromium firefox webkit
+      - run: |
+          for browser in chromium firefox webkit; do
+            collect --browser "$browser" --profile desktop
+          done
+          xvfb-run -a python scripts/platform_probe.py collect --browser "$browser" --headed
+  headed_only:
+    steps:
+      - run: python -m playwright install --with-deps chromium firefox webkit
+      - run: xvfb-run -a python scripts/platform_probe.py collect --browser chromium --headed
+  branded:
+    steps:
+      - run: python -m playwright install --with-deps --no-shell chromium
+      - run: python scripts/platform_probe.py collect --browser chromium --channel chrome --headed
+"""
+
+
+def test_headed_and_headless_chromium_keep_both_builds(tmp_path):
+    root = repo(tmp_path, "projects: [{ name: 'chromium' }, { name: 'firefox' }, { name: 'webkit' }]")
+    (root / ".github" / "workflows" / "ci.yml").write_text(MIXED)
+    by_line = {where: (state, text) for state, where, text in pip.plan(str(root)) if state != "warn"}
+    assert by_line[".github/workflows/ci.yml:5"] == ("ok", "full + shell (job uses both the full build and the shell)")
+    assert by_line[".github/workflows/ci.yml:13"] == ("suggest", "add --no-shell (job runs --headed)")
+    assert by_line[".github/workflows/ci.yml:17"] == ("ok", "--no-shell (job runs --headed)")
+
+
+def test_platform_matrix_keeps_the_unflagged_install(capsys):
+    workflow = (ROOT / ".github" / "workflows" / "platform-matrix.yml").read_text()
+    install = "python -m playwright install --with-deps chromium firefox webkit"
+    assert install in workflow
+    assert "--no-shell" not in workflow
+    probe = (ROOT / "scripts" / "platform_probe.py").read_text()
+    assert "headed: bool = False" in probe
+    assert "headless=not headed" in probe
+    assert 'for browser in chromium firefox webkit; do' in workflow
+    assert 'collect --browser "$browser" --profile "$profile"' in workflow
+    assert pip.main([str(ROOT)]) == 0
+    out = capsys.readouterr().out
+    assert "platform-matrix.yml:40 full + shell (job uses both the full build and the shell)" in out
+    assert "suggest" not in out
+
+
 def test_headless_config_suggests_only_shell_and_cli(tmp_path, capsys):
     root = repo(tmp_path, "projects: [{ name: 'chromium' }, { name: 'firefox' }]")
     rows = pip.plan(str(root))
