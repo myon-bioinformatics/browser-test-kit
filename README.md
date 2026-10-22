@@ -235,17 +235,22 @@ python -S scripts/twin_parity.py scripts/interaction.py:press_point scripts/inte
 - The first run found two real drifts, now fixed and recorded: `TWIN_PARSER_DRIFT` (27 of 250 URLs) and `ROUNDING_TIE_DRIFT` (0.562 vs 0.563).
 - Library: `node_calls(module, export, cases)`, `python_calls(fn, cases)`, `mismatches(a, b)`. Exit codes: 0 agree; 1 mismatch; 2 input error.
 
-### Planned sequence
+### Sequence status
 
-1. Documentation/evidence contract.
-2. Shared local deterministic fixture and artifact validators.
-3. Playwright Node matrix.
-4. Playwright Python API + CLI matrix.
-5. Cross-runtime/browser parity guards.
+Implemented:
+
+1. Documentation and evidence contract (`docs/`, `docs/evidence-events.md`).
+2. Shared local deterministic fixtures and artifact validators (`fixtures/`, `scripts/evidence_board.py`).
+3. Playwright Node matrix (`.github/workflows/playwright.yml`, `platform-matrix.yml`).
+4. Playwright Python API and CLI matrix (`scripts/platform_probe.py`).
+5. Cross-runtime and browser parity guards (`scripts/twin_parity.py`).
+7. terminal-browser quick CLI/TUI lane (`scripts/terminal_browser.py`).
+
+Not yet implemented in this repository:
+
 6. Stagehand v4 Python optional lane.
-7. terminal-browser optional CLI/TUI lane.
 8. Replay optional lane.
-9. Reusable workflow/template examples.
+9. Reusable workflow and template examples.
 
 ### terminal-browser quick lane
 
