@@ -2,7 +2,7 @@
 
 <img src="docs/assets/brand/validation-buddy.png" alt="Validation Buddy: browser, desktop, and mobile inputs leading to screenshot validation" width="191" height="212">
 
-Cross-browser testing reference kit for Playwright Node/Python, Stagehand, Replay, screenshots, mobile web, and GitHub Actions.
+Cross-browser testing reference kit for Playwright Node/Python, screenshots, mobile web, and GitHub Actions. Stagehand and Replay lanes are planned but not yet implemented.
 
 [Artwork and icon usage](docs/assets/brand/README.md) describes the supplied visual marks and their separate roles.
 
@@ -54,7 +54,7 @@ stdlib consumers; that does not extend this repository's development support.
 
 Implementation is staged by evidence layer. Deterministic Node/Python Playwright lanes are already implemented; optional agent/exploratory lanes remain separate and must not be described as proven until their own contracts are measured.
 
-Initial implementation target:
+Initial implementation target (implemented status is listed under Sequence status below):
 - Playwright Node/TypeScript and Playwright Python API/CLI as equal reference lanes.
 - Chromium, Firefox, and WebKit, with explicit desktop/mobile profiles.
 - Screenshot evidence validated by command result, file existence/size, PNG signature, and human-inspectable CI artifacts.
@@ -138,7 +138,7 @@ atomic snapshot. `open-issues --json` returns `issues` rows and `total`.
 See [docs/screenshot-evidence.md](docs/screenshot-evidence.md) for the shared
 capture/validation/publishing procedure, existing validator limits and consumer
 adoption map. Application-specific incidents retain source head/run and measured
-repair status; the first record covers Flutter diagnostics #128.
+repair status; the first record covers flutter_navigation_basic PR #128 (merged).
 
 ### Provenance
 
@@ -198,6 +198,8 @@ node --test tests/node-unit/hit_probe.test.mjs
 ### Emoji page trails to URLs (`scripts/route_trail.py`)
 
 Stdlib-only (`python -S`). Pages are named by their emoji identity, and a trail is walked in order: `A → B` goes to B, `A ↔ B` goes to B and back (ASCII `->` / `<->` also work). The registry is a JSON object or any source file with `'/route': '🏠'` pairs, such as flutter_navigation_basic's generated `page_identities.g.dart` (`--map pageEmojis`; values that are routes, i.e. alias maps, are skipped).
+
+The `page_identities.g.dart` example needs a flutter_navigation_basic checkout; `fixtures/route_trail_registry.json` works without one.
 
 ```bash
 python -S scripts/route_trail.py '🏠 → 🗺 → 🌍 ↔ 🕶' --registry lib/shared/navigation/page_identities.g.dart \
@@ -260,17 +262,22 @@ python -S scripts/twin_parity.py scripts/interaction.py:press_point scripts/inte
 - The first run found two real drifts, now fixed and recorded: `TWIN_PARSER_DRIFT` (27 of 250 URLs) and `ROUNDING_TIE_DRIFT` (0.562 vs 0.563).
 - Library: `node_calls(module, export, cases)`, `python_calls(fn, cases)`, `mismatches(a, b)`. Exit codes: 0 agree; 1 mismatch; 2 input error.
 
-### Planned sequence
+### Sequence status
 
-1. Documentation/evidence contract.
-2. Shared local deterministic fixture and artifact validators.
-3. Playwright Node matrix.
-4. Playwright Python API + CLI matrix.
-5. Cross-runtime/browser parity guards.
+Implemented:
+
+1. Documentation and evidence contract (`docs/`, `docs/evidence-events.md`).
+2. Shared local deterministic fixtures and artifact validators (`fixtures/`, `scripts/evidence_board.py`).
+3. Playwright Node matrix (`.github/workflows/playwright.yml`, `platform-matrix.yml`).
+4. Playwright Python API and CLI matrix (`scripts/platform_probe.py`).
+5. Cross-runtime and browser parity guards (`scripts/twin_parity.py`).
+7. terminal-browser quick CLI/TUI lane (`scripts/terminal_browser.py`).
+
+Not yet implemented in this repository:
+
 6. Stagehand v4 Python optional lane.
-7. terminal-browser optional CLI/TUI lane.
 8. Replay optional lane.
-9. Reusable workflow/template examples.
+9. Reusable workflow and template examples.
 
 ### terminal-browser quick lane
 
