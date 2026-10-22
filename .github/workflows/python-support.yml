@@ -31,17 +31,9 @@ jobs:
           python -m pip install --no-deps .
           cd "$RUNNER_TEMP"
           python -m check_png --help
-          python -c "from importlib.metadata import metadata; m = metadata('browser-test-kit-tools'); assert m['Requires-Python'] == '>=3.9'; assert all('extra ==' in r for r in m.get_all('Requires-Dist', []))"
-      - name: Image extra must fail instead of choosing an older Pillow
-        shell: bash
-        run: |
-          if python -m pip install --dry-run '.[image]' > image-install.log 2>&1; then
-            cat image-install.log
-            echo '::error::Image installation unexpectedly accepted unsupported Python'
-            exit 1
-          fi
-          cat image-install.log
-          grep -Ei 'No matching distribution found for pillow|Could not find a version that satisfies the requirement pillow' image-install.log
+          python -c "from importlib.metadata import metadata; m = metadata('browser-test-kit-tools'); assert m['Requires-Python'] == '>=3.9'; assert m.get_all('Requires-Dist', []) == []"
+      - name: image_diff help works without site-packages
+        run: python -S scripts/image_diff.py --help
 
   development-floor:
     name: Images and development / Python 3.11
@@ -63,8 +55,10 @@ jobs:
           ref: 2192ff22acafdd09e80ac722df91ee937aaedd5e
           path: .vendor-sync-tools
           persist-credentials: false
-      - name: Resolve all supported groups and image extra from the lock
-        run: uv sync --locked --all-groups --all-extras
+      - name: Resolve all supported groups from the lock
+        run: uv sync --locked --all-groups
+      - name: image_diff help works without site-packages
+        run: python -S scripts/image_diff.py --help
       - name: Full browserless regression suite at the supported floor
         run: uv run --locked python -m pytest tests/python -q -m 'not browser'
       - name: Build and inspect the distributable package

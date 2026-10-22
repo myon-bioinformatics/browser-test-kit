@@ -40,10 +40,22 @@ each recorded rectangle, then save as PNG. To reproduce derived icons:
 2. Paste the unscaled 195 × 212 camera crop at `(8, 0)` on a white RGB 212 × 212
    canvas, then resize that canvas to 180 × 180 with the same filter.
 
-Only these derivative files are resampled. `tests/python/test_brand_assets.py`
-checks decoded crop equality, derivative pixels, hashes, dimensions, documentation
-references, and fixture icon links. PNG encoding may vary across Pillow versions;
-compare decoded pixels before intentionally updating recorded file hashes.
+Only these derivative files were resampled when the artwork was prepared. The
+Pillow instructions above document that authoring procedure, not a runtime or
+development dependency. Do not regenerate the reviewed PNGs during tests.
+
+`tests/python/test_brand_assets.py` uses the stdlib-only `pillow_min` decoder pinned
+in `vendor.lock.json`. It checks every lossless crop against the original pixels,
+and checks all four resized derivatives against frozen decoded RGB SHA-256
+baselines from the reviewed artwork. It also checks encoded file hashes,
+dimensions, source relationships, documentation references, and fixture links.
+The pinned decoder has no resize/LANCZOS API, so these tests verify derivative
+identity rather than re-executing the resampling algorithm. No asset is skipped
+when Pillow is absent. A regression test runs the asset checks under `python -S`
+and checks that Pillow was not imported.
+
+PNG encoding may vary across authoring-tool versions. Compare decoded pixels and
+review the artwork before intentionally updating hashes or pixel baselines.
 
 All fixture icon paths are relative to `fixtures/index.html`, so they work for the
 existing local-file example as well as a locally served repository. No network
