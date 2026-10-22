@@ -20,6 +20,16 @@ engines; [`evidence_board.py`](scripts/evidence_board.py) summarizes event logs 
 pixels. Screenshot validation is a separate check, and Stagehand/Replay remain
 optional lanes. [Crop provenance](docs/assets/repository-concept.json).
 
+### Challenges, roles, and outcomes
+
+<a href="docs/assets/repository-concept-v2.png"><img src="docs/assets/repository-concept-v2.png" alt="Browser Test Kit challenges, roles, and outcomes: compare repeated browser checks, divide test execution, parity checking, and evidence collection, and reuse CI templates and test examples." width="507"></a>
+
+This additional supplied panel complements the workflow view above; it does not
+replace it. Its `twin_parity.py` role compares Python/Node helper behavior, not
+browser engines. The outcomes describe the kit's intended uses, not a guarantee
+that every browser or environment has been tested.
+[Additional panel provenance](docs/assets/repository-concept-v2.json).
+
 ## Python support
 
 - Stdlib-only modules and the base package: **Python 3.9+**, with no runtime dependencies.
