@@ -29,7 +29,7 @@ stdlib consumers; that does not extend this repository's development support.
 
 Implementation is staged by evidence layer. Deterministic Node/Python Playwright lanes are already implemented; optional agent/exploratory lanes remain separate and must not be described as proven until their own contracts are measured.
 
-Initial implementation target:
+Initial implementation target (implemented status is listed under Sequence status below):
 - Playwright Node/TypeScript and Playwright Python API/CLI as equal reference lanes.
 - Chromium, Firefox, and WebKit, with explicit desktop/mobile profiles.
 - Screenshot evidence validated by command result, file existence/size, PNG signature, and human-inspectable CI artifacts.
