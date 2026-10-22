@@ -1,0 +1,37 @@
+{
+  "identical": {
+    "returncode": 0,
+    "stdout": "size=(100, 50) changed=0 ratio=0.0 bbox=None max_delta=0 same_size=True differs=False",
+    "stderr": ""
+  },
+  "red_rect": {
+    "returncode": 1,
+    "stdout": "size=(100, 50) changed=50 ratio=0.01 bbox=(20, 10, 30, 15) max_delta=255 same_size=True differs=True",
+    "stderr": ""
+  },
+  "clip_exclude": {
+    "returncode": 0,
+    "stdout": "size=(20, 50) changed=0 ratio=0.0 bbox=None max_delta=0 same_size=True differs=False",
+    "stderr": ""
+  },
+  "viewport": {
+    "returncode": 0,
+    "stdout": "size=(780, 120) changed=0 ratio=0.0 bbox=None max_delta=0 same_size=True differs=False",
+    "stderr": ""
+  },
+  "tol5": {
+    "returncode": 0,
+    "stdout": "size=(2, 1) changed=0 ratio=0.0 bbox=None max_delta=5 same_size=True differs=False",
+    "stderr": ""
+  },
+  "tol4": {
+    "returncode": 1,
+    "stdout": "size=(2, 1) changed=1 ratio=0.5 bbox=(0, 0, 1, 1) max_delta=5 same_size=True differs=True",
+    "stderr": ""
+  },
+  "diff_size": {
+    "returncode": 1,
+    "stdout": "size_a=(10, 10) size_b=(11, 10) same_size=False differs=True",
+    "stderr": ""
+  }
+}

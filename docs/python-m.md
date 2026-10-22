@@ -1,7 +1,7 @@
 # Running the scripts with `python -m`
 
-Every `scripts/*.py` is a stdlib-only tool except `image_diff`, which lazily imports
-optional Pillow for pixel diffs (`pip install browser-test-kit-tools[image]`). `pyproject.toml`
+Every `scripts/*.py` is stdlib-only at runtime; `image_diff` loads the vendored
+`pillow_min.py` recorded in `vendor.lock.json` for PNG pixel diffs. `pyproject.toml`
 installs each one as a top-level module, so after installation it runs from any directory, like `python -m zipfile`, with no clone or file path:
 
 ```sh
