@@ -8,6 +8,13 @@ Canonical implementation lives in this repository (`scripts/image_diff.py`). Pyt
 python scripts/image_diff.py a.png b.png [--clip X,Y,W,H] [--viewport-width CSS_PX] [--tolerance N]
 ```
 
+The installed distribution includes the same pinned backend and its Ironmate
+license as wheel data. After `python -m pip install .`, run
+`python -m image_diff a.png b.png` from any directory. No Pillow install is needed.
+Built-wheel tests install into isolated `--target` and `--prefix` directories and
+compare real PNGs with site packages disabled, checking the golden stdout and
+exit codes as well as the packaged backend and license bytes.
+
 Exit `0` = identical within tolerance, `1` = differs, `2` = input error or missing vendored backend.
 
 See also [screenshot-evidence.md](screenshot-evidence.md) for how this fits next to `check_png.py` and receipt validators.

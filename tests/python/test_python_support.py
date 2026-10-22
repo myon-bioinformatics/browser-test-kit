@@ -2,6 +2,8 @@
 from pathlib import Path
 import tomllib
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -46,5 +48,44 @@ def test_built_wheel_metadata_when_present():
         with zipfile.ZipFile(wheel) as archive:
             path = next(p for p in archive.namelist() if p.endswith('.dist-info/METADATA'))
             metadata = Parser().parsestr(archive.read(path).decode())
+            backend = next(p for p in archive.namelist()
+                           if p.endswith('/share/browser-test-kit/pillow_min/pillow_min.py'))
+            license_path = backend.rsplit('/', 1)[0] + '/Ironmate-LICENSE'
+            assert archive.read(backend) == (ROOT / 'vendor/pillow_min/pillow_min.py').read_bytes()
+            assert archive.read(license_path) == (ROOT / 'vendor/pillow_min/Ironmate-LICENSE').read_bytes()
         assert metadata['Requires-Python'] == '>=3.9'
         assert metadata.get_all('Requires-Dist') is None
+
+
+@pytest.mark.parametrize('layout', ['target', 'prefix'])
+def test_built_wheel_image_diff_outside_checkout(tmp_path, layout):
+    """Install the actual wheel and exercise PNGs, not just --help, without PIL."""
+    import os
+    import subprocess
+    import sys
+    import sysconfig
+
+    wheels = sorted((ROOT / 'dist').glob('*.whl'))
+    if not wheels:
+        pytest.skip('Run uv build first to exercise the installed CLI')
+    for index, wheel in enumerate(wheels):
+        target = tmp_path / f'installed-{index}'
+        subprocess.run([sys.executable, '-m', 'pip', 'install', '--no-deps', '--no-index',
+                        '--ignore-installed', '--' + layout, str(target), str(wheel)],
+                       check=True, capture_output=True, timeout=60)
+        module_path = target if layout == 'target' else sysconfig.get_path(
+            'purelib', vars={'base': str(target), 'platbase': str(target)})
+        # -S bypasses site packages; only the distribution just installed is visible.
+        env = {**os.environ, 'PYTHONPATH': str(module_path)}
+        fixtures = ROOT / 'tests/fixtures/image_diff'
+        import json
+        golden = json.loads((fixtures / 'golden.json').read_text())
+        for name, left, right in [('identical', 'identical_a.png', 'identical_b.png'),
+                                  ('red_rect', 'red_rect_a.png', 'red_rect_b.png')]:
+            result = subprocess.run(
+                [sys.executable, '-S', '-m', 'image_diff', str(fixtures / left), str(fixtures / right)],
+                cwd=tmp_path, env=env, capture_output=True, text=True, timeout=30,
+            )
+            assert result.returncode == golden[name]['returncode'], result.stderr
+            assert result.stdout.strip() == golden[name]['stdout']
+            assert result.stderr == ''
