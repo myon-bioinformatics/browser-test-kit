@@ -1,9 +1,34 @@
 # browser-test-kit
+
+<img src="docs/assets/brand/validation-buddy.png" alt="Validation Buddy: browser, desktop, and mobile inputs leading to screenshot validation" width="191" height="212">
+
 Cross-browser testing reference kit for Playwright Node/Python, screenshots, mobile web, and GitHub Actions. Stagehand and Replay lanes are planned but not yet implemented.
+
+[Artwork and icon usage](docs/assets/brand/README.md) describes the supplied visual marks and their separate roles.
 
 ## Scope
 
 The kit's center is browser testing: Playwright lanes, evidence acquisition and validation, execution strategy, and reproducible diagnostics. It also hosts stdlib-only engineering utilities that the same agents and CI jobs use around that work, such as repository orientation, GitHub/CI operations, log digests, Python-version matrices, HTML fixture building, and explicit-file commits. Stdlib utilities must run under `python -S`, stay bounded in their output, and have unit tests. A utility that grows its own dependencies or domain belongs in its own repository.
+
+## Workflow concept
+
+<a href="docs/assets/repository-concept.png"><img src="docs/assets/repository-concept.png" alt="Browser Test Kit concept: local fixtures and a platform matrix feed Node/Python Playwright checks, evidence events, and CI/debugging lanes." width="498"></a>
+
+This supplied panel is an orientation aid, not a complete execution diagram.
+[`twin_parity.py`](scripts/twin_parity.py) checks Python/Node helper parity, not differences between browser
+engines; [`evidence_board.py`](scripts/evidence_board.py) summarizes event logs rather than validating screenshot
+pixels. Screenshot validation is a separate check, and Stagehand/Replay remain
+optional lanes. [Crop provenance](docs/assets/repository-concept.json).
+
+### Challenges, roles, and outcomes
+
+<a href="docs/assets/repository-concept-v2.png"><img src="docs/assets/repository-concept-v2.png" alt="Browser Test Kit challenges, roles, and outcomes: compare repeated browser checks, divide test execution, parity checking, and evidence collection, and reuse CI templates and test examples." width="507"></a>
+
+This additional supplied panel complements the workflow view above; it does not
+replace it. Its `twin_parity.py` role compares Python/Node helper behavior, not
+browser engines. The outcomes describe the kit's intended uses, not a guarantee
+that every browser or environment has been tested.
+[Additional panel provenance](docs/assets/repository-concept-v2.json).
 
 ## Python support
 

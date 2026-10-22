@@ -1,5 +1,8 @@
 # Screenshot evidence across repositories
 
+<img src="assets/brand/camera-validation.png" alt="Camera Validation: a camera with a validation check" width="156" height="170">
+
+
 This is the shared screenshot knowledge entry point for browser-test-kit consumers.
 Keep portable procedures and validators here; keep routes, selectors, app bootstrap,
 and framework scroll adapters in the owning application.

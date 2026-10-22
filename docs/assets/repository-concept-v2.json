@@ -1,0 +1,26 @@
+{
+  "source": {
+    "description": "Project owner-supplied challenges, role breakdown, and outcomes concept sheet",
+    "sha256": "9624fda66ede60f64d14e552c0722219bfd10090ce9ebcc3b11583d80af3aeb2",
+    "size": [
+      1536,
+      1024
+    ]
+  },
+  "operation": "Exact RGB rectangular crop from decoded JPEG, saved as lossless PNG. No resizing, redrawing, recoloring, or text changes. Complete panel title, content, tags, and border retained; common sheet header/footer excluded.",
+  "relationship": "Additional perspective; the earlier repository-concept.png and its README caption remain unchanged.",
+  "coordinate_convention": "left, top, right, bottom; right and bottom exclusive",
+  "repository": "browser-test-kit",
+  "crop_box": [
+    12,
+    116,
+    519,
+    406
+  ],
+  "path": "docs/assets/repository-concept-v2.png",
+  "size": [
+    507,
+    290
+  ],
+  "sha256": "3a42ebb1303ace692e8d6e248498d15a0ea077a982fdef7687f10c593978e830"
+}

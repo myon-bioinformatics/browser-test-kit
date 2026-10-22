@@ -1,0 +1,25 @@
+{
+  "source": {
+    "description": "Project owner-supplied nine-repository concept sheet",
+    "sha256": "f21f074b08f28b059a82b449a2b3c80405fe1d50b423dcdb903d29d3bc020502",
+    "size": [
+      1536,
+      1024
+    ]
+  },
+  "operation": "Exact rectangular crop of decoded RGB JPEG, saved as lossless PNG. No resizing, redrawing, recoloring, or text changes. Panel title, footnotes, and border retained; common sheet header/footer excluded.",
+  "coordinate_convention": "left, top, right, bottom; right and bottom exclusive",
+  "repository": "browser-test-kit",
+  "crop_box": [
+    12,
+    114,
+    510,
+    404
+  ],
+  "path": "docs/assets/repository-concept.png",
+  "size": [
+    498,
+    290
+  ],
+  "sha256": "2c6f1c4a1405ecd8f267f2ec923d46249a2e8f86e358260d7810b953d7e29c26"
+}
