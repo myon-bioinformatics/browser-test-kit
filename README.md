@@ -1,5 +1,5 @@
 # browser-test-kit
-Cross-browser testing reference kit for Playwright Node/Python, Stagehand, Replay, screenshots, mobile web, and GitHub Actions.
+Cross-browser testing reference kit for Playwright Node/Python, screenshots, mobile web, and GitHub Actions. Stagehand and Replay lanes are planned but not yet implemented.
 
 ## Scope
 
@@ -113,7 +113,7 @@ atomic snapshot. `open-issues --json` returns `issues` rows and `total`.
 See [docs/screenshot-evidence.md](docs/screenshot-evidence.md) for the shared
 capture/validation/publishing procedure, existing validator limits and consumer
 adoption map. Application-specific incidents retain source head/run and measured
-repair status; the first record covers Flutter diagnostics #128.
+repair status; the first record covers flutter_navigation_basic PR #128 (merged).
 
 ### Provenance
 
@@ -173,6 +173,8 @@ node --test tests/node-unit/hit_probe.test.mjs
 ### Emoji page trails to URLs (`scripts/route_trail.py`)
 
 Stdlib-only (`python -S`). Pages are named by their emoji identity, and a trail is walked in order: `A → B` goes to B, `A ↔ B` goes to B and back (ASCII `->` / `<->` also work). The registry is a JSON object or any source file with `'/route': '🏠'` pairs, such as flutter_navigation_basic's generated `page_identities.g.dart` (`--map pageEmojis`; values that are routes, i.e. alias maps, are skipped).
+
+The `page_identities.g.dart` example needs a flutter_navigation_basic checkout; `fixtures/route_trail_registry.json` works without one.
 
 ```bash
 python -S scripts/route_trail.py '🏠 → 🗺 → 🌍 ↔ 🕶' --registry lib/shared/navigation/page_identities.g.dart \
