@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
-import os
+import json
 import subprocess
 import sys
 import textwrap
@@ -10,15 +10,20 @@ from pathlib import Path
 
 import pytest
 
-# Pillow is required for regression tests; runtime usage remains optional.
-from PIL import Image, ImageDraw
-
 ROOT = Path(__file__).resolve().parents[2]
+FIXTURES = ROOT / "tests" / "fixtures" / "image_diff"
+GOLDEN = json.loads((FIXTURES / "golden.json").read_text(encoding="utf-8"))
 SCRIPT = ROOT / "scripts" / "image_diff.py"
+PILLOW_MIN = ROOT / "vendor" / "pillow_min" / "pillow_min.py"
 spec = importlib.util.spec_from_file_location("image_diff", SCRIPT)
 image_diff = importlib.util.module_from_spec(spec)
 assert spec.loader
 spec.loader.exec_module(image_diff)
+
+pm_spec = importlib.util.spec_from_file_location("pillow_min", PILLOW_MIN)
+pillow_min = importlib.util.module_from_spec(pm_spec)
+assert pm_spec.loader
+pm_spec.loader.exec_module(pillow_min)
 
 
 def run_image_diff(*argv: str) -> subprocess.CompletedProcess[str]:
@@ -30,65 +35,37 @@ def run_image_diff(*argv: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def solid_rgba(size: tuple[int, int], color: tuple[int, int, int, int]) -> Image.Image:
-    image = Image.new("RGBA", size, color)
-    return image
-
-
-def write_png(path: Path, image: Image.Image) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    image.save(path, format="PNG")
-
-
-def test_identical_images_exit_zero(tmp_path: Path) -> None:
-    base = solid_rgba((100, 50), (255, 255, 255, 255))
-    left = tmp_path / "a.png"
-    right = tmp_path / "b.png"
-    write_png(left, base)
-    write_png(right, base.copy())
+def test_identical_images_exit_zero() -> None:
+    left, right = FIXTURES / "identical_a.png", FIXTURES / "identical_b.png"
     proc = run_image_diff(str(left), str(right))
-    assert proc.returncode == 0
+    expected = GOLDEN["identical"]
+    assert proc.returncode == expected["returncode"]
+    assert proc.stdout.strip() == expected["stdout"]
     assert "changed=0" in proc.stdout
     assert "differs=False" in proc.stdout
 
 
-def test_red_rect_diff_metrics(tmp_path: Path) -> None:
-    base = solid_rgba((100, 50), (255, 255, 255, 255))
-    changed = base.copy()
-    ImageDraw.Draw(changed).rectangle((20, 10, 29, 14), fill=(255, 0, 0, 255))
-    left = tmp_path / "a.png"
-    right = tmp_path / "b.png"
-    write_png(left, base)
-    write_png(right, changed)
+def test_red_rect_diff_metrics() -> None:
+    left, right = FIXTURES / "red_rect_a.png", FIXTURES / "red_rect_b.png"
     proc = run_image_diff(str(left), str(right))
-    assert proc.returncode == 1
+    expected = GOLDEN["red_rect"]
+    assert proc.returncode == expected["returncode"]
+    assert proc.stdout.strip() == expected["stdout"]
     assert "changed=50" in proc.stdout
     assert "bbox=(20, 10, 30, 15)" in proc.stdout
 
 
-def test_clip_excluding_rect_exit_zero(tmp_path: Path) -> None:
-    base = solid_rgba((100, 50), (255, 255, 255, 255))
-    changed = base.copy()
-    ImageDraw.Draw(changed).rectangle((20, 10, 29, 14), fill=(255, 0, 0, 255))
-    left = tmp_path / "a.png"
-    right = tmp_path / "b.png"
-    write_png(left, base)
-    write_png(right, changed)
+def test_clip_excluding_rect_exit_zero() -> None:
+    left, right = FIXTURES / "red_rect_a.png", FIXTURES / "red_rect_b.png"
     proc = run_image_diff(str(left), str(right), "--clip", "0,0,20,50")
-    assert proc.returncode == 0
+    expected = GOLDEN["clip_exclude"]
+    assert proc.returncode == expected["returncode"]
+    assert proc.stdout.strip() == expected["stdout"]
     assert "changed=0" in proc.stdout
 
 
-def test_viewport_width_scales_clip(tmp_path: Path) -> None:
-    """DPR=2: 780px-wide image with 390 CSS viewport; clip top bar in CSS coords."""
-    base = solid_rgba((780, 200), (255, 255, 255, 255))
-    changed = base.copy()
-    draw = ImageDraw.Draw(changed)
-    draw.rectangle((0, 120, 779, 199), fill=(0, 0, 255, 255))
-    left = tmp_path / "a.png"
-    right = tmp_path / "b.png"
-    write_png(left, base)
-    write_png(right, changed)
+def test_viewport_width_scales_clip() -> None:
+    left, right = FIXTURES / "viewport_a.png", FIXTURES / "viewport_b.png"
     proc = run_image_diff(
         str(left),
         str(right),
@@ -97,38 +74,34 @@ def test_viewport_width_scales_clip(tmp_path: Path) -> None:
         "--viewport-width",
         "390",
     )
-    assert proc.returncode == 0
+    expected = GOLDEN["viewport"]
+    assert proc.returncode == expected["returncode"]
+    assert proc.stdout.strip() == expected["stdout"]
     assert "changed=0" in proc.stdout
 
 
-def test_tolerance_boundary(tmp_path: Path) -> None:
-    size = (2, 1)
-    a = Image.new("RGBA", size, (100, 100, 100, 255))
-    b = Image.new("RGBA", size, (100, 100, 100, 255))
-    b.putpixel((0, 0), (105, 100, 100, 255))
-    left = tmp_path / "a.png"
-    right = tmp_path / "b.png"
-    write_png(left, a)
-    write_png(right, b)
-    assert run_image_diff(str(left), str(right), "--tolerance", "5").returncode == 0
-    assert run_image_diff(str(left), str(right), "--tolerance", "4").returncode == 1
+def test_tolerance_boundary() -> None:
+    left, right = FIXTURES / "tolerance_a.png", FIXTURES / "tolerance_b.png"
+    assert run_image_diff(str(left), str(right), "--tolerance", "5").returncode == GOLDEN["tol5"]["returncode"]
+    assert run_image_diff(str(left), str(right), "--tolerance", "4").returncode == GOLDEN["tol4"]["returncode"]
 
 
 def test_different_sizes_exit_one(tmp_path: Path) -> None:
-    write_png(tmp_path / "a.png", solid_rgba((10, 10), (0, 0, 0, 255)))
-    write_png(tmp_path / "b.png", solid_rgba((11, 10), (0, 0, 0, 255)))
-    proc = run_image_diff(str(tmp_path / "a.png"), str(tmp_path / "b.png"))
-    assert proc.returncode == 1
+    left, right = FIXTURES / "small_a.png", FIXTURES / "small_b.png"
+    proc = run_image_diff(str(left), str(right))
+    expected = GOLDEN["diff_size"]
+    assert proc.returncode == expected["returncode"]
+    assert proc.stdout.strip() == expected["stdout"]
     assert "same_size=False" in proc.stdout
     assert "size_a=(10, 10)" in proc.stdout
     assert "size_b=(11, 10)" in proc.stdout
 
 
 def test_zip_member_success_and_missing(tmp_path: Path) -> None:
-    image = solid_rgba((8, 8), (1, 2, 3, 255))
     archive = tmp_path / "evidence.zip"
+    header_bytes = (FIXTURES / "zip_header.png").read_bytes()
     with zipfile.ZipFile(archive, "w") as zf:
-        zf.writestr("t/header.png", _png_bytes(image))
+        zf.writestr("t/header.png", header_bytes)
     proc = run_image_diff(f"{archive}::t/header.png", f"{archive}::t/header.png")
     assert proc.returncode == 0
     missing = run_image_diff(f"{archive}::t/nope.png", f"{archive}::t/header.png")
@@ -157,64 +130,60 @@ def test_bad_zip_exit_two(tmp_path: Path) -> None:
         "0,0,10,-1",
     ],
 )
-def test_invalid_clip_exit_two(tmp_path: Path, clip: str) -> None:
-    left = tmp_path / "a.png"
-    write_png(left, solid_rgba((20, 20), (0, 0, 0, 255)))
+def test_invalid_clip_exit_two(clip: str) -> None:
+    left = FIXTURES / "square_20.png"
     proc = run_image_diff(str(left), str(left), "--clip", clip)
     assert proc.returncode == 2
 
 
-def test_clip_out_of_bounds_exit_two(tmp_path: Path) -> None:
-    left = tmp_path / "a.png"
-    write_png(left, solid_rgba((10, 10), (0, 0, 0, 255)))
+def test_clip_out_of_bounds_exit_two() -> None:
+    left = FIXTURES / "square_10.png"
     proc = run_image_diff(str(left), str(left), "--clip", "0,0,20,20")
     assert proc.returncode == 2
     assert "outside image bounds" in proc.stderr
 
 
-def test_viewport_width_non_positive_exit_two(tmp_path: Path) -> None:
-    left = tmp_path / "a.png"
-    write_png(left, solid_rgba((10, 10), (0, 0, 0, 255)))
+def test_viewport_width_non_positive_exit_two() -> None:
+    left = FIXTURES / "square_10.png"
     proc = run_image_diff(str(left), str(left), "--viewport-width", "0")
     assert proc.returncode == 2
 
 
-def test_tolerance_out_of_range_exit_two(tmp_path: Path) -> None:
-    left = tmp_path / "a.png"
-    write_png(left, solid_rgba((4, 4), (0, 0, 0, 255)))
+def test_tolerance_out_of_range_exit_two() -> None:
+    left = FIXTURES / "square_4.png"
     assert run_image_diff(str(left), str(left), "--tolerance", "256").returncode == 2
     assert run_image_diff(str(left), str(left), "--tolerance", "-1").returncode == 2
 
 
-def test_missing_pillow_exit_two(tmp_path: Path) -> None:
-    left = tmp_path / "a.png"
-    write_png(left, solid_rgba((4, 4), (0, 0, 0, 255)))
+def test_missing_pillow_min_exit_two(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    left = FIXTURES / "square_4.png"
+    missing = tmp_path / "missing_pillow_min.py"
+    monkeypatch.setattr(image_diff, "_PILLOW_MIN", missing)
+    monkeypatch.setattr(image_diff, "_IMAGE_BACKEND", None)
+    with pytest.raises(SystemExit) as error:
+        image_diff.load(str(left))
+    assert error.value.code == 2
+
+
+def test_missing_pillow_min_cli_exit_two() -> None:
+    left = FIXTURES / "square_4.png"
     code = textwrap.dedent(
         f"""
-        import builtins
-        import runpy
+        import importlib.util
         import sys
-        _real = builtins.__import__
-        def _block(name, globals=None, locals=None, fromlist=(), level=0):
-            if name == "PIL" or name.startswith("PIL."):
-                raise ImportError("No module named 'PIL'")
-            return _real(name, globals, locals, fromlist, level)
-        builtins.__import__ = _block
-        sys.argv = [{repr(str(SCRIPT))}, {repr(str(left))}, {repr(str(left))}]
-        runpy.run_path({repr(str(SCRIPT))}, run_name="__main__")
+        from pathlib import Path
+        spec = importlib.util.spec_from_file_location("image_diff", {repr(str(SCRIPT))})
+        mod = importlib.util.module_from_spec(spec)
+        assert spec.loader
+        spec.loader.exec_module(mod)
+        mod._PILLOW_MIN = Path({repr(str(ROOT / "missing-pillow-min.py"))})
+        mod._IMAGE_BACKEND = None
+        raise SystemExit(mod.main([{repr(str(left))}, {repr(str(left))}]))
         """
     )
-    proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, cwd=ROOT)
     assert proc.returncode == 2
-    assert proc.stderr.strip() == "image_diff: Pillow >=13 is required (python -m pip install 'pillow>=13')"
-
-
-def _png_bytes(image: Image.Image) -> bytes:
-    from io import BytesIO
-
-    buf = BytesIO()
-    image.save(buf, format="PNG")
-    return buf.getvalue()
+    assert "pillow_min" in proc.stderr
 
 
 @pytest.mark.parametrize("flag,value", [
@@ -223,17 +192,15 @@ def _png_bytes(image: Image.Image) -> bytes:
     ("--clip", "0,inf,1,1"), ("--clip", "0,0,inf,1"),
     ("--clip", "0,0,1,nan"), ("--clip", "1e308,0,1e308,1"),
 ])
-def test_nonfinite_and_overflow_input_exit_two(tmp_path, flag, value):
-    path = tmp_path / "ok.png"
-    write_png(path, solid_rgba((10, 10), (0, 0, 0, 255)))
+def test_nonfinite_and_overflow_input_exit_two(flag, value):
+    path = FIXTURES / "square_10.png"
     proc = run_image_diff(str(path), str(path), flag, value)
     assert proc.returncode == 2
     assert "Traceback" not in proc.stderr
 
 
-def test_regular_file_over_limit_exit_two(tmp_path, monkeypatch):
-    path = tmp_path / "ok.png"
-    write_png(path, solid_rgba((10, 10), (0, 0, 0, 255)))
+def test_regular_file_over_limit_exit_two(monkeypatch):
+    path = FIXTURES / "square_10.png"
     monkeypatch.setattr(image_diff, "MAX_INPUT_BYTES", 16)
     with pytest.raises(ValueError, match="size limit"):
         image_diff.load(str(path))
@@ -249,17 +216,15 @@ def test_compressed_zip_member_over_limit_exit_two(tmp_path, monkeypatch):
 
 
 def test_normal_zip_and_file_within_limit(tmp_path):
-    path = tmp_path / "ok.png"
-    write_png(path, solid_rgba((8, 8), (1, 2, 3, 255)))
+    path = FIXTURES / "tiny.png"
     archive = tmp_path / "ok.zip"
     with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         zf.write(path, "ok.png")
     assert run_image_diff(str(path), f"{archive}::ok.png").returncode == 0
 
 
-def test_negative_clip_coordinate_exit_two(tmp_path):
-    path = tmp_path / "ok.png"
-    write_png(path, solid_rgba((10, 10), (0, 0, 0, 255)))
+def test_negative_clip_coordinate_exit_two():
+    path = FIXTURES / "square_10.png"
     proc = run_image_diff(str(path), str(path), "--clip", "-1,0,5,5")
     assert proc.returncode == 2
     assert "Traceback" not in proc.stderr
@@ -268,7 +233,7 @@ def test_negative_clip_coordinate_exit_two(tmp_path):
 @pytest.mark.parametrize("channel", range(4), ids=["red", "green", "blue", "alpha"])
 @pytest.mark.parametrize("tolerance,changed", [(4, 1), (5, 0), (6, 0)])
 def test_each_rgba_channel_tolerance_metrics(channel, tolerance, changed):
-    base = solid_rgba((2, 1), (100, 100, 100, 100))
+    base = pillow_min.Image.new("RGBA", (2, 1), (100, 100, 100, 100))
     altered = base.copy()
     pixel = [100, 100, 100, 100]
     pixel[channel] += 5
@@ -283,8 +248,7 @@ def test_each_rgba_channel_tolerance_metrics(channel, tolerance, changed):
 
 @pytest.mark.parametrize("in_zip", [False, True], ids=["file", "zip"])
 def test_invalid_image_bytes_exit_two(tmp_path, in_zip):
-    path = tmp_path / "invalid.png"
-    path.write_bytes(b"not a PNG image")
+    path = FIXTURES / "invalid.png"
     source = str(path)
     if in_zip:
         archive = tmp_path / "invalid.zip"
@@ -298,7 +262,7 @@ def test_invalid_image_bytes_exit_two(tmp_path, in_zip):
 
 
 @pytest.mark.parametrize("version", [(3, 9), (3, 10)])
-def test_unsupported_python_fails_before_pillow(monkeypatch, capsys, version):
+def test_unsupported_python_fails_before_backend(monkeypatch, capsys, version):
     monkeypatch.setattr(image_diff.sys, "version_info", version)
     with pytest.raises(SystemExit) as error:
         image_diff.load("does-not-exist.png")
@@ -306,11 +270,13 @@ def test_unsupported_python_fails_before_pillow(monkeypatch, capsys, version):
     assert "Python >=3.11 is required" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("version", ["11.3.0", "12.3.0", "unknown"])
-def test_unsupported_pillow_fails_before_decode(monkeypatch, capsys, version):
-    import PIL
-    monkeypatch.setattr(PIL, "__version__", version)
-    with pytest.raises(SystemExit) as error:
-        image_diff.load("does-not-exist.png")
-    assert error.value.code == 2
-    assert "Pillow >=13 is required" in capsys.readouterr().err
+def test_vendored_pillow_min_matches_lock() -> None:
+    lock = json.loads((ROOT / "vendor.lock.json").read_text(encoding="utf-8"))
+    entry = next(
+        e for e in lock["files"]
+        if e["destination"] == "vendor/pillow_min/pillow_min.py"
+    )
+    data = PILLOW_MIN.read_bytes()
+    import hashlib
+    assert entry["sha256"] == hashlib.sha256(data).hexdigest()
+    assert entry["commit"] == "b45ccd3e529aefe6519aa14e14bb63fa5873639d"

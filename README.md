@@ -10,11 +10,9 @@ The kit's center is browser testing: Playwright lanes, evidence acquisition and 
 - Stdlib-only modules and the base package: **Python 3.9+**, with no runtime dependencies.
   Run a source script with `python -S scripts/check_png.py --help`, or install the
   base package with `python -m pip install .` and use `python -m check_png --help`.
-- Optional image diff: **Python 3.11+ and Pillow 13+**. Install with
-  `python -m pip install '.[image]'`. The unconditional Pillow floor deliberately
-  makes image installs fail on Python 3.9/3.10; it must not be hidden behind a
-  Python marker that silently omits the feature. Direct image use also rejects
-  unsupported Python/Pillow versions with exit 2, before decoding any image.
+- Image diff (`scripts/image_diff.py`): **Python 3.11+** with the vendored
+  `pillow_min.py` from `vendor.lock.json` (stdlib only, no extra pip packages).
+  On Python 3.9/3.10 the CLI exits 2 before decoding any image.
 - Development, tests, browser integrations, and this repository's **uv project
   environment/lockfile: Python 3.11+**. Use
   `uv run --locked --python 3.11 python -m pytest tests/python -q -m "not browser"`. Add `--group browser` for browser
@@ -22,7 +20,7 @@ The kit's center is browser testing: Playwright lanes, evidence acquisition and 
   Python 3.9/3.10 consumers should install the base package with pip, not `uv sync`.
 
 The Python support CI checks actual 3.9/3.10 stdlib execution and base wheel
-installation without test dependencies, rejection of unsupported image installs,
+installation without test dependencies, `python -S scripts/image_diff.py --help`,
 and the complete browserless test suite at the 3.11 floor. Existing browser CI
 continues on 3.13. `py_matrix.py` can still probe older interpreters for independent
 stdlib consumers; that does not extend this repository's development support.

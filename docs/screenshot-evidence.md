@@ -8,10 +8,10 @@ and framework scroll adapters in the owning application.
 
 - `scripts/check_png.py`: stdlib-only PNG signature, IHDR dimensions and terminal
   IEND checks. This is a structural check, not a full image decoder or visual review.
-- `scripts/image_diff.py`: optional Pillow pixel diff for two PNGs (paths or
-  `ZIP::member`). Prints one line (`size`, `changed`, `ratio`, `bbox`, `max_delta`);
-  exit `0` when identical within `--tolerance`, `1` when they differ, `2` on input
-  errors (including unsupported Python/Pillow). Requires Python 3.11+. Install with `python -m pip install 'pillow>=13'` or `python -m pip install 'browser-test-kit-tools[image]'`.
+- `scripts/image_diff.py`: stdlib pixel diff for two PNGs (paths or `ZIP::member`)
+  using vendored `pillow_min.py`. Prints one line (`size`, `changed`, `ratio`,
+  `bbox`, `max_delta`); exit `0` when identical within `--tolerance`, `1` when they
+  differ, `2` on input errors (including unsupported Python). Requires Python 3.11+.
   Details: [image-diff.md](image-diff.md).
 
   ```sh

@@ -2,25 +2,24 @@
 
 Compare two screenshots (`PATH` or `ZIP::member`) and print one line: size, changed pixels, bbox, max channel delta.
 
-Canonical implementation lives in this repository (`scripts/image_diff.py`). Python 3.11+ is required. Pillow 13+ is the only runtime dependency and is imported lazily when diffing; without it the CLI exits `2` with an install hint. The tool is not part of the stdlib-only vendor catalog (`vendor.lock.json`).
+Canonical implementation lives in this repository (`scripts/image_diff.py`). Python 3.11+ is required. PNG decoding and pixel comparison use the vendored `pillow_min.py` from [Ironmate](https://github.com/myon-bioinformatics/Ironmate) (recorded in `vendor.lock.json`); no third-party Python packages are needed.
 
 ```bash
-python -m pip install 'pillow>=13'   # or: python -m pip install 'browser-test-kit-tools[image]'
 python scripts/image_diff.py a.png b.png [--clip X,Y,W,H] [--viewport-width CSS_PX] [--tolerance N]
 ```
 
-Exit `0` = identical within tolerance, `1` = differs, `2` = input error or missing Pillow.
+Exit `0` = identical within tolerance, `1` = differs, `2` = input error or missing vendored backend.
 
 See also [screenshot-evidence.md](screenshot-evidence.md) for how this fits next to `check_png.py` and receipt validators.
 
 ## Regression tests
 
-Install test dependencies (`uv run --locked` includes Pillow) and run:
+Install test dependencies (`uv run --locked`) and run:
 
 ```bash
 uv run --locked python -m pytest tests/python/test_browser_test_kit_image_diff.py
 ```
 
-The test module imports Pillow directly so a missing dependency fails collection instead of skipping regressions. Runtime imports remain lazy; the missing-Pillow exit-2 diagnostic is tested separately by blocking PIL imports.
+Golden stdout lines and PNG inputs live under `tests/fixtures/image_diff/` so regressions do not depend on Pillow. The missing-backend exit-2 diagnostic is tested by pointing `image_diff` at a non-existent vendored copy.
 
 Downstream consumers (for example Flutter) may vendor a fixed copy of `scripts/image_diff.py` with provenance metadata. That adoption path does not enroll the script in `vendor.lock.json`; update vendored copies from reviewed merges of this repository.
