@@ -10,6 +10,16 @@ Cross-browser testing reference kit for Playwright Node/Python, Stagehand, Repla
 
 The kit's center is browser testing: Playwright lanes, evidence acquisition and validation, execution strategy, and reproducible diagnostics. It also hosts stdlib-only engineering utilities that the same agents and CI jobs use around that work, such as repository orientation, GitHub/CI operations, log digests, Python-version matrices, HTML fixture building, and explicit-file commits. Stdlib utilities must run under `python -S`, stay bounded in their output, and have unit tests. A utility that grows its own dependencies or domain belongs in its own repository.
 
+## Workflow concept
+
+<a href="docs/assets/repository-concept.png"><img src="docs/assets/repository-concept.png" alt="Browser Test Kit concept: local fixtures and a platform matrix feed Node/Python Playwright checks, evidence events, and CI/debugging lanes." width="498"></a>
+
+This supplied panel is an orientation aid, not a complete execution diagram.
+[`twin_parity.py`](scripts/twin_parity.py) checks Python/Node helper parity, not differences between browser
+engines; [`evidence_board.py`](scripts/evidence_board.py) summarizes event logs rather than validating screenshot
+pixels. Screenshot validation is a separate check, and Stagehand/Replay remain
+optional lanes. [Crop provenance](docs/assets/repository-concept.json).
+
 ## Python support
 
 - Stdlib-only modules and the base package: **Python 3.9+**, with no runtime dependencies.
