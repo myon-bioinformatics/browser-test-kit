@@ -44,7 +44,15 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: { node-version: '26' }
       - run: npm ci
-      - run: npx playwright install --with-deps --only-shell chromium firefox webkit
+      - name: Install browsers (first attempt)
+        id: install_first
+        continue-on-error: true
+        timeout-minutes: 6
+        run: npx playwright install --with-deps --only-shell chromium firefox webkit
+      - name: Install browsers (retry a stalled first attempt)
+        if: steps.install_first.outcome == 'failure'
+        timeout-minutes: 6
+        run: npx playwright install --with-deps --only-shell chromium firefox webkit
       - run: npm run test:node
       - name: Validate Node screenshots
         if: always()
@@ -138,7 +146,15 @@ jobs:
         with: { python-version: '3.13' }
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with: { python-version: '3.13' }
-      - run: uv run --locked --group browser python -m playwright install --with-deps --only-shell chromium firefox webkit
+      - name: Install browsers (first attempt)
+        id: install_first
+        continue-on-error: true
+        timeout-minutes: 6
+        run: uv run --locked --group browser python -m playwright install --with-deps --only-shell chromium firefox webkit
+      - name: Install browsers (retry a stalled first attempt)
+        if: steps.install_first.outcome == 'failure'
+        timeout-minutes: 6
+        run: uv run --locked --group browser python -m playwright install --with-deps --only-shell chromium firefox webkit
       - name: Run Python browser tests with JUnit
         run: uv run --locked --group browser python -m pytest tests/python -q -m browser --junitxml=test-results/junit/python-browser-3.13.xml
       - name: Preserve browser JUnit
