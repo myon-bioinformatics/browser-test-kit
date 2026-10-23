@@ -157,9 +157,9 @@ jobs:
         run: uv run --locked --group browser python -m playwright install --only-shell chromium
       - name: System libraries for the headless shell (apt only when ldd reports missing ones)
         run: |
-          shell=$(find "$HOME/.cache/ms-playwright" -name chrome-headless-shell | head -n 1)
+          shell=$(find "$HOME/.cache/ms-playwright" -name chrome-headless-shell -print -quit)
           test -n "$shell"
-          libs=$(for f in "$(dirname "$shell")"/*; do ldd "$f" 2>/dev/null; done)
+          libs=$(for f in "$(dirname "$shell")"/*; do ldd "$f" 2>/dev/null || true; done)
           if ! grep -q '=>' <<<"$libs" || grep -q 'not found' <<<"$libs"; then
             uv run --locked --group browser python -m playwright install-deps --only-shell chromium
           else
