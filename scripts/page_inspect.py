@@ -32,6 +32,7 @@ import os
 import platform
 import re
 import sys
+import time
 import urllib.parse
 from pathlib import Path
 
@@ -1153,6 +1154,10 @@ def publish_step(step: dict, outcome: dict, *, url_before: str, url_after: str, 
         record["viewport"] = step["viewport"]
     if outcome.get("reason"):
         record["reason"] = outcome["reason"]
+    if outcome.get("unsupported_reason"):
+        record["unsupported_reason"] = outcome["unsupported_reason"]
+    if outcome.get("scroll_y") is not None:
+        record["scroll_y"] = outcome["scroll_y"]
     if step["action"] == "click" and outcome["status"] == "done":
         record["hint"] = "network and console on the following snapshot start after the previous snapshot; url_before equal to url_after means this step did not navigate"
     return record
@@ -1208,7 +1213,11 @@ def perform_action(page, step: dict, *, timeout_ms: int, has_touch: bool, browse
         if action == "scroll":
             page.mouse.wheel(step["dx"], step["dy"])
             page.wait_for_timeout(SCROLL_SETTLE_MS)
-            return _done(support, "scroll", False)
+            extra = {}
+            offsets = _css_visual_offsets(page)
+            if offsets is not None and offsets.get("pageY") is not None:
+                extra["scroll_y"] = offsets["pageY"]
+            return _done(support, "scroll", False, **extra)
         if action in {"scroll-into-view", "scroll_into"}:
             target().scroll_into_view_if_needed(timeout=timeout_ms)
             page.wait_for_timeout(SCROLL_SETTLE_MS)
@@ -1763,6 +1772,31 @@ def _storage_section(client, origin: str, *, keys: bool, fingerprints: bool, sen
     return _section("cdp:DOMStorage+Network.getCookies", "complete", {"areas": areas, "values": "redacted"})
 
 
+def _css_visual_offsets(page) -> dict | None:
+    """CSS visual viewport offsets from Page.getLayoutMetrics. No page JavaScript."""
+    client = None
+    try:
+        client = page.context.new_cdp_session(page)
+        metrics = client.send("Page.getLayoutMetrics")
+    except Exception:
+        return None
+    finally:
+        if client is not None:
+            try:
+                client.detach()
+            except Exception:
+                pass
+    visual = metrics.get("cssVisualViewport") if isinstance(metrics, dict) else None
+    if not isinstance(visual, dict):
+        return None
+    offsets = {}
+    for key in ("pageX", "pageY"):
+        value = visual.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            offsets[key] = int(round(value))
+    return offsets or None
+
+
 def _cdp_send(client, method: str, params: dict | None, sent: list):
     if method in {"Runtime.evaluate", "Runtime.callFunctionOn"}:
         raise InspectError(
@@ -1953,6 +1987,8 @@ def observe_page(*, url: str, browser_name: str, profile: str, headed: bool, cha
                 if step.get("action") in {"scroll_into", "scroll-into-view"} and step.get("status") == "done":
                     limits["scroll_into_view"] = True
                     limits["selector_engine"] = "playwright"
+                if step.get("scroll_y") is not None:
+                    limits["scroll_y"] = step["scroll_y"]
             return limits
 
         def _take_intervals():
@@ -2118,6 +2154,9 @@ def observe_page(*, url: str, browser_name: str, profile: str, headed: bool, cha
     payload = redact_obj({"observations": results, "run": run, "ok": failure is None})
     _secrets.set(())
     return _finish(playwright, browser, None, payload)
+
+
+
 
 
 def _action_locator(page, locator: str):
