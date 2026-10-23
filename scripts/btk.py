@@ -320,9 +320,9 @@ INTERACTIVE_ROLES = {
     "button", "link", "textbox", "searchbox", "checkbox", "radio", "combobox",
     "slider", "spinbutton", "switch", "tab", "menuitem",
 }
-ACT_ACTIONS = {"click", "dblclick", "hover", "focus", "check", "uncheck", "fill", "press", "select", "wait_for_timeout", "settle"}
+ACT_ACTIONS = {"click", "dblclick", "hover", "focus", "check", "uncheck", "fill", "press", "select", "wait_for_timeout", "settle", "goto"}
 # Each action maps to the Playwright method of the same meaning. press without a locator sends the key to the page.
-ACT_TEXT_ACTIONS = {"fill", "press", "select"}
+ACT_TEXT_ACTIONS = {"fill", "press", "select", "goto"}
 MAX_STEPS = 20
 HARD_CAP = 500
 SURVEY_LIMIT_DEFAULT = 50
@@ -1646,6 +1646,17 @@ def _perform(page, action: str, locator: str, text, timeout_ms: int, outcome: di
     if action == "wait_for_timeout":
         page.wait_for_timeout(timeout_ms)
         return False
+    if action == "goto":
+        target_url = loopback_target(text)
+        try:
+            page.goto(target_url, wait_until="load", timeout=30000)
+        except Exception as exc:
+            raise InspectError(
+                f"{type(exc).__name__}: {exc}",
+                "check that the loopback server is up",
+                stage="navigate",
+            ) from exc
+        return False
     if action == "settle":
         quiet = _wait_quiet(page, timeout_ms)
         if outcome is not None:
@@ -1688,8 +1699,10 @@ def act_page(*, url: str, browser_name: str, profile: str, headed: bool, channel
         )
     if action in ACT_TEXT_ACTIONS and text is None:
         raise InspectError(f"{action} needs --text", "pass the literal text, key name, or option value")
+    if action == "goto":
+        loopback_target(text)  # checked before any browser launch
     keyboard_only = action == "press" and not (locator or "").strip()
-    if action not in ("wait_for_timeout", "settle") and not keyboard_only:
+    if action not in ("wait_for_timeout", "settle", "goto") and not keyboard_only:
         _check_action_locator(locator)
     playwright, browser, page = _with_browser(url, browser_name, profile, headed, channel)
     failure = None
@@ -2003,7 +2016,7 @@ def build_parser() -> argparse.ArgumentParser:
     act.add_argument("target", help="loopback URL; a snapshot ordinal is not accepted")
     act.add_argument("--action", required=True, choices=tuple(sorted(ACT_ACTIONS)))
     act.add_argument("--locator", default="", help="id:, testid:, role:, or css: from observe")
-    act.add_argument("--text", default=None, help="literal text for fill, key name for press (Playwright names, for example Enter or ControlOrMeta+A), option value for select")
+    act.add_argument("--text", default=None, help="literal text for fill, key name for press (Playwright names, for example Enter or ControlOrMeta+A), option value for select, loopback URL for goto")
     act.add_argument("--timeout-ms", type=_bounded(120000), default=5000)
     act.add_argument("--browser", choices=("chromium", "firefox", "webkit"), default="chromium")
     act.add_argument("--profile", choices=tuple(PROFILES), default="desktop")
@@ -2073,10 +2086,12 @@ def _parse_step(raw: str, index: int) -> dict:
     text = parts[2] if len(parts) == 3 else None
     if action in ACT_TEXT_ACTIONS and text is None:
         raise InspectError(f"step {index}: {action} needs TEXT", "write ACTION LOCATOR TEXT; text is not recorded in the output")
+    if action == "goto":
+        loopback_target(text)  # checked before any browser launch
     if action == "wait_for_timeout":
         if text is None or not re.fullmatch(r"[0-9]{1,6}", text) or int(text) > 120000:
             raise InspectError(f"step {index}: wait_for_timeout needs milliseconds 0..120000 as TEXT", "write wait_for_timeout - 500")
-    elif action != "settle" and not (action == "press" and not locator):
+    elif action not in ("settle", "goto") and not (action == "press" and not locator):
         _check_action_locator(locator)
     return {"action": action, "locator": locator, "text": text}
 

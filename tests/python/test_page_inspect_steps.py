@@ -68,3 +68,37 @@ def test_fill_then_click_writes_one_snapshot_per_step_and_hides_the_text(tmp_pat
     for path in summary["files"]:
         assert "secret-value-42" not in Path(path).read_text(encoding="utf-8")
     assert "text" not in filled["step"]
+
+
+def test_goto_step_needs_a_loopback_url_and_no_locator(tmp_path):
+    url = "http://127.0.0.1:9/form.html"
+    no_url = observe([url, "--step", "goto -", "--out-dir", str(tmp_path)], tmp_path)
+    assert no_url.returncode == 2 and "needs TEXT" in no_url.stderr
+    remote = observe([url, "--step", "goto - http://example.com:80/", "--out-dir", str(tmp_path)], tmp_path)
+    assert remote.returncode == 2 and "loopback" in remote.stderr
+    direct = subprocess.run([sys.executable, str(SCRIPT), "act", url, "--action", "goto", "--text", "http://example.com:80/", "--json"],
+                            cwd=tmp_path, capture_output=True, text=True, timeout=60)
+    assert direct.returncode == 2 and "loopback" in direct.stdout + direct.stderr
+
+
+@pytest.mark.browser
+def test_goto_step_navigates_within_loopback(tmp_path):
+    (tmp_path / "form.html").write_text(FORM, encoding="utf-8")
+    (tmp_path / "result.html").write_text(RESULT, encoding="utf-8")
+    out = tmp_path / "steps"
+    out.mkdir()
+    handler = functools.partial(SimpleHTTPRequestHandler, directory=str(tmp_path))
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        base = f"http://127.0.0.1:{server.server_port}"
+        done = observe([f"{base}/form.html", "--step", f"goto - {base}/result.html",
+                        "--out-dir", str(out), "--json"], tmp_path)
+    finally:
+        server.shutdown()
+    assert done.returncode == 0, done.stderr
+    summary = json.loads(done.stdout)
+    assert [Path(f).name for f in summary["files"]] == ["00-initial.json", "01-goto.json"]
+    navigated = json.loads(Path(summary["files"][1]).read_text(encoding="utf-8"))
+    assert navigated["step"]["action"] == "goto"
+    assert navigated["url"].endswith("/result.html")
