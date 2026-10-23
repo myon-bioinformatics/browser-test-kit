@@ -29,6 +29,7 @@ tp = _load("twin_parity")
 interaction = _load("interaction")
 route_trail = _load("route_trail")
 element_overlay = _load("element_overlay")
+app_inspector = _load("app_inspector")
 # Locally a missing node skips; on CI it must fail, or the parity check would pass by not running.
 needs_node = pytest.mark.skipif(shutil.which("node") is None and not os.environ.get("CI"),
                                 reason="node is not installed")
@@ -125,6 +126,25 @@ def test_element_overlay_assert_twins_agree():
         [[[]], {"min_count": 1}],
     ]
     assert_twins_agree(element_overlay.assert_elements, "element_overlay.mjs", "assertElements", cases)
+
+
+@needs_node
+def test_app_inspector_facts_twins_agree():
+    cases = [
+        [{"title": "My App", "url": "https://a.com", "frameworks": ["react", "electron"], "global_keys": ["k1", "k2"]}],
+        ["invalid json string"],
+        [{}],
+    ]
+    assert_twins_agree(app_inspector.extract_app_facts, "app_inspector.mjs", "extractAppFacts", cases)
+
+
+@needs_node
+def test_app_inspector_diff_twins_agree():
+    cases = [
+        [{"title": "A", "global_keys": ["k1"]}, {"title": "B", "global_keys": ["k1", "k2"]}],
+        [{}, {}],
+    ]
+    assert_twins_agree(app_inspector.diff_app_states, "app_inspector.mjs", "diffAppStates", cases)
 
 
 @needs_node

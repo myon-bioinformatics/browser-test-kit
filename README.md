@@ -225,9 +225,19 @@ python -S scripts/element_overlay.py --file elements.json --assert-role button -
 python -m element_overlay --file elements.json --format css
 ```
 
+### Electron & browser application state inspector (`scripts/app_inspector.py` / `scripts/app_inspector.mjs`)
+
+Structured state extraction, zero-dependency browser JS probe generation, and state diffing for inspecting and reverse-engineering Electron or browser applications: [app inspector](docs/app-inspector.md) (`scripts/app_inspector.py` / `scripts/app_inspector.mjs`).
+
+```bash
+python -S scripts/app_inspector.py --generate-probe-script --out probe.js
+python -S scripts/app_inspector.py --diff state1.json state2.json
+python -m app_inspector --generate-probe-script
+```
+
 ### Python / Node twin parity (`scripts/twin_parity.py`)
 
-Twins (`interaction.py` / `interaction.mjs`, `route_trail.py` / `route_trail_node.mjs`, `element_overlay.py` / `element_overlay.mjs`) promise the same records for the same inputs. `twin_parity.py` checks that promise without files: Node runs once, every case goes in on stdin and every result comes back on stdout, and the Python twin's results are compared in memory. Twins must agree on accept/reject and on each accepted value (as JSON); error wording may differ unless `--messages` is given.
+Twins (`interaction.py` / `interaction.mjs`, `route_trail.py` / `route_trail_node.mjs`, `element_overlay.py` / `element_overlay.mjs`, `app_inspector.py` / `app_inspector.mjs`) promise the same records for the same inputs.
 
 ```bash
 python -S scripts/twin_parity.py scripts/interaction.py:press_point scripts/interaction.mjs:pressPoint < cases.json
