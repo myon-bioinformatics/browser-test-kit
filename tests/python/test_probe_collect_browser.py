@@ -106,3 +106,20 @@ def test_node_twin_collects_the_same_snapshot(fixture_url):
     node_snapshot = json.loads(run.stdout)
     py_snapshot = _load_page_and_collect(fixture_url + "/index.html")
     assert node_snapshot == py_snapshot
+
+
+@pytest.mark.browser
+@pytest.mark.skipif(shutil.which("node") is None or not (ROOT / "node_modules" / "playwright").exists(),
+                    reason="node and the repo's playwright package are required")
+def test_node_cli_output_matches_python_cli(fixture_url):
+    env = dict(os.environ)
+    py = subprocess.run([sys.executable, str(SCRIPTS / "probe_collect.py"), fixture_url + "/index.html"],
+                        capture_output=True, text=True, timeout=120)
+    node = subprocess.run(["node", str(SCRIPTS / "probe_collect.mjs"), fixture_url + "/index.html"],
+                          capture_output=True, text=True, timeout=120, env=env, cwd=ROOT)
+    assert py.returncode == 0, py.stderr
+    assert node.returncode == 0, node.stderr
+    assert node.stdout == py.stdout
+    refused = subprocess.run(["node", str(SCRIPTS / "probe_collect.mjs"), "https://u:p@x.test/"],
+                             capture_output=True, text=True, timeout=60)
+    assert refused.returncode == 2

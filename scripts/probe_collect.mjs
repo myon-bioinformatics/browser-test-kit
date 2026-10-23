@@ -1,3 +1,4 @@
+import {pathToFileURL} from 'node:url';
 /** Node twin of probe_collect.py: the same read-only count, the same snapshot shape.
  * collect(page) takes a Playwright page that is already loaded. The count function reads the DOM and
  * open shadow-root references only; it calls no application code and changes nothing.
@@ -38,4 +39,39 @@ export async function collect(page) {
     shadow_roots: shadow,
     frames: Math.max(page.frames().length - 1, 0),
   };
+}
+
+/** CLI: node scripts/probe_collect.mjs URL  -> btk-probe-evidence/1 JSON on stdout.
+ * Exit 0 OK; 2 bad URL, credentials, or browser/navigation failure. BTK_NODE_CHROMIUM may name a local Chromium.
+ */
+async function cli(argv) {
+  const url = argv[0];
+  let parts;
+  try { parts = new URL(url ?? ''); } catch { parts = null; }
+  if (!parts || (parts.protocol !== 'http:' && parts.protocol !== 'https:') || !parts.hostname || parts.username || parts.password) {
+    process.stderr.write('probe_collect: an http(s) URL without credentials is required\n');
+    return 2;
+  }
+  const {summarize} = await import('./probe_survey.mjs');
+  const {to_json} = await import('./probe_evidence.mjs');
+  let evidence;
+  let browser;
+  try {
+    const {chromium} = await import('playwright');
+    browser = await chromium.launch({headless: true, executablePath: process.env.BTK_NODE_CHROMIUM || undefined});
+    const page = await browser.newPage();
+    await page.goto(url, {waitUntil: 'load', timeout: 30000});
+    evidence = summarize(await collect(page));
+  } catch (error) {
+    process.stderr.write(`probe_collect: ${error?.message ?? error}\n`);
+    return 2;
+  } finally {
+    await browser?.close();
+  }
+  process.stdout.write(to_json(evidence) + '\n');
+  return 0;
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  process.exitCode = await cli(process.argv.slice(2));
 }
