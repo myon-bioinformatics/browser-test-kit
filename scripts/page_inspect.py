@@ -629,8 +629,10 @@ def target_url(target: str) -> str:
             return target
         try:
             parts = urllib.parse.urlsplit(target)
-            if parts.scheme == "file" and not parts.netloc and Path(urllib.request.url2pathname(parts.path)).is_file():
-                return target
+            if parts.scheme == "file" and not parts.netloc:
+                local = urllib.request.url2pathname(parts.path)
+                if not local.startswith(("//", "\\\\")) and Path(local).is_file():
+                    return target
         except ValueError:
             pass
         raise InspectError("URL is outside the survey boundary", hint)

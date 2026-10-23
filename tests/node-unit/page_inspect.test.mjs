@@ -142,7 +142,7 @@ test("fixed loopback boundary agrees with Python, including browser URL aliases"
     "http://localhost:8080/", "http://127.0.0.1:8081/", "http://127.0.0.1/", "http://[::1]:80/",
     "http://127.1:8080/", "http://2130706433:8080/", "http://0x7f000001:8080/",
     "http://127.0.0.1.evil.test:8080/", "http://user@127.0.0.1:8080/", "http://127.0.0.1:8080@evil.test/",
-    "http://127.0.0.1:08080/", "http://127.0.0.1:8080\\@evil.test/", "http://127.0.0.1:8080\n.evil.test/", "file://remote/tmp/page.html"];
+    "http://127.0.0.1:08080/", "http://127.0.0.1:8080\\@evil.test/", "http://127.0.0.1:8080\n.evil.test/", "file://remote/tmp/page.html", "file:////remote/share.html", "file:///%2fremote/share.html"];
   for (const target of accepted) {
     assert.equal(inspect.targetUrl(target), target);
     assert.deepEqual(oracle({fn: "target", target}), {ok: true, value: target});

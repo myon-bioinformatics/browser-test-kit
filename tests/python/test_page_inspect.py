@@ -185,7 +185,7 @@ NETWORK_REJECT = [
     'http://0x7f000001:8080/', 'http://127.0.0.1.evil.test:8080/',
     'http://user@127.0.0.1:8080/', 'http://127.0.0.1:8080@evil.test/',
     'http://127.0.0.1:08080/', 'http://127.0.0.1:8080\\@evil.test/',
-    'http://127.0.0.1:8080\n.evil.test/', 'file://remote/tmp/page.html',
+    'http://127.0.0.1:8080\n.evil.test/', 'file://remote/tmp/page.html', 'file:////remote/share.html', 'file:///%2fremote/share.html',
 ]
 
 

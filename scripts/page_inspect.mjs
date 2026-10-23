@@ -501,7 +501,10 @@ export function targetUrl(target) {
     if (NETWORK_TARGET.test(target)) return target;
     try {
       const url = new URL(target);
-      if (/^file:\/\/\//i.test(target) && url.protocol === "file:" && !url.host && existsSync(fileURLToPath(url)) && statSync(fileURLToPath(url)).isFile()) return target;
+      if (/^file:\/\/\//i.test(target) && url.protocol === "file:" && !url.host) {
+        const local = fileURLToPath(url);
+        if (!local.startsWith("//") && !local.startsWith("\\\\") && existsSync(local) && statSync(local).isFile()) return target;
+      }
     } catch {}
     throw new InspectError("URL is outside the survey boundary", hint);
   }
