@@ -20,7 +20,7 @@
     "python_playwright": {
       "role": "observe and act; Python runs under py_launch with no Node packages",
       "pypi_package": "playwright",
-      "version": ">=1.63.0",
+      "version": ">=1.64.1",
       "source": "pypi",
       "integrity": null,
       "note": "lower bound only, the same as pyproject.toml. uv.lock records the resolution for the stack and is not an exact pin. Installed with pip or uv; the integrity is not recorded here"
