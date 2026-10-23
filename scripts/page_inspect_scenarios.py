@@ -239,3 +239,12 @@ def run_scenario(args, api):
     except api.InspectError as exc:
         failure = exc
     return api._finish(playwright, browser, failure, result)
+
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(
+        prog="page_inspect_scenarios",
+        description="Internal bounded scenario adapter; invoke 'page_inspect.py scenario' instead.",
+    )
+    parser.parse_args()
