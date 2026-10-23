@@ -53,3 +53,14 @@ Exit `0` is success. Exit `1` is a completed operation with no match or a non-un
 ## Deferred
 
 Issue 117 tracks actions that re-query by address, frame and shadow address spaces, a new snapshot after navigation, the macOS / Windows / Linux / Android matrix, branded channels, an optional Stagehand caller, a headed survey lane, and a protocol transport after this CLI stays stable.
+
+
+Page-inspect network boundary (#116): HTTP(S) targets accept only literal
+`127.0.0.1` or `[::1]` on fixed port **8080**, matching the existing route CLI
+port. Hostnames (including `localhost`), alternate IP spellings, credentials,
+LAN/external addresses and other ports are rejected before browser launch.
+Existing local HTML paths and local `file:///` URLs remain an explicit fixture
+exception. The same request guard applies to page resources; HTTP redirects are
+refused without following them. Service workers and WebSockets are blocked in
+the survey context. There is no port override. This is a browser request boundary,
+not an OS-level sandbox.

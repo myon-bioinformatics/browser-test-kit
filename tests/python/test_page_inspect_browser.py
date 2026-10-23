@@ -96,3 +96,56 @@ test_hidden_controls_stay_out_until_requested = pytest.mark.browser(test_hidden_
 test_iphone_profile_launches_on_chromium_and_firefox = pytest.mark.browser(
     pytest.mark.parametrize("browser_name", ("chromium", "firefox"))(test_iphone_profile_launches_on_chromium_and_firefox)
 )
+
+
+@pytest.mark.browser
+def test_python_survey_enforces_network_boundary():
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from threading import Thread
+
+    hits = []
+    class Forbidden(BaseHTTPRequestHandler):
+        def do_GET(self):
+            hits.append(self.path)
+            self.send_response(200)
+            self.end_headers()
+        def log_message(self, *args):
+            pass
+    forbidden = ThreadingHTTPServer(('127.0.0.1', 0), Forbidden)
+    other = f'http://127.0.0.1:{forbidden.server_port}/outside'
+    class Allowed(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path == '/redirect':
+                self.send_response(302)
+                self.send_header('Location', other)
+                self.end_headers()
+            else:
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/html')
+                self.end_headers()
+                self.wfile.write(f'<button id="safe">Safe</button><img src="{other}"><script>fetch("{other}").catch(()=>{{}})</script>'.encode())
+        def log_message(self, *args):
+            pass
+    allowed = ThreadingHTTPServer(('127.0.0.1', 8080), Allowed)
+    threads = [Thread(target=server.serve_forever, daemon=True) for server in (forbidden, allowed)]
+    for thread in threads:
+        thread.start()
+    try:
+        for command in ([sys.executable, str(SCRIPT)],):
+            for path, expected in [('/', 0), ('/redirect', 2)]:
+                result = subprocess.run([*command, 'survey', 'http://127.0.0.1:8080' + path,
+                                         '--browser', 'chromium', '--json'], cwd=ROOT,
+                                        capture_output=True, text=True, timeout=90)
+                assert result.returncode == expected, result.stdout + result.stderr
+                body = json.loads(result.stdout)
+                if expected == 0:
+                    assert any(element['address'] == 'id:safe' for element in body['elements'])
+                else:
+                    assert body['stage'] == 'navigate'
+                assert hits == [], hits
+    finally:
+        for server in (allowed, forbidden):
+            server.shutdown()
+            server.server_close()
+        for thread in threads:
+            thread.join(timeout=5)

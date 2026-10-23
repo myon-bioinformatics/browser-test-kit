@@ -1,5 +1,6 @@
+import {createServer} from "node:http";
 import {createRequire} from "node:module";
-import {spawnSync} from "node:child_process";
+import {spawn, spawnSync} from "node:child_process";
 import * as inspect from "../../scripts/page_inspect.mjs";
 
 const require = createRequire(import.meta.url);
@@ -38,4 +39,36 @@ test("the Node CLI surveys Chromium headless", async ({browserName}, testInfo) =
   expect(payload.environment.browser).toBe("chromium");
   expect(payload.environment.headless).toBe(true);
   expect(payload.elements.some((element) => element.address === "id:save-draft")).toBe(true);
+});
+
+
+test("Node survey blocks other ports, page resources and redirects", async ({}, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "one CLI boundary integration");
+  test.setTimeout(120000);
+  const hits = [];
+  const forbidden = createServer((req, res) => {hits.push(req.url); res.end("outside");});
+  const listen = (server, port) => new Promise((resolve, reject) => {server.once("error", reject); server.listen(port, "127.0.0.1", resolve);});
+  await listen(forbidden, 0);
+  const other = `http://127.0.0.1:${forbidden.address().port}/outside`;
+  const allowed = createServer((req, res) => {
+    if (req.url === "/redirect") {res.writeHead(302, {Location: other}); res.end();}
+    else {res.setHeader("Content-Type", "text/html"); res.end(`<button id="safe">Safe</button><img src="${other}"><script>fetch("${other}").catch(()=>{})</script>`);}
+  });
+  const close = server => new Promise(resolve => server.close(resolve));
+  try {
+    await listen(allowed, 8080);
+    for (const [path, expected] of [["/", 0], ["/redirect", 2]]) {
+      const result = await new Promise((resolve, reject) => {
+        const child = spawn(process.execPath, ["scripts/page_inspect.mjs", "survey", `http://127.0.0.1:8080${path}`, "--browser", "chromium", "--json"]);
+        let stdout = "", stderr = "";
+        child.stdout.on("data", data => {stdout += data;}); child.stderr.on("data", data => {stderr += data;});
+        child.on("error", reject); child.on("close", code => resolve({code, stdout, stderr}));
+      });
+      expect(result.code, result.stdout + result.stderr).toBe(expected);
+      const body = JSON.parse(result.stdout);
+      if (expected === 0) expect(body.elements.some(e => e.address === "id:safe")).toBe(true);
+      else expect(body.stage).toBe("navigate");
+      expect(hits).toEqual([]);
+    }
+  } finally {await close(allowed); await close(forbidden);}
 });

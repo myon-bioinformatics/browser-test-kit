@@ -135,3 +135,32 @@ test("collect source is a function expression and the CLI matches Python", () =>
   const abbrev = spawnSync(process.execPath, ["scripts/page_inspect.mjs", "locate", snapshot, "--quer", "Save"], {encoding: "utf8"});
   assert.equal(abbrev.status, 2);
 });
+
+test("fixed loopback boundary agrees with Python, including browser URL aliases", async () => {
+  const accepted = ["http://127.0.0.1:8080/", "https://[::1]:8080/x?q=1#f"];
+  const rejected = ["https://example.com:8080/", "http://192.168.1.2:8080/", "http://10.0.0.1:8080/",
+    "http://localhost:8080/", "http://127.0.0.1:8081/", "http://127.0.0.1/", "http://[::1]:80/",
+    "http://127.1:8080/", "http://2130706433:8080/", "http://0x7f000001:8080/",
+    "http://127.0.0.1.evil.test:8080/", "http://user@127.0.0.1:8080/", "http://127.0.0.1:8080@evil.test/",
+    "http://127.0.0.1:08080/", "http://127.0.0.1:8080\\@evil.test/", "http://127.0.0.1:8080\n.evil.test/", "file://remote/tmp/page.html"];
+  for (const target of accepted) {
+    assert.equal(inspect.targetUrl(target), target);
+    assert.deepEqual(oracle({fn: "target", target}), {ok: true, value: target});
+  }
+  for (const target of rejected) {
+    assert.throws(() => inspect.targetUrl(target), inspect.InspectError);
+    assert.equal(oracle({fn: "target", target}).ok, false);
+    await assert.rejects(inspect.surveyBrowser({url: target}), inspect.InspectError);
+    let blocked = false;
+    await inspect.restrictRequest({request: () => ({url: () => target}), abort: async () => {blocked = true;}});
+    assert.equal(blocked, true);
+  }
+  for (const status of [200, 302]) {
+    let action;
+    const response = {status: () => status};
+    await inspect.restrictRequest({request: () => ({url: () => accepted[0]}),
+      fetch: async opts => {assert.deepEqual(opts, {maxRedirects: 0}); return response;},
+      abort: async () => {action = "abort";}, fulfill: async opts => {assert.equal(opts.response, response); action = "fulfill";}});
+    assert.equal(action, status === 302 ? "abort" : "fulfill");
+  }
+});

@@ -381,3 +381,14 @@ Select paths from the existing Git-aware inventory without rendering file conten
 
 Comparison and digest selection now accept `--page`, `--env`, and a read-only
 `--list` plan. See [selected comparison plans](docs/platform-adapters.md#select-a-comparison-or-digest-plan).
+
+
+Page-inspect network boundary (#116): HTTP(S) targets accept only literal
+`127.0.0.1` or `[::1]` on fixed port **8080**, matching the existing route CLI
+port. Hostnames (including `localhost`), alternate IP spellings, credentials,
+LAN/external addresses and other ports are rejected before browser launch.
+Existing local HTML paths and local `file:///` URLs remain an explicit fixture
+exception. The same request guard applies to page resources; HTTP redirects are
+refused without following them. Service workers and WebSockets are blocked in
+the survey context. There is no port override. This is a browser request boundary,
+not an OS-level sandbox.

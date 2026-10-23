@@ -614,18 +614,51 @@ def context_options(devices: dict, browser_name: str, profile: str, headed: bool
     return args
 
 
+SURVEY_PORT = 8080
+NETWORK_TARGET = re.compile(rf"https?://(?:127\.0\.0\.1|\[::1\]):{SURVEY_PORT}(?=[/?#]|$)", re.IGNORECASE)
+
+
+SURVEY_PORT = 8080
+NETWORK_TARGET = re.compile(rf"https?://(?:127\.0\.0\.1|\[::1\]):{SURVEY_PORT}(?=[/?#]|$)", re.IGNORECASE)
+
+
 def target_url(target: str) -> str:
+    hint = "use an existing local HTML file or http(s)://127.0.0.1:8080 / http(s)://[::1]:8080; hostnames and other ports are not allowed"
+    if any(ord(c) <= 32 or ord(c) == 127 for c in target) or "\\" in target:
+        # Spaces remain valid in plain local filenames, never in a URL.
+        if "://" in target or "\\" in target:
+            raise InspectError("URL is outside the survey boundary", hint)
     if "://" in target:
-        parts = urllib.parse.urlsplit(target)
-        if parts.username or parts.password:
-            raise InspectError("URL must not include credentials", "pass a file path or an http(s) URL without a user or password")
-        if parts.scheme not in {"http", "https", "file"}:
-            raise InspectError("URL scheme must be http, https, or file", "pass a local fixture path for core checks")
-        return target
+        if NETWORK_TARGET.match(target):
+            return target
+        try:
+            parts = urllib.parse.urlsplit(target)
+            if parts.scheme == "file" and not parts.netloc and Path(urllib.parse.unquote(parts.path)).is_file():
+                return target
+        except ValueError:
+            pass
+        raise InspectError("URL is outside the survey boundary", hint)
     path = Path(target)
     if not path.is_file():
         raise InspectError(f"page not found: {target}", "pass an existing HTML file or an http(s) or file URL")
     return path.resolve().as_uri()
+
+
+def restrict_request(route):
+    """Inspect only the fixed loopback service; never follow HTTP redirects."""
+    try:
+        target_url(route.request.url)
+    except InspectError:
+        route.abort("blockedbyclient")
+        return
+    if route.request.url.startswith("file:"):
+        route.continue_()
+        return
+    response = route.fetch(max_redirects=0)
+    if 300 <= response.status < 400:
+        route.abort("blockedbyclient")
+    else:
+        route.fulfill(response=response)
 
 
 def assemble_survey(raw: dict, *, environment: dict, url: str, start: int, limit: int) -> dict:
@@ -673,6 +706,7 @@ def _close_browser(browser):
 
 def survey_page(*, url: str, browser_name: str, profile: str, headed: bool, channel: str | None,
                 include_hidden: bool, role: str, start: int, limit: int) -> dict:
+    url = target_url(url)  # Also validate direct library callers before launching.
     try:
         from playwright.sync_api import sync_playwright
     except ImportError as exc:
@@ -700,7 +734,9 @@ def survey_page(*, url: str, browser_name: str, profile: str, headed: bool, chan
                 ) from exc
             try:
                 options = context_options(playwright.devices, browser_name, profile, headed)
-                context = browser.new_context(**options)
+                context = browser.new_context(**options, service_workers="block")
+                context.route("**/*", restrict_request)
+                context.route_web_socket("**/*", lambda websocket: websocket.close())
                 page = context.new_page()
                 page.set_default_timeout(15000)
                 page.set_default_navigation_timeout(30000)

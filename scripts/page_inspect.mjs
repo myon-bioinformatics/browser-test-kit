@@ -3,7 +3,7 @@
  * common substring divided by the shorter UTF-16 length, after simple lowercasing.
  * Exit codes: 0 success; 1 no match or a shared top score; 2 usage or runtime failure.
  */
-import {existsSync, readFileSync, realpathSync, writeFileSync} from "node:fs";
+import {existsSync, statSync, readFileSync, realpathSync, writeFileSync} from "node:fs";
 import {dirname} from "node:path";
 import {platform} from "node:os";
 import {fileURLToPath, pathToFileURL} from "node:url";
@@ -489,23 +489,37 @@ export function contextOptions(devices, browserName, profile, headed) {
   return args;
 }
 
+export const SURVEY_PORT = 8080;
+const NETWORK_TARGET = new RegExp(String.raw`^https?://(?:127\.0\.0\.1|\[::1\]):${SURVEY_PORT}(?=[/?#]|$)`, "i");
+
 export function targetUrl(target) {
-  if (String(target).includes("://")) {
-    let url;
-    try { url = new URL(target); } catch (error) {
-      throw new InspectError("URL is not valid", "pass a file path or an http(s) or file URL");
-    }
-    if (url.username || url.password) {
-      throw new InspectError("URL must not include credentials", "pass a file path or an http(s) URL without a user or password");
-    }
-    if (!["http:", "https:", "file:"].includes(url.protocol)) {
-      throw new InspectError("URL scheme must be http, https, or file", "pass a local fixture path for core checks");
-    }
-    return target;
+  const hint = "use an existing local HTML file or http(s)://127.0.0.1:8080 / http(s)://[::1]:8080; hostnames and other ports are not allowed";
+  if ((/[\x00-\x20\x7f]/.test(target) && target.includes("://")) || target.includes("\\")) {
+    throw new InspectError("URL is outside the survey boundary", hint);
   }
-  if (!existsSync(target)) throw new InspectError(`page not found: ${target}`, "pass an existing HTML file or an http(s) or file URL");
+  if (target.includes("://")) {
+    if (NETWORK_TARGET.test(target)) return target;
+    try {
+      const url = new URL(target);
+      if (/^file:\/\/\//i.test(target) && url.protocol === "file:" && !url.host && existsSync(fileURLToPath(url)) && statSync(fileURLToPath(url)).isFile()) return target;
+    } catch {}
+    throw new InspectError("URL is outside the survey boundary", hint);
+  }
+  if (!existsSync(target) || !statSync(target).isFile()) throw new InspectError(`page not found: ${target}`, "pass an existing HTML file or an http(s) or file URL");
   return pathToFileURL(target).href;
 }
+
+export async function restrictRequest(route) {
+  try { targetUrl(route.request().url()); } catch {
+    await route.abort("blockedbyclient");
+    return;
+  }
+  if (route.request().url().startsWith("file:")) { await route.continue(); return; }
+  const response = await route.fetch({maxRedirects: 0});
+  if (response.status() >= 300 && response.status() < 400) await route.abort("blockedbyclient");
+  else await route.fulfill({response});
+}
+
 
 export function assembleSurvey(raw, {environment, url, start, limit}) {
   const normalized = normalizeElements(raw, {start, limit});
@@ -646,6 +660,7 @@ async function closeBrowser(browser) {
 }
 
 export async function surveyBrowser(options) {
+  options = {...options, url: targetUrl(options.url)};
   let playwright;
   try { playwright = await import("playwright"); } catch (error) {
     throw new InspectError(
@@ -672,7 +687,9 @@ export async function surveyBrowser(options) {
       );
     }
     try {
-      const context = await browser.newContext(contextOptions(playwright.devices, options.browser, options.profile, options.headed));
+      const context = await browser.newContext({...contextOptions(playwright.devices, options.browser, options.profile, options.headed), serviceWorkers: "block"});
+      await context.route("**/*", restrictRequest);
+      await context.routeWebSocket("**/*", websocket => websocket.close());
       const page = await context.newPage();
       page.setDefaultTimeout(15000);
       page.setDefaultNavigationTimeout(30000);

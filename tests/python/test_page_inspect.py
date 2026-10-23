@@ -175,3 +175,49 @@ def test_collect_script_is_an_expression_beside_the_module():
     source = page_inspect.collect_source()
     assert source.lstrip().startswith("(options)")
     assert "querySelectorAll" in source
+
+
+NETWORK_ACCEPT = ['http://127.0.0.1:8080/', 'https://[::1]:8080/x?q=1#f']
+NETWORK_REJECT = [
+    'https://example.com:8080/', 'http://192.168.1.2:8080/', 'http://10.0.0.1:8080/',
+    'http://localhost:8080/', 'http://127.0.0.1:8081/', 'http://127.0.0.1/',
+    'http://[::1]:80/', 'http://127.1:8080/', 'http://2130706433:8080/',
+    'http://0x7f000001:8080/', 'http://127.0.0.1.evil.test:8080/',
+    'http://user@127.0.0.1:8080/', 'http://127.0.0.1:8080@evil.test/',
+    'http://127.0.0.1:08080/', 'http://127.0.0.1:8080\\@evil.test/',
+    'http://127.0.0.1:8080\n.evil.test/', 'file://remote/tmp/page.html',
+]
+
+
+@pytest.mark.parametrize('url', NETWORK_ACCEPT)
+def test_fixed_loopback_accepted(url):
+    assert page_inspect.target_url(url) == url
+
+
+@pytest.mark.parametrize('url', NETWORK_REJECT)
+def test_other_network_targets_rejected_before_playwright(url):
+    with pytest.raises(page_inspect.InspectError):
+        page_inspect.target_url(url)
+    with pytest.raises(page_inspect.InspectError):
+        page_inspect.survey_page(url=url, browser_name='chromium', profile='desktop', headed=False,
+                                channel=None, include_hidden=False, role='', start=0, limit=50)
+
+
+def test_request_boundary_rejects_redirects_and_external_resources():
+    from unittest.mock import Mock
+    for url in NETWORK_REJECT:
+        route = Mock()
+        route.request.url = url
+        page_inspect.restrict_request(route)
+        route.abort.assert_called_once_with('blockedbyclient')
+        route.fetch.assert_not_called()
+    for status in (200, 302):
+        route = Mock()
+        route.request.url = NETWORK_ACCEPT[0]
+        route.fetch.return_value.status = status
+        page_inspect.restrict_request(route)
+        route.fetch.assert_called_once_with(max_redirects=0)
+        if status == 302:
+            route.abort.assert_called_once_with('blockedbyclient')
+        else:
+            route.fulfill.assert_called_once_with(response=route.fetch.return_value)
