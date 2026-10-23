@@ -48,4 +48,4 @@ Service workers are blocked and redirects are aborted. Those are bounds on the s
 
 ## Deferred on issue 117
 
-Child frames and shadow roots as their own address spaces (observe counts frames and does not read shadow attributes). A new snapshot after navigation in one session. macOS, Windows, Linux, and Android Chrome or WebView. Branded channels as a matrix. A Stagehand caller. A headed lane in CI. An agent transport after these envelopes stay stable. Screenshot comparison and full scenario diffs.
+Child frames and shadow roots as their own address spaces. Observe counts child frames and open plus closed shadow roots (pierced DOM, `shadow_roots` section, `contents: not_entered`); it does not enter either and does not read shadow attributes. A new snapshot after navigation in one session. macOS, Windows, Linux, and Android Chrome or WebView. Branded channels as a matrix. A Stagehand caller. A headed lane in CI. An agent transport after these envelopes stay stable. Screenshot comparison and full scenario diffs.

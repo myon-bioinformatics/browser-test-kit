@@ -274,7 +274,7 @@ node scripts/page_inspect.cjs locate observe.json --query "Save draft" --unique 
 ```
 
 - Targets are `http://127.0.0.1:PORT/...` or `http://[::1]:PORT/...` only. Hostnames, file URLs, and missing ports are rejected.
-- `observe` on Chromium reads CDP and does not call the page. Firefox and WebKit report CDP unavailable instead of inventing a DOM. Storage is keys and SHA-256 fingerprints, never values. A missing section is not a claim that two captures match.
+- `observe` on Chromium reads CDP and does not call the page. It counts open and closed shadow roots in a pierced DOM (`shadow_roots` section) without entering them. Firefox and WebKit report CDP unavailable instead of inventing a DOM. Storage is keys and SHA-256 fingerprints, never values. A missing section is not a claim that two captures match.
 - `act` is click, fill, or wait_for_timeout. It re-queries the locator and rejects `h:N`. Playwright's selector engine runs only for click and fill.
 - The Node CLI is `.cjs` and calls Python through the vendored `vendor/py_launch.cjs` launcher, which requires Node 24. Score, loopback, fingerprint, and evidence comparison are checked with `scripts/twin_parity.py`.
 - Exit codes: `0` success; `1` no match or a shared top score; `2` usage, a bad snapshot, or launch/navigate/inspect/cleanup failure. Headless is the default.

@@ -804,6 +804,7 @@ def _unavailable_sections(reason: str) -> dict:
         "console": _section(None, "unavailable", body),
         "storage": _section(None, "not_requested"),
         "frames": _section(None, "unavailable", body),
+        "shadow_roots": _section(None, "unavailable", body),
     }
 
 
@@ -845,6 +846,30 @@ def _walk_dom(node, found: list) -> bool:
 
 def _frame_count(node) -> int:
     return 1 + sum(_frame_count(child) for child in node.get("childFrames") or [])
+
+
+def count_shadow_roots(root: dict, *, limit: int = HARD_CAP * 10) -> dict:
+    """Count open and closed shadow roots in a pierced DOM tree. Roots are counted, never entered.
+
+    Walks children and shadowRoots of the main document only; child frame documents are not descended.
+    """
+    opened = closed = visited = 0
+    truncated = False
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        visited += 1
+        if visited > limit:
+            truncated = True
+            break
+        for shadow in node.get("shadowRoots") or []:
+            if shadow.get("shadowRootType") == "closed":
+                closed += 1
+            else:
+                opened += 1
+            stack.append(shadow)
+        stack.extend(node.get("children") or [])
+    return {"open": opened, "closed": closed, "count": opened + closed, "truncated": truncated}
 
 
 def _controls_from_cdp(dom_nodes, ax_nodes, *, include_hidden: bool, role: str) -> tuple[list, dict]:
@@ -1081,6 +1106,8 @@ def observe_page(*, url: str, browser_name: str, profile: str, headed: bool, cha
                 stage="navigate",
             ) from exc
         document = _cdp_send(client, "DOM.getDocument", {"depth": -1, "pierce": False}, sent)
+        pierced = _cdp_send(client, "DOM.getDocument", {"depth": -1, "pierce": True}, sent)
+        shadow = count_shadow_roots(pierced.get("root") or {})
         ax = _cdp_send(client, "Accessibility.getFullAXTree", {}, sent)
         resources = _cdp_send(client, "Page.getResourceTree", {}, sent)
         frames = _cdp_send(client, "Page.getFrameTree", {}, sent)
@@ -1125,6 +1152,10 @@ def observe_page(*, url: str, browser_name: str, profile: str, headed: bool, cha
             "storage": storage,
             "frames": _section("cdp:Page.getFrameTree", "complete", {
                 "child_frames": child_frames, "contents": "not_entered",
+            }),
+            "shadow_roots": _section("cdp:DOM.getDocument pierce", "truncated" if shadow["truncated"] else "complete", {
+                "open": shadow["open"], "closed": shadow["closed"], "count": shadow["count"],
+                "contents": "not_entered",
             }),
         }
         viewport = page.viewport_size or {}
