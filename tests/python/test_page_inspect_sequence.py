@@ -75,7 +75,7 @@ def test_sequence_arguments_are_checked_before_any_browser_launch(tmp_path):
     url = "http://127.0.0.1:9/index.html"
     missing_after = run([url, "--after-click", "id:next", "--out", str(tmp_path / "a.json")], tmp_path)
     assert missing_after.returncode == 2 and "--after-out" in missing_after.stderr
-    missing_out = run([url, "--after-action", "click:id:next", "--after-out", str(tmp_path / "b.json")], tmp_path)
+    missing_out = run([url, "--step", "click:id:next", "--after-out", str(tmp_path / "b.json")], tmp_path)
     assert missing_out.returncode == 2 and "--out" in missing_out.stderr
     both = run([url, "--after-click", "id:next", "--after-action", "click:id:next", "--out", str(tmp_path / "a.json"),
                 "--after-out", str(tmp_path / "b.json")], tmp_path)
@@ -85,7 +85,7 @@ def test_sequence_arguments_are_checked_before_any_browser_launch(tmp_path):
     assert ordinal.returncode == 2 and "ordinal" in ordinal.stderr
     same = run([url, "--after-click", "id:next", "--out", str(tmp_path / "a.json"),
                 "--after-out", str(tmp_path / "a.json")], tmp_path)
-    assert same.returncode == 2 and "different files" in same.stderr
+    assert same.returncode == 2 and "differ" in same.stderr
     no_dir = run([url, "--after-click", "id:next", "--out", str(tmp_path / "a.json"),
                   "--after-out", str(tmp_path / "missing" / "b.json")], tmp_path)
     assert no_dir.returncode == 2 and "directory does not exist" in no_dir.stderr
