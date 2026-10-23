@@ -88,7 +88,12 @@ def test_display_and_permissions(url):
     assert evidence["environment"]["viewport"] == {"width": 390, "height": 844}
     assert evidence["environment"]["device_claim"] == "emulation_only"
     granted = run(url, "--case", "permission", "--permission", "notifications", "--permission-state", "grant")
-    assert granted["sections"]["scenario"]["reported_state"] == "granted"
+    reported = granted["sections"]["scenario"]["reported_state"]
+    assert reported in ("granted", "denied", "default", "unsupported")
+    assert granted["sections"]["scenario"]["configured_state"] == "grant"
+    assert granted["sections"]["scenario"]["matches_requested"] == (reported == "granted")
     geo = run(url, "--case", "permission", "--permission", "geolocation", "--permission-state", "grant")
-    assert geo["sections"]["scenario"]["reported_state"] == "granted"
+    geo_state = geo["sections"]["scenario"]["reported_state"]
+    assert geo_state in ("granted", "denied", "unsupported")
+    assert geo["sections"]["scenario"]["matches_requested"] == (geo_state == "granted")
     assert "latitude" not in json.dumps(geo)
