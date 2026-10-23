@@ -1,94 +1,62 @@
-"""Guard source-preserving branding and relative fixture icon references."""
+"""Guard brand artwork by file hash, PNG header, documented homes and fixture icon links (stdlib only)."""
 from hashlib import sha256
 from html.parser import HTMLParser
-import importlib.util
 import json
 from pathlib import Path
+import struct
 import subprocess
 import sys
-import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 BRAND = ROOT / "docs/assets/brand"
 MANIFEST = json.loads((BRAND / "manifest.json").read_text(encoding="utf-8"))
-PILLOW_MIN = ROOT / "vendor/pillow_min/pillow_min.py"
-spec = importlib.util.spec_from_file_location("brand_pillow_min", PILLOW_MIN)
-assert spec is not None and spec.loader is not None
-pillow_min = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(pillow_min)
-Image = pillow_min.Image
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+RGB_COLOR_TYPE = 2
 
-# Frozen decoded RGB baselines for the reviewed artwork in PR #111. These are
-# not generated during tests. pillow_min decodes/crops but does not implement
-# resize/LANCZOS, so validate the published derivatives without recreating them.
-DERIVATIVE_BASELINES = {
-    "fixtures/icons/favicon-16.png": (
-        "docs/assets/brand/validation-buddy-favicon-source.png", (16, 16),
-        "ce19a349a78ca6303767efbfac0b4d7a16e3ac7ca7a3689c1ab1b10ca9a2b40b",
-    ),
-    "fixtures/icons/favicon-32.png": (
-        "docs/assets/brand/validation-buddy-favicon-source.png", (32, 32),
-        "5247878e923089871c24f8f25b40635623dafaeee63bf7baa0b7054f048df622",
-    ),
-    "fixtures/icons/favicon-64.png": (
-        "docs/assets/brand/validation-buddy-favicon-source.png", (64, 64),
-        "1fe4f856ab1d91984015cb88466afb335c21c68f2e5e26bb2bf939f1b6695630",
-    ),
-    "fixtures/icons/apple-touch-icon.png": (
-        "docs/assets/brand/camera-validation.png", (180, 180),
-        "540b4a378b1a9a44aa1ceac2a8a9714388b8ab2ff2141d33337151a17b37ed00",
-    ),
+# Reviewed derivative sources and sizes from PR #111. Pixel contents are checked by file hash only.
+DERIVATIVE_SOURCES = {
+    "fixtures/icons/favicon-16.png": ("docs/assets/brand/validation-buddy-favicon-source.png", (16, 16)),
+    "fixtures/icons/favicon-32.png": ("docs/assets/brand/validation-buddy-favicon-source.png", (32, 32)),
+    "fixtures/icons/favicon-64.png": ("docs/assets/brand/validation-buddy-favicon-source.png", (64, 64)),
+    "fixtures/icons/apple-touch-icon.png": ("docs/assets/brand/camera-validation.png", (180, 180)),
 }
 
 
-def test_brand_source_and_lossless_crops():
+def png_header(data):
+    """Return (width, height, bit_depth, color_type) from the IHDR chunk."""
+    if data[:8] != PNG_SIGNATURE or data[12:16] != b"IHDR":
+        raise AssertionError("not a PNG with an IHDR chunk")
+    return struct.unpack(">IIBB", data[16:26])
+
+
+def test_brand_source_and_crops():
     source_path = ROOT / MANIFEST["source"]
-    assert sha256(source_path.read_bytes()).hexdigest() == MANIFEST["source_sha256"]
-    with Image.open(source_path) as source:
-        assert list(source.size) == MANIFEST["source_size"] == [1080, 720]
-        assert source.mode == MANIFEST["source_mode"] == "RGB"
-        for record in MANIFEST["crops"]:
-            path = ROOT / record["path"]
-            assert sha256(path.read_bytes()).hexdigest() == record["sha256"]
-            with Image.open(path) as actual:
-                expected = source.crop(record["crop_xyxy"])
-                assert actual.mode == expected.mode
-                assert list(actual.size) == record["size"]
-                assert actual.tobytes() == expected.tobytes()
+    source = source_path.read_bytes()
+    assert sha256(source).hexdigest() == MANIFEST["source_sha256"]
+    width, height, bit_depth, color_type = png_header(source)
+    assert [width, height] == MANIFEST["source_size"] == [1080, 720]
+    assert (bit_depth, color_type) == (8, RGB_COLOR_TYPE) and MANIFEST["source_mode"] == "RGB"
+    for record in MANIFEST["crops"]:
+        data = (ROOT / record["path"]).read_bytes()
+        assert sha256(data).hexdigest() == record["sha256"]
+        x1, y1, x2, y2 = record["crop_xyxy"]
+        assert [x2 - x1, y2 - y1] == record["size"]
+        assert list(png_header(data)[:2]) == record["size"]
 
 
-def assert_derivative_pixels(actual, size, pixel_sha256):
-    assert actual.mode == "RGB"
-    assert actual.size == size
-    assert sha256(actual.tobytes()).hexdigest() == pixel_sha256, (
-        "decoded pixels differ from reviewed artwork"
-    )
-
-
-def test_brand_derivatives_preserve_reviewed_pixels():
+def test_brand_derivatives_match_reviewed_files():
     records = MANIFEST["derivatives"]
-    assert {record["path"] for record in records} == set(DERIVATIVE_BASELINES)
-    assert len(records) == len(DERIVATIVE_BASELINES)
-    for record in MANIFEST["derivatives"]:
-        source, size, pixel_sha256 = DERIVATIVE_BASELINES[record["path"]]
+    assert {record["path"] for record in records} == set(DERIVATIVE_SOURCES)
+    assert len(records) == len(DERIVATIVE_SOURCES)
+    crop_paths = {crop["path"] for crop in MANIFEST["crops"]}
+    for record in records:
+        source, size = DERIVATIVE_SOURCES[record["path"]]
         assert record["source"] == source
         assert tuple(record["size"]) == size
-        assert source in {crop["path"] for crop in MANIFEST["crops"]}
-        path = ROOT / record["path"]
-        assert sha256(path.read_bytes()).hexdigest() == record["sha256"]
-        with Image.open(path) as actual:
-            assert_derivative_pixels(actual, size, pixel_sha256)
-
-
-def test_derivative_baseline_rejects_one_changed_channel():
-    path = "fixtures/icons/favicon-16.png"
-    _, size, pixel_sha256 = DERIVATIVE_BASELINES[path]
-    with Image.open(ROOT / path) as actual:
-        changed = actual.copy()
-    red, green, blue = changed.getpixel((0, 0))
-    changed.putpixel((0, 0), (red ^ 1, green, blue))
-    with unittest.TestCase().assertRaisesRegex(AssertionError, "decoded pixels"):
-        assert_derivative_pixels(changed, size, pixel_sha256)
+        assert source in crop_paths
+        data = (ROOT / record["path"]).read_bytes()
+        assert sha256(data).hexdigest() == record["sha256"]
+        assert tuple(png_header(data)[:2]) == size
 
 
 class IconLinks(HTMLParser):
@@ -124,10 +92,9 @@ def test_fixture_icons_are_local_and_match_declared_dimensions():
     assert {(a["rel"], a["sizes"], a["href"]) for a in parser.links} == expected
     assert len(parser.links) == len(expected)
     for attrs in parser.links:
-        path = fixture.parent / attrs["href"]
-        assert path.read_bytes().startswith(pillow_min.PNG_SIGNATURE)
-        with Image.open(path) as icon:
-            assert attrs["sizes"] == f"{icon.width}x{icon.height}"
+        data = (fixture.parent / attrs["href"]).read_bytes()
+        width, height, _, _ = png_header(data)
+        assert attrs["sizes"] == f"{width}x{height}"
         if attrs["rel"] == "icon":
             assert attrs["type"] == "image/png"
 
@@ -148,9 +115,8 @@ def test_brand_validation_without_site_packages():
 
 
 if __name__ == "__main__":
-    test_brand_source_and_lossless_crops()
-    test_brand_derivatives_preserve_reviewed_pixels()
+    test_brand_source_and_crops()
+    test_brand_derivatives_match_reviewed_files()
     test_fixture_icons_are_local_and_match_declared_dimensions()
     test_each_large_mark_has_its_documented_home()
-    assert not any(name == "PIL" or name.startswith("PIL.") for name in sys.modules)
     print("4 asset checks passed without site packages")

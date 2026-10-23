@@ -36,9 +36,6 @@ that every browser or environment has been tested.
   Run a source script with `python -S tools/check_png.py --help`, or install the
   base package with `python -m pip install .` and use `python -m btk --help`. Tools under `tools/` are
   repository tooling and are not installed.
-- Image diff (`tools/image_diff.py`): **Python 3.11+** with the vendored
-  `pillow_min.py` from `vendor.lock.json` (stdlib only, no extra pip packages).
-  On Python 3.9/3.10 the CLI exits 2 before decoding any image.
 - Development, tests, browser integrations, and this repository's **uv project
   environment/lockfile: Python 3.11+**. Use
   `uv run --locked --python 3.11 python -m pytest tests/python -q -m "not browser"`. Add `--group browser` for browser
@@ -46,8 +43,7 @@ that every browser or environment has been tested.
   Python 3.9/3.10 consumers should install the base package with pip, not `uv sync`.
 
 The Python support CI checks actual 3.9/3.10 stdlib execution and base wheel
-installation without test dependencies, `python -S tools/image_diff.py --help`,
-and the complete browserless test suite at the 3.11 floor. Existing browser CI
+installation without test dependencies, and the complete browserless test suite at the 3.11 floor. Existing browser CI
 continues on 3.13. `py_matrix.py` can still probe older interpreters for independent
 stdlib consumers; that does not extend this repository's development support.
 

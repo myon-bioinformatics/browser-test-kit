@@ -1,6 +1,6 @@
 # Running the scripts with `python -m`
 
-Every `scripts/*.py` is stdlib-only at runtime. `pyproject.toml` installs each one as a top-level module, so after installation it runs from any directory, like `python -m zipfile`, with no clone or file path. The in-repo tools under `tools/` are not installed: run them from a checkout with `python -S tools/NAME.py`. `tools/image_diff.py` loads the vendored `pillow_min.py` recorded in `vendor.lock.json` for PNG pixel diffs.
+Every `scripts/*.py` is stdlib-only at runtime. `pyproject.toml` installs each one as a top-level module, so after installation it runs from any directory, like `python -m zipfile`, with no clone or file path. The in-repo tools under `tools/` are not installed: run them from a checkout with `python -S tools/NAME.py`.
 
 ```sh
 # one-off: nothing cloned, uv caches the build
