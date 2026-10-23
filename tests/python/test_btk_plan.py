@@ -1,9 +1,9 @@
-"""pw_install_plan: per-job install recommendation from configs and later commands."""
+"""btk plan: per-job install recommendation from configs and later commands."""
 import importlib.util
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-spec = importlib.util.spec_from_file_location("pw_install_plan", ROOT / "scripts" / "pw_install_plan.py")
+spec = importlib.util.spec_from_file_location("btk", ROOT / "scripts" / "btk.py")
 pip = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(pip)
 
@@ -80,7 +80,7 @@ def test_platform_matrix_keeps_the_unflagged_install(capsys):
     assert "headless=not headed" in probe
     assert 'for browser in chromium firefox webkit; do' in workflow
     assert 'collect --browser "$browser" --profile "$profile"' in workflow
-    assert pip.main([str(ROOT)]) == 0
+    assert pip.plan_cli([str(ROOT)]) == 0
     out = capsys.readouterr().out
     assert "platform-matrix.yml:40 full + shell (job uses both the full build and the shell)" in out
     assert "suggest" not in out
@@ -90,8 +90,8 @@ def test_headless_config_suggests_only_shell_and_cli(tmp_path, capsys):
     root = repo(tmp_path, "projects: [{ name: 'chromium' }, { name: 'firefox' }]")
     rows = pip.plan(str(root))
     assert rows[0] == ("suggest", ".github/workflows/ci.yml:5", "add --only-shell (job runs headless only)")
-    assert pip.main([str(root)]) == 1
-    assert pip.main([str(tmp_path / "nope")]) == 2
+    assert pip.plan_cli([str(root)]) == 1
+    assert pip.plan_cli([str(tmp_path / "nope")]) == 2
     empty = tmp_path / "empty"
     empty.mkdir()
-    assert pip.main([str(empty)]) == 0 and "no playwright install lines" in capsys.readouterr().out
+    assert pip.plan_cli([str(empty)]) == 0 and "no playwright install lines" in capsys.readouterr().out
