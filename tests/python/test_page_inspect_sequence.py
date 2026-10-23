@@ -58,6 +58,7 @@ def test_parse_after_action_accepts_all_kinds():
     assert page_inspect.parse_after_action("click:id:save") == {"kind": "click", "locator": "id:save"}
     assert page_inspect.parse_after_action("hover:testid:menu") == {"kind": "hover", "locator": "testid:menu"}
     assert page_inspect.parse_after_action("scroll:0,-400") == {"kind": "scroll", "dx": 0, "dy": -400}
+    assert page_inspect.parse_after_action("scroll:id:deep") == {"kind": "scroll_into", "locator": "id:deep"}
     assert page_inspect.parse_after_action("scroll-into:css:#deep") == {"kind": "scroll_into", "locator": "css:#deep"}
 
 

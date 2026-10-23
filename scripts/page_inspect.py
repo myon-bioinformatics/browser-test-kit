@@ -680,7 +680,11 @@ def operations() -> dict:
 
 
 def context_options(devices: dict, browser_name: str, profile: str, headed: bool) -> dict:
-    """Playwright Python context kwargs. Firefox rejects is_mobile on phone descriptors."""
+    """Playwright Python context kwargs. Firefox rejects is_mobile on phone descriptors.
+
+    A future ``observe --viewport`` on the stacked follow-up PR replaces any device
+    viewport from iphone/pixel profiles when that flag is set.
+    """
     device = PROFILES[profile]
     if device:
         args = dict(devices[device])
@@ -1248,10 +1252,11 @@ def observe_page(*, url: str, browser_name: str, profile: str, headed: bool, cha
     return _finish(playwright, browser, failure, results)
 
 
-AFTER_ACTION_PREFIXES = ("click:", "hover:", "scroll:", "scroll-into:")
+STEP_SETTLE_MS_DEFAULT = 150
+DEFAULT_STEP_TIMEOUT_MS = 5000
 
 
-def _ensure_action_locator(locator: str, *, context: str) -> str:
+def _parse_action_locator_prefix(locator: str, *, context: str) -> str:
     text = (locator or "").strip()
     if text.startswith("h:"):
         raise InspectError(f"{context} does not accept a snapshot ordinal", "pass id:, testid:, role:, or css:")
@@ -1263,28 +1268,50 @@ def _ensure_action_locator(locator: str, *, context: str) -> str:
     return text
 
 
+def _parse_scroll_body(body: str, *, context: str) -> dict:
+    """scroll:DX,DY uses the mouse wheel; scroll:LOCATOR scrolls the element into view."""
+    text = (body or "").strip()
+    if not text:
+        raise InspectError(f"{context} needs scroll:DX,DY or scroll:LOCATOR", "example: scroll:0,400 or scroll:id:deep")
+    parts = text.split(",", 1)
+    if len(parts) == 2:
+        try:
+            dx = int(parts[0].strip(), 10)
+            dy = int(parts[1].strip(), 10)
+            return {"kind": "scroll", "dx": dx, "dy": dy}
+        except ValueError:
+            pass
+    return {"kind": "scroll_into", "locator": _parse_action_locator_prefix(text, context=context)}
+
+
+def _post_step_settle_plan(action: dict) -> tuple[int, str]:
+    kind = action["kind"]
+    if kind == "wait_ms":
+        return STEP_SETTLE_MS_DEFAULT, "wait_ms_then_settle"
+    if kind == "scroll":
+        return STEP_SETTLE_MS_DEFAULT, "wheel_then_settle"
+    if kind == "scroll_into":
+        return STEP_SETTLE_MS_DEFAULT, "scroll_locator_then_settle"
+    return STEP_SETTLE_MS_DEFAULT, "default_settle"
+
+
 def parse_after_action(spec: str) -> dict:
-    """Parse --after-action: click:LOCATOR | hover:LOCATOR | scroll:DX,DY | scroll-into:LOCATOR."""
+    """Parse --after-action: click:LOCATOR | hover:LOCATOR | scroll:DX,DY | scroll:LOCATOR | scroll-into:LOCATOR."""
     text = (spec or "").strip()
     if not text:
         raise InspectError("after-action is empty", "use click:, hover:, scroll:, or scroll-into:")
     lowered = text.lower()
     if lowered.startswith("click:"):
-        return {"kind": "click", "locator": _ensure_action_locator(text[6:], context="after-action click")}
+        return {"kind": "click", "locator": _parse_action_locator_prefix(text[6:], context="after-action click")}
     if lowered.startswith("hover:"):
-        return {"kind": "hover", "locator": _ensure_action_locator(text[6:], context="after-action hover")}
+        return {"kind": "hover", "locator": _parse_action_locator_prefix(text[6:], context="after-action hover")}
     if lowered.startswith("scroll-into:"):
-        return {"kind": "scroll_into", "locator": _ensure_action_locator(text[12:], context="after-action scroll-into")}
+        return {
+            "kind": "scroll_into",
+            "locator": _parse_action_locator_prefix(text[12:], context="after-action scroll-into"),
+        }
     if lowered.startswith("scroll:"):
-        coords = text[7:].split(",", 1)
-        if len(coords) != 2:
-            raise InspectError("scroll after-action needs scroll:DX,DY", "use two integers separated by a comma")
-        try:
-            dx = int(coords[0].strip(), 10)
-            dy = int(coords[1].strip(), 10)
-        except ValueError as exc:
-            raise InspectError("scroll after-action needs integer DX and DY", "example: scroll:0,400") from exc
-        return {"kind": "scroll", "dx": dx, "dy": dy}
+        return _parse_scroll_body(text[7:], context="after-action scroll")
     raise InspectError(
         "after-action must start with click:, hover:, scroll:, or scroll-into:",
         "example: --after-action hover:id:menu",
@@ -1301,37 +1328,77 @@ def _after_action_hint(kind: str) -> str:
     return hints.get(kind, "the second snapshot is not passive observation")
 
 
-def _perform_after_action(page, action: dict) -> tuple[dict, bool, dict]:
-    """Run one step before the second snapshot. Returns (step fields, page_js_called, extra limits)."""
+def run_playwright_step(page, action: dict, *, timeout_ms: int = DEFAULT_STEP_TIMEOUT_MS) -> tuple[dict, bool, dict]:
+    """Shared Playwright step for observe after-action and act."""
+    from interaction import press as pointer_press
+
     kind = action["kind"]
     extra_limits = {"selector_engine": "playwright"}
-    if kind == "click":
-        target, _ = _action_locator(page, action["locator"])
-        target.click(timeout=5000)
-        page.wait_for_load_state("load", timeout=30000)
-        extra_limits["click_runs_page_scripts"] = True
-        return {"action": "click", "target": action["locator"]}, True, extra_limits
-    if kind == "hover":
-        target, _ = _action_locator(page, action["locator"])
-        target.hover(timeout=5000)
-        extra_limits["hover_may_trigger_css"] = True
-        return {"action": "hover", "target": action["locator"]}, True, extra_limits
-    if kind == "scroll":
-        dx, dy = action["dx"], action["dy"]
-        steps = max(1, (abs(dx) + abs(dy)) // 300 + 1)
-        for _ in range(steps):
-            page.mouse.wheel(dx, dy)
-        page.wait_for_timeout(200)
-        extra_limits["scroll_may_run_page_scripts"] = True
-        return {"action": "scroll", "target": f"{action['dx']},{action['dy']}"}, False, extra_limits
-    if kind == "scroll_into":
-        target, _ = _action_locator(page, action["locator"])
-        target.scroll_into_view_if_needed(timeout=5000)
-        page.wait_for_timeout(200)
-        extra_limits["scroll_into_view"] = True
-        extra_limits["scroll_may_run_page_scripts"] = True
-        return {"action": "scroll_into", "target": action["locator"]}, True, extra_limits
-    raise InspectError(f"unknown after-action kind {kind}", "use click, hover, scroll, or scroll_into")
+    dialogs: list[dict] = []
+
+    def on_dialog(dialog):
+        try:
+            dialogs.append({"type": dialog.type})
+            dialog.dismiss()
+        except Exception:
+            return
+
+    page.on("dialog", on_dialog)
+    page_js = False
+    step_fields: dict
+    try:
+        if kind == "click":
+            target, page_js = _action_locator(page, action["locator"])
+            pointer_press(page, target, timeout=timeout_ms)
+            page.wait_for_load_state("load", timeout=30000)
+            extra_limits["click_runs_page_scripts"] = True
+            step_fields = {"action": "click", "target": action["locator"]}
+        elif kind == "hover":
+            target, page_js = _action_locator(page, action["locator"])
+            target.hover(timeout=timeout_ms)
+            extra_limits["hover_may_trigger_css"] = True
+            extra_limits["hover_input"] = "locator.hover"
+            step_fields = {"action": "hover", "target": action["locator"]}
+        elif kind == "scroll":
+            dx, dy = action["dx"], action["dy"]
+            repeats = max(1, (abs(dx) + abs(dy)) // 300 + 1)
+            for _ in range(repeats):
+                page.mouse.wheel(dx, dy)
+            extra_limits["scroll_may_run_page_scripts"] = True
+            extra_limits["scroll_input"] = "mouse.wheel"
+            step_fields = {"action": "scroll", "target": f"{action['dx']},{action['dy']}"}
+        elif kind == "scroll_into":
+            target, page_js = _action_locator(page, action["locator"])
+            target.scroll_into_view_if_needed(timeout=timeout_ms)
+            extra_limits["scroll_into_view"] = True
+            extra_limits["scroll_may_run_page_scripts"] = True
+            extra_limits["scroll_input"] = "scroll_into_view_if_needed"
+            step_fields = {"action": "scroll_into", "target": action["locator"]}
+        elif kind == "type":
+            target, page_js = _action_locator(page, action["locator"])
+            target.fill(action["text"], timeout=timeout_ms)
+            extra_limits["type_runs_page_scripts"] = True
+            step_fields = {"action": "type", "target": action["locator"]}
+        elif kind == "wait_ms":
+            page.wait_for_timeout(action["ms"])
+            extra_limits["wait_used"] = f"timeout:{action['ms']}"
+            step_fields = {"action": "wait", "target": str(action["ms"])}
+        else:
+            raise InspectError(f"unknown step kind {kind}", "use click, hover, scroll, or scroll_into")
+    finally:
+        page.remove_listener("dialog", on_dialog)
+
+    settle_ms, wait_policy = _post_step_settle_plan(action)
+    page.wait_for_timeout(settle_ms)
+    extra_limits["post_step_settle_ms"] = settle_ms
+    extra_limits["wait_policy"] = wait_policy
+    if dialogs:
+        step_fields["dialogs"] = dialogs
+    return step_fields, page_js, extra_limits
+
+
+def _perform_after_action(page, action: dict) -> tuple[dict, bool, dict]:
+    return run_playwright_step(page, action)
 
 
 def resolve_observe_after_action(args: argparse.Namespace) -> dict | None:
@@ -1348,12 +1415,7 @@ def resolve_observe_after_action(args: argparse.Namespace) -> dict | None:
 
 
 def _action_locator(page, locator: str):
-    text = (locator or "").strip()
-    if text.startswith("h:"):
-        raise InspectError(
-            "act does not accept a snapshot ordinal",
-            "pass id:, testid:, role:, or css: so the control is queried again",
-        )
+    text = _parse_action_locator_prefix(locator, context="act")
     if text.startswith("id:"):
         ident = text[3:]
         if not SAFE.fullmatch(ident):
@@ -1389,16 +1451,7 @@ def act_page(*, url: str, browser_name: str, profile: str, headed: bool, channel
     if action == "fill" and text is None:
         raise InspectError("fill needs --text", "pass the literal text to enter")
     if action != "wait_for_timeout":
-        if not locator or locator.strip().startswith("h:"):
-            raise InspectError(
-                "act does not accept a snapshot ordinal",
-                "pass id:, testid:, role:, or css: so the control is queried again",
-            )
-        if not locator.startswith(("id:", "testid:", "role:", "css:")):
-            raise InspectError(
-                "act locator must be id:, testid:, role:, or css:",
-                "observe prints those addresses; h:N is not accepted",
-            )
+        _parse_action_locator_prefix(locator or "", context="act")
     playwright, browser, page = _with_browser(url, browser_name, profile, headed, channel)
     failure = None
     result = None
@@ -1412,15 +1465,20 @@ def act_page(*, url: str, browser_name: str, profile: str, headed: bool, channel
                 stage="navigate",
             ) from exc
         page_js = False
+        step_limits: dict = {}
         try:
             if action == "wait_for_timeout":
-                page.wait_for_timeout(timeout_ms)
+                _, page_js, step_limits = run_playwright_step(
+                    page, {"kind": "wait_ms", "ms": timeout_ms}, timeout_ms=timeout_ms,
+                )
+            elif action == "click":
+                _, page_js, step_limits = run_playwright_step(
+                    page, {"kind": "click", "locator": locator}, timeout_ms=timeout_ms,
+                )
             else:
-                target, page_js = _action_locator(page, locator)
-                if action == "click":
-                    target.click(timeout=timeout_ms)
-                else:
-                    target.fill(text, timeout=timeout_ms)
+                _, page_js, step_limits = run_playwright_step(
+                    page, {"kind": "type", "locator": locator, "text": text}, timeout_ms=timeout_ms,
+                )
         except InspectError:
             raise
         except Exception as exc:
@@ -1458,6 +1516,7 @@ def act_page(*, url: str, browser_name: str, profile: str, headed: bool, channel
                 "ordinals": "rejected",
                 "dom": "not_requested",
                 "selector_engine": "playwright" if page_js else "none",
+                **step_limits,
             },
             "sections": {
                 "url": _section("playwright:page.url", "complete", {"url": strip_userinfo(page.url)}),
