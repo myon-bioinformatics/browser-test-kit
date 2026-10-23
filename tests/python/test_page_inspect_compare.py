@@ -18,7 +18,8 @@ def snapshot(*, shadow=None, env=None, total=2, frames=0, extra=None):
     if shadow is not None:
         sections["shadow_roots"] = page_inspect._section(
             "cdp:DOM.getDocument pierce", shadow.get("coverage", "complete"),
-            {"open": shadow["open"], "closed": shadow["closed"], "count": shadow["count"], "contents": "not_entered"},
+            {"open": shadow["open"], "closed": shadow["closed"], "count": shadow["count"],
+             "user_agent": shadow.get("user_agent", 0), "contents": "not_entered"},
         )
     if extra is not None:
         sections.update(extra)

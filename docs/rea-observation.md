@@ -48,8 +48,10 @@ Service workers are blocked and redirects are aborted. Those are bounds on the s
 
 ## Snapshot compare
 
+`observe --after-click LOCATOR` takes one snapshot, clicks the locator once (the same `id:`, `testid:`, `role:`, or `css:` addresses as `act`), waits for the load state, and takes a second snapshot in the same browser. The second snapshot has `step` (index, action, locator, URL before and after) and `limits.click_runs_page_scripts: true`. The two results go to separate files so `compare` can read them. Network and console are cleared after the click, so the second snapshot shows activity from the click onward only. This is not passive observation: the click runs page scripts.
+
 `compare` reads two `btk-page-observe/1` files and runs no browser. It reuses `evidence_relation`, so a section is `same` only when both sides are complete and their digests match. Shadow-root counts and child-frame and element totals are reported as left, right, and delta. A count is `null` when that side's section was not complete. Environment differences (OS, browser, profile, headless) are reported but do not change the section relations.
 
 ## Deferred on issue 117
 
-Child frames and shadow roots as their own address spaces. Observe counts child frames and open plus closed shadow roots (pierced DOM, `shadow_roots` section, `contents: not_entered`); it does not enter either and does not read shadow attributes. A new snapshot after navigation in one session. macOS, Windows, Linux, and Android Chrome or WebView. Branded channels as a matrix. A Stagehand caller. A headed lane in CI. An agent transport after these envelopes stay stable. Screenshot comparison and full scenario diffs.
+Child frames and shadow roots as their own address spaces. Observe counts child frames and author open plus closed shadow roots (pierced DOM, `shadow_roots` section, `contents: not_entered`, `user_agent` for Chromium built-in roots); it does not enter either and does not read shadow attributes. A new snapshot after navigation in one session. macOS, Windows, Linux, and Android Chrome or WebView. Branded channels as a matrix. A Stagehand caller. A headed lane in CI. An agent transport after these envelopes stay stable. Screenshot comparison and full scenario diffs.
