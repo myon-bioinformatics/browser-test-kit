@@ -12,7 +12,12 @@ Limits, reported through the snapshot rather than hidden:
 """
 from __future__ import annotations
 
+import argparse
+import json
+import sys
 from urllib.parse import urlsplit
+
+from probe_survey import summarize
 
 INTERACTIVE_SELECTOR = (
     "a[href], button, input:not([type=hidden]), select, textarea, "
@@ -52,3 +57,41 @@ def collect(page):
         "shadow_roots": shadow,
         "frames": max(len(page.frames) - 1, 0),
     }
+
+
+def main(argv=None):
+    """CLI: probe one URL and print a btk-probe-evidence/1 envelope as JSON.
+
+    Exit 0 OK; 2 input or browser error. Credentials, paths and non-HTTP(S) URLs are refused
+    before a browser starts.
+    """
+    parser = argparse.ArgumentParser(description="Probe one page passively and print evidence JSON.")
+    parser.add_argument("url")
+    parser.add_argument("--timeout-ms", type=int, default=30000)
+    args = parser.parse_args(argv)
+    parts = urlsplit(args.url)
+    if parts.scheme not in ("http", "https") or not parts.hostname or parts.username or parts.password:
+        print("probe_collect: an http(s) URL without credentials is required", file=sys.stderr)
+        return 2
+    if args.timeout_ms < 1:
+        print("probe_collect: --timeout-ms must be positive", file=sys.stderr)
+        return 2
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as runtime:
+            browser = runtime.chromium.launch(headless=True, timeout=args.timeout_ms)
+            try:
+                page = browser.new_page()
+                page.goto(args.url, wait_until="load", timeout=args.timeout_ms)
+                evidence = summarize(collect(page))
+            finally:
+                browser.close()
+    except Exception as exc:  # browser or navigation failure is reported, not a traceback
+        print(f"probe_collect: {exc}", file=sys.stderr)
+        return 2
+    print(json.dumps(evidence, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
