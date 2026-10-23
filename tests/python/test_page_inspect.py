@@ -284,7 +284,7 @@ def test_observe_cdp_never_sends_runtime_evaluate_with_after_action(tmp_path, mo
     monkeypatch.setattr(BrowserContext, "new_cdp_session", tracking_new_cdp_session)
     try:
         url = f"http://127.0.0.1:{server.server_port}/page.html"
-        results = page_inspect.observe_page(
+        session = page_inspect.observe_page(
             url=url,
             browser_name="chromium",
             profile="desktop",
@@ -296,10 +296,11 @@ def test_observe_cdp_never_sends_runtime_evaluate_with_after_action(tmp_path, mo
             role="",
             start=0,
             limit=50,
-            after_action={"kind": "scroll", "dx": 0, "dy": 800},
+            steps=[page_inspect.parse_step("scroll:0,800")],
         )
     finally:
         server.shutdown()
+    results = session["observations"]
     assert len(results) == 2
     after = results[1]
     assert after["limits"]["page_js_called"] is False
