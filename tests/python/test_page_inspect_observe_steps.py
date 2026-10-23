@@ -212,6 +212,37 @@ def test_step_events_record_distinct_failed_requests(tmp_path):
     assert len({row["url"] for row in failed}) == 3
 
 
+REFUSED = """<!doctype html><meta charset="utf-8"><title>refused</title>
+<button id="b">Go</button>
+<script>
+  document.getElementById('b').addEventListener('click', () => {
+    fetch('http://127.0.0.1:1/x').catch(() => {});
+  });
+</script>
+"""
+
+
+@pytest.mark.browser
+def test_observe_step_records_refused_connection_without_crashing(tmp_path):
+    (tmp_path / "index.html").write_text(REFUSED, encoding="utf-8")
+    handler = functools.partial(SimpleHTTPRequestHandler, directory=str(tmp_path))
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        url = f"http://127.0.0.1:{server.server_port}/index.html"
+        done = run([
+            url, "--out", str(tmp_path / "passive.json"),
+            "--after-out", str(tmp_path / "after.json"),
+            "--after-action", "click:id:b",
+            "--json",
+        ], tmp_path)
+    finally:
+        server.shutdown()
+    assert done.returncode == 0, done.stderr
+    failed = json.loads((tmp_path / "after.json").read_text(encoding="utf-8"))["step"]["events"]["failed_requests"]
+    assert any(row["url"].endswith(":1/x") for row in failed)
+
+
 def test_step_collector_strips_userinfo_from_request_url():
     class FakeClient:
         def on(self, *_args, **_kwargs):

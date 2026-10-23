@@ -249,6 +249,12 @@ def test_request_boundary_rejects_redirects_and_external_resources():
             route.abort.assert_called_once_with("blockedbyclient")
         else:
             route.fulfill.assert_called_once_with(response=route.fetch.return_value)
+    route = Mock()
+    route.request.url = "http://127.0.0.1:1/x"
+    route.fetch.side_effect = OSError("connect ECONNREFUSED")
+    page_inspect.restrict_request(route)
+    route.abort.assert_called_once_with("connectionrefused")
+    route.fulfill.assert_not_called()
 
 
 @pytest.mark.browser

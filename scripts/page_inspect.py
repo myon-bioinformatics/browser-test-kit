@@ -719,7 +719,11 @@ def restrict_request(route):
     except InspectError:
         route.abort("blockedbyclient")
         return
-    response = route.fetch(max_redirects=0)
+    try:
+        response = route.fetch(max_redirects=0)
+    except Exception:
+        route.abort("connectionrefused")
+        return
     if 300 <= response.status < 400:
         route.abort("blockedbyclient")
     else:
@@ -772,6 +776,11 @@ def _close_browser(browser):
     if browser is None:
         return None
     try:
+        for context in browser.contexts:
+            try:
+                context.unroute("**/*")
+            except Exception:
+                pass
         browser.close()
     except Exception as exc:
         return f"{type(exc).__name__}: {exc}"
@@ -1363,6 +1372,7 @@ class StepEventCollector:
         self.truncated = False
         self._failed_by_request: dict[str, dict] = {}
         self._request_urls: dict[str, str] = {}
+        self._response_status: dict[str, int] = {}
         self._console_keys: dict[tuple, int] = {}
         self._handlers: dict[str, object] = {}
         self._domains_enabled = False
@@ -1401,7 +1411,7 @@ class StepEventCollector:
             self._failed_by_request[rid] = row
             self.failed_requests.append(row)
         else:
-            if status is not None and row.get("status") is None:
+            if status is not None:
                 row["status"] = status
             if resolved_url and not row.get("url"):
                 row["url"] = resolved_url
@@ -1409,6 +1419,7 @@ class StepEventCollector:
     def attach(self) -> None:
         self._failed_by_request = {}
         self._request_urls = {}
+        self._response_status = {}
         self._console_keys = {}
         self.console = []
         self.failed_requests = []
@@ -1461,9 +1472,12 @@ class StepEventCollector:
             try:
                 response = event.get("response") or {}
                 status = response.get("status")
+                request_id = event.get("requestId")
                 if isinstance(status, int) and status >= 400:
+                    if request_id:
+                        self._response_status[request_id] = status
                     self._note_failed(
-                        event.get("requestId"),
+                        request_id,
                         status,
                         response.get("url") or "",
                     )
@@ -1472,7 +1486,9 @@ class StepEventCollector:
 
         def on_loading_failed(event):
             try:
-                self._note_failed(event.get("requestId"), None, "")
+                request_id = event.get("requestId")
+                status = self._response_status.get(request_id) if request_id else None
+                self._note_failed(request_id, status, "")
             except Exception:
                 return
 
