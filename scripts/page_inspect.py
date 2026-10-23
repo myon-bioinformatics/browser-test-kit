@@ -1002,7 +1002,17 @@ def _cdp_send(client, method: str, params: dict | None, sent: list):
     return client.send(method, params or {})
 
 
-def _with_browser(url, browser_name, profile, headed, channel):
+def parse_viewport(spec: str) -> dict:
+    match = re.fullmatch(r"([1-9][0-9]*)x([1-9][0-9]*)", (spec or "").strip())
+    if not match:
+        raise InspectError("viewport must be WxH", "example: --viewport 1280x720")
+    width, height = int(match.group(1)), int(match.group(2))
+    if width > 10000 or height > 10000:
+        raise InspectError("viewport is too large", "use a width and height up to 10000")
+    return {"width": width, "height": height}
+
+
+def _with_browser(url, browser_name, profile, headed, channel, viewport: dict | None = None):
     sync_playwright = _playwright()
     playwright = sync_playwright().start()
     browser = None
@@ -1019,6 +1029,9 @@ def _with_browser(url, browser_name, profile, headed, channel):
                 stage="launch",
             ) from exc
         options = context_options(playwright.devices, browser_name, profile, headed)
+        if viewport:
+            options["viewport"] = dict(viewport)
+            options.pop("no_viewport", None)
         context = browser.new_context(**options, service_workers="block")
         context.route("**/*", restrict_request)
         page = context.new_page()
@@ -1050,10 +1063,11 @@ def _finish(playwright, browser, failure, result):
 
 def observe_page(*, url: str, browser_name: str, profile: str, headed: bool, channel: str | None,
                  include_hidden: bool, include_storage_keys: bool, include_storage_fingerprints: bool,
-                 role: str, start: int, limit: int, after_action: dict | None = None) -> list[dict]:
-    """One observation, or two when after_action is set: the second follows one Playwright step in the same browser."""
+                 role: str, start: int, limit: int, steps: list[dict] | None = None,
+                 viewport: dict | None = None) -> list[dict]:
+    """One passive observation, then one snapshot per Playwright step in the same browser."""
     url = loopback_target(url)
-    playwright, browser, page = _with_browser(url, browser_name, profile, headed, channel)
+    playwright, browser, page = _with_browser(url, browser_name, profile, headed, channel, viewport=viewport)
     failure = None
     results: list[dict] = []
     try:
@@ -1213,29 +1227,35 @@ def observe_page(*, url: str, browser_name: str, profile: str, headed: bool, cha
             return snapshot
 
         results.append(capture(None, False))
-        if after_action is not None:
+        for action in steps or []:
             url_before = strip_userinfo(page.url)
+            collector = StepEventCollector(page)
+            collector.attach()
             try:
-                step_part, page_js, step_limits = _perform_after_action(page, after_action)
+                step_part, page_js, step_limits = _perform_step(page, action)
+                page.wait_for_timeout(250)
             except InspectError:
                 raise
             except Exception as exc:
                 raise InspectError(
                     f"{type(exc).__name__}: {exc}",
-                    "the after-action step failed; the second snapshot was not written",
+                    "an observe step failed; later snapshots were not written",
                     stage="inspect",
                 ) from exc
+            finally:
+                collector.detach()
             network.clear()
             console.clear()
             requests.clear()
             state["network_truncated"] = False
             state["console_truncated"] = False
             results.append(capture({
-                "index": 2,
+                "index": len(results) + 1,
                 **step_part,
                 "url_before": url_before,
                 "url_after": strip_userinfo(page.url),
-                "hint": _after_action_hint(after_action["kind"]),
+                "events": collector.payload(),
+                "hint": _step_hint(action["kind"]),
             }, page_js, step_limits))
     except InspectError as exc:
         failure = exc
@@ -1248,7 +1268,87 @@ def observe_page(*, url: str, browser_name: str, profile: str, headed: bool, cha
     return _finish(playwright, browser, failure, results)
 
 
-AFTER_ACTION_PREFIXES = ("click:", "hover:", "scroll:", "scroll-into:")
+STEP_INTERSTITIAL_CAP = 50
+
+
+class StepEventCollector:
+    """Console levels, failed HTTP, and navigations during one observe step. Message bodies are never stored."""
+
+    def __init__(self, page):
+        self.page = page
+        self.console: list[dict] = []
+        self.failed_requests: list[dict] = []
+        self.navigations: list[dict] = []
+        self.truncated = False
+        self._console = None
+        self._failed = None
+        self._response = None
+        self._nav = None
+
+    def _over_cap(self) -> bool:
+        total = len(self.console) + len(self.failed_requests) + len(self.navigations)
+        if total >= STEP_INTERSTITIAL_CAP:
+            self.truncated = True
+            return True
+        return False
+
+    def attach(self) -> None:
+        def on_console(message):
+            try:
+                if self._over_cap():
+                    return
+                if message.type in ("error", "warning"):
+                    self.console.append({"level": message.type})
+            except Exception:
+                return
+
+        def on_failed(request):
+            try:
+                if self._over_cap():
+                    return
+                self.failed_requests.append({"url": strip_userinfo(request.url), "status": None})
+            except Exception:
+                return
+
+        def on_response(response):
+            try:
+                if self._over_cap():
+                    return
+                status = response.status
+                if status >= 400:
+                    self.failed_requests.append({"url": strip_userinfo(response.url), "status": status})
+            except Exception:
+                return
+
+        def on_navigated(frame):
+            try:
+                if frame != self.page.main_frame or self._over_cap():
+                    return
+                self.navigations.append({"url": strip_userinfo(frame.url)})
+            except Exception:
+                return
+
+        self.page.on("console", on_console)
+        self.page.on("requestfailed", on_failed)
+        self.page.on("response", on_response)
+        self.page.on("framenavigated", on_navigated)
+        self._console, self._failed, self._response, self._nav = on_console, on_failed, on_response, on_navigated
+
+    def detach(self) -> None:
+        if self._console is not None:
+            self.page.remove_listener("console", self._console)
+            self.page.remove_listener("requestfailed", self._failed)
+            self.page.remove_listener("response", self._response)
+            self.page.remove_listener("framenavigated", self._nav)
+
+    def payload(self) -> dict:
+        return {
+            "console": list(self.console),
+            "failed_requests": list(self.failed_requests),
+            "navigations": list(self.navigations),
+            "truncated": self.truncated,
+            "bodies": "not_recorded",
+        }
 
 
 def _ensure_action_locator(locator: str, *, context: str) -> str:
@@ -1263,46 +1363,81 @@ def _ensure_action_locator(locator: str, *, context: str) -> str:
     return text
 
 
-def parse_after_action(spec: str) -> dict:
-    """Parse --after-action: click:LOCATOR | hover:LOCATOR | scroll:DX,DY | scroll-into:LOCATOR."""
+def parse_step_spec(spec: str) -> dict:
+    """Parse one observe step: click, hover, scroll, scroll-into, type, press, focus, wait."""
     text = (spec or "").strip()
     if not text:
-        raise InspectError("after-action is empty", "use click:, hover:, scroll:, or scroll-into:")
+        raise InspectError("step spec is empty", "use click:, hover:, type:, press:, focus:, wait:, scroll:, or scroll-into:")
     lowered = text.lower()
+    if lowered.startswith("type:"):
+        body = text[5:]
+        if "=" not in body:
+            raise InspectError("type step needs type:LOCATOR=TEXT", "the typed value is not stored in the snapshot")
+        locator, typed = body.split("=", 1)
+        return {
+            "kind": "type",
+            "locator": _ensure_action_locator(locator.strip(), context="type step"),
+            "text": typed,
+        }
+    if lowered.startswith("press:"):
+        key = text[6:].strip()
+        if not key:
+            raise InspectError("press step needs press:KEY", "example: press:Enter")
+        return {"kind": "press", "key": key}
+    if lowered.startswith("focus:"):
+        return {"kind": "focus", "locator": _ensure_action_locator(text[6:], context="focus step")}
+    if lowered.startswith("wait:"):
+        rest = text[5:].strip()
+        if rest.isdigit():
+            ms = int(rest, 10)
+            if ms < 0 or ms > 120000:
+                raise InspectError("wait:MS must be from 0 to 120000", "example: wait:500")
+            return {"kind": "wait_ms", "ms": ms}
+        return {"kind": "wait_locator", "locator": _ensure_action_locator(rest, context="wait step")}
     if lowered.startswith("click:"):
-        return {"kind": "click", "locator": _ensure_action_locator(text[6:], context="after-action click")}
+        return {"kind": "click", "locator": _ensure_action_locator(text[6:], context="click step")}
     if lowered.startswith("hover:"):
-        return {"kind": "hover", "locator": _ensure_action_locator(text[6:], context="after-action hover")}
+        return {"kind": "hover", "locator": _ensure_action_locator(text[6:], context="hover step")}
     if lowered.startswith("scroll-into:"):
-        return {"kind": "scroll_into", "locator": _ensure_action_locator(text[12:], context="after-action scroll-into")}
+        return {"kind": "scroll_into", "locator": _ensure_action_locator(text[12:], context="scroll-into step")}
     if lowered.startswith("scroll:"):
         coords = text[7:].split(",", 1)
         if len(coords) != 2:
-            raise InspectError("scroll after-action needs scroll:DX,DY", "use two integers separated by a comma")
+            raise InspectError("scroll step needs scroll:DX,DY", "use two integers separated by a comma")
         try:
             dx = int(coords[0].strip(), 10)
             dy = int(coords[1].strip(), 10)
         except ValueError as exc:
-            raise InspectError("scroll after-action needs integer DX and DY", "example: scroll:0,400") from exc
+            raise InspectError("scroll step needs integer DX and DY", "example: scroll:0,400") from exc
         return {"kind": "scroll", "dx": dx, "dy": dy}
     raise InspectError(
-        "after-action must start with click:, hover:, scroll:, or scroll-into:",
-        "example: --after-action hover:id:menu",
+        "step must start with click:, hover:, type:, press:, focus:, wait:, scroll:, or scroll-into:",
+        "example: --step type:id:q=hello",
     )
 
 
-def _after_action_hint(kind: str) -> str:
+def parse_after_action(spec: str) -> dict:
+    """Backward-compatible alias for a single --after-action value."""
+    return parse_step_spec(spec)
+
+
+def _step_hint(kind: str) -> str:
     hints = {
-        "click": "network and console start empty after the click; url_before equal to url_after means the click did not navigate",
-        "hover": "network and console start empty after the hover; :hover CSS may change the tree without navigation",
-        "scroll": "network and console start empty after the scroll; scroll listeners may change the DOM",
-        "scroll_into": "network and console start empty after scroll-into-view; the locator was brought into view",
+        "click": "network and console on the snapshot are post-step only; url_before equal to url_after means no navigation",
+        "hover": "post-step snapshot; :hover CSS may change the tree without navigation",
+        "scroll": "post-step snapshot; scroll listeners may change the DOM",
+        "scroll_into": "post-step snapshot after scroll-into-view",
+        "type": "post-step snapshot; typed values are not recorded in step events or targets",
+        "press": "post-step snapshot after a key press",
+        "focus": "post-step snapshot after focus",
+        "wait_ms": "post-step snapshot after a timeout",
+        "wait_locator": "post-step snapshot after the locator became visible",
     }
-    return hints.get(kind, "the second snapshot is not passive observation")
+    return hints.get(kind, "this snapshot is not passive observation")
 
 
-def _perform_after_action(page, action: dict) -> tuple[dict, bool, dict]:
-    """Run one step before the second snapshot. Returns (step fields, page_js_called, extra limits)."""
+def _perform_step(page, action: dict) -> tuple[dict, bool, dict]:
+    """Run one observe step. Returns (step fields, page_js_called, extra limits)."""
     kind = action["kind"]
     extra_limits = {"selector_engine": "playwright"}
     if kind == "click":
@@ -1318,8 +1453,8 @@ def _perform_after_action(page, action: dict) -> tuple[dict, bool, dict]:
         return {"action": "hover", "target": action["locator"]}, True, extra_limits
     if kind == "scroll":
         dx, dy = action["dx"], action["dy"]
-        steps = max(1, (abs(dx) + abs(dy)) // 300 + 1)
-        for _ in range(steps):
+        repeats = max(1, (abs(dx) + abs(dy)) // 300 + 1)
+        for _ in range(repeats):
             page.mouse.wheel(dx, dy)
         page.wait_for_timeout(200)
         extra_limits["scroll_may_run_page_scripts"] = True
@@ -1331,20 +1466,49 @@ def _perform_after_action(page, action: dict) -> tuple[dict, bool, dict]:
         extra_limits["scroll_into_view"] = True
         extra_limits["scroll_may_run_page_scripts"] = True
         return {"action": "scroll_into", "target": action["locator"]}, True, extra_limits
-    raise InspectError(f"unknown after-action kind {kind}", "use click, hover, scroll, or scroll_into")
+    if kind == "type":
+        target, _ = _action_locator(page, action["locator"])
+        target.fill(action["text"], timeout=5000)
+        extra_limits["type_runs_page_scripts"] = True
+        return {"action": "type", "target": action["locator"]}, True, extra_limits
+    if kind == "press":
+        page.keyboard.press(action["key"])
+        extra_limits["press_may_run_page_scripts"] = True
+        return {"action": "press", "target": action["key"]}, True, extra_limits
+    if kind == "focus":
+        target, _ = _action_locator(page, action["locator"])
+        target.focus(timeout=5000)
+        extra_limits["focus_may_trigger_css"] = True
+        return {"action": "focus", "target": action["locator"]}, True, extra_limits
+    if kind == "wait_ms":
+        page.wait_for_timeout(action["ms"])
+        return {"action": "wait", "target": str(action["ms"])}, False, extra_limits
+    if kind == "wait_locator":
+        target, _ = _action_locator(page, action["locator"])
+        target.wait_for(state="visible", timeout=5000)
+        return {"action": "wait", "target": action["locator"]}, True, extra_limits
+    raise InspectError(f"unknown step kind {kind}", "use a supported --step spec")
 
 
-def resolve_observe_after_action(args: argparse.Namespace) -> dict | None:
+def resolve_observe_steps(args: argparse.Namespace) -> list[dict]:
     if args.after_action and args.after_click:
         raise InspectError(
             "pass only one of --after-action and --after-click",
             "--after-click is an alias for --after-action click:LOCATOR",
         )
+    steps = [parse_step_spec(item) for item in (args.step or [])]
     if args.after_action:
-        return parse_after_action(args.after_action)
+        if steps:
+            raise InspectError("use repeatable --step or a single --after-action", "not both in one command")
+        steps.append(parse_step_spec(args.after_action))
     if args.after_click:
-        return parse_after_action(f"click:{args.after_click.strip()}")
-    return None
+        if steps or args.after_action:
+            raise InspectError(
+                "use --after-click alone or use --step",
+                "--after-click is an alias for one click step",
+            )
+        steps.append(parse_step_spec(f"click:{args.after_click.strip()}"))
+    return steps
 
 
 def _action_locator(page, locator: str):
@@ -1515,6 +1679,29 @@ def _count_pair(left, right) -> dict:
     return {"left": left, "right": right, "delta": delta}
 
 
+def _step_events_block(snapshot: dict) -> dict | None:
+    events = (snapshot.get("step") or {}).get("events")
+    if not isinstance(events, dict):
+        return None
+    return {
+        "console": list(events.get("console") or []),
+        "failed_requests": list(events.get("failed_requests") or []),
+        "navigations": list(events.get("navigations") or []),
+        "truncated": bool(events.get("truncated")),
+        "bodies": events.get("bodies"),
+    }
+
+
+def _step_event_counts(block: dict | None) -> dict | None:
+    if block is None:
+        return None
+    return {
+        "console": len(block["console"]),
+        "failed_requests": len(block["failed_requests"]),
+        "navigations": len(block["navigations"]),
+    }
+
+
 def compare_snapshots(left: dict, right: dict) -> dict:
     """Section relations and counts for two observe snapshots. A missing side is never same."""
     left_sections = left.get("sections") or {}
@@ -1541,6 +1728,26 @@ def compare_snapshots(left: dict, right: dict) -> dict:
     ]
     if not same_environment:
         hints.append("environments differ; section differences may come from the browser or profile, not the page")
+    left_events = _step_events_block(left)
+    right_events = _step_events_block(right)
+    left_counts = _step_event_counts(left_events)
+    right_counts = _step_event_counts(right_events)
+    event_counts = {
+        key: _count_pair(
+            left_counts[key] if left_counts else None,
+            right_counts[key] if right_counts else None,
+        )
+        for key in ("console", "failed_requests", "navigations")
+    }
+    event_digest_left = _content_digest(left_events) if left_events else None
+    event_digest_right = _content_digest(right_events) if right_events else None
+    if left_events is None or right_events is None:
+        event_relation = "unknown"
+    elif event_digest_left == event_digest_right and not left_events.get("truncated") and not right_events.get("truncated"):
+        event_relation = "same"
+    else:
+        event_relation = "different"
+    hints.append("step_events compares interstitial console levels and failed requests without message bodies")
     return {
         "schema": SCHEMA_COMPARE,
         "ok": True,
@@ -1552,6 +1759,7 @@ def compare_snapshots(left: dict, right: dict) -> dict:
         "shadow_roots": shadow,
         "child_frames": _count_pair(left.get("child_frames"), right.get("child_frames")),
         "elements": _count_pair(left.get("total"), right.get("total")),
+        "step_events": {"relation": event_relation, "counts": event_counts},
         "hint": ". ".join(hints),
     }
 
@@ -1633,6 +1841,10 @@ def compare_text(payload: dict) -> str:
     for key in ("elements", "child_frames"):
         pair = payload[key]
         lines.append(f"{key} left={pair['left']} right={pair['right']} delta={pair['delta']}")
+    events = payload.get("step_events") or {}
+    lines.append(f"step_events relation={events.get('relation')}")
+    for key, pair in (events.get("counts") or {}).items():
+        lines.append(f"step_events {key} left={pair['left']} right={pair['right']} delta={pair['delta']}")
     lines.append(f"hint: {payload['hint']}")
     return "\n".join(lines) + "\n"
 
@@ -1683,16 +1895,24 @@ def build_parser() -> argparse.ArgumentParser:
     observe.add_argument("--start", type=_bounded(100000), default=0)
     observe.add_argument("--limit", type=_bounded(SURVEY_LIMIT_MAX), default=SURVEY_LIMIT_DEFAULT)
     observe.add_argument(
+        "--step",
+        action="append",
+        metavar="SPEC",
+        help="repeatable Playwright step before each post-step snapshot (click, hover, type, press, focus, wait, scroll)",
+    )
+    observe.add_argument(
         "--after-action",
         metavar="SPEC",
-        help="one step before a second snapshot: click:LOCATOR, hover:LOCATOR, scroll:DX,DY, or scroll-into:LOCATOR",
+        help="single step alias when --step is not used (same SPEC grammar as --step)",
     )
     observe.add_argument(
         "--after-click",
         metavar="LOCATOR",
-        help="alias for --after-action click:LOCATOR (id:, testid:, role:, or css: address)",
+        help="alias for one click step (id:, testid:, role:, or css: address)",
     )
-    observe.add_argument("--after-out", help="write the second snapshot here; requires --after-action (or --after-click) and --out")
+    observe.add_argument("--after-out", help="write the sole post-step snapshot here when there is exactly one step")
+    observe.add_argument("--steps-dir", help="directory for step-001.json, step-002.json, ... when multiple --step values are used")
+    observe.add_argument("--viewport", metavar="WxH", help="override context viewport, for example 1280x720")
     act = sub.add_parser("act", parents=[common], help="one declared action that re-queries a locator", allow_abbrev=False)
     act.add_argument("target", help="loopback URL; a snapshot ordinal is not accepted")
     act.add_argument("--action", required=True, choices=tuple(sorted(ACT_ACTIONS)))
@@ -1727,17 +1947,36 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _check_sequence_args(args: argparse.Namespace, after_action: dict | None) -> None:
-    if after_action is None or args.after_out is None or not args.out:
-        raise InspectError(
-            "after-action needs --out for the first snapshot and --after-out for the second",
-            "pass both file paths; each file is a btk-page-observe/1 snapshot",
-        )
-    if Path(args.out).resolve() == Path(args.after_out).resolve():
-        raise InspectError("--out and --after-out must be different files", "give each snapshot its own path")
-    for path in (args.out, args.after_out):
-        if not Path(path).parent.is_dir():
-            raise InspectError(f"directory does not exist: {Path(path).parent}", "create the directory before --out or --after-out")
+def _step_output_paths(args: argparse.Namespace, step_count: int) -> list[str]:
+    if step_count == 0:
+        return []
+    if step_count == 1 and args.after_out:
+        return [args.after_out]
+    if args.steps_dir:
+        directory = Path(args.steps_dir)
+        if not directory.is_dir():
+            raise InspectError(f"directory does not exist: {directory}", "create --steps-dir before observe")
+        return [str(directory / f"step-{index:03d}.json") for index in range(1, step_count + 1)]
+    raise InspectError(
+        "one step needs --after-out; multiple steps need --steps-dir",
+        "pass --out for the passive snapshot plus a destination for each post-step snapshot",
+    )
+
+
+def _check_sequence_args(args: argparse.Namespace, steps: list[dict]) -> None:
+    if not steps:
+        if args.after_out or args.steps_dir:
+            raise InspectError("step output flags need at least one --step", "pass --step SPEC or --after-action")
+        return
+    if not args.out:
+        raise InspectError("steps need --out for the passive snapshot", "write the first snapshot path with --out")
+    paths = _step_output_paths(args, len(steps))
+    if Path(args.out).resolve() in {Path(path).resolve() for path in paths}:
+        raise InspectError("passive --out must differ from post-step snapshot paths", "use separate files")
+    for path in [args.out, *paths]:
+        parent = Path(path).parent
+        if not parent.is_dir():
+            raise InspectError(f"directory does not exist: {parent}", "create the directory before --out or step outputs")
 
 
 def _write_snapshot(path: str, payload: dict) -> None:
@@ -1754,23 +1993,26 @@ def dispatch(args: argparse.Namespace) -> tuple[dict, str, int]:
     if args.command == "observe":
         if args.limit < 1:
             raise InspectError("limit must be at least 1", f"use 1..{SURVEY_LIMIT_MAX}")
-        after_action = resolve_observe_after_action(args)
-        if after_action is not None or args.after_out is not None:
-            _check_sequence_args(args, after_action)
+        steps = resolve_observe_steps(args)
+        if steps or args.after_out or args.steps_dir:
+            _check_sequence_args(args, steps)
+        viewport = parse_viewport(args.viewport) if args.viewport else None
         results = observe_page(
             url=args.target, browser_name=args.browser, profile=args.profile, headed=args.headed,
             channel=args.channel or None, include_hidden=args.include_hidden,
             include_storage_keys=args.include_storage_keys,
             include_storage_fingerprints=args.include_storage_fingerprints,
-            role=args.role, start=args.start, limit=args.limit, after_action=after_action,
+            role=args.role, start=args.start, limit=args.limit, steps=steps, viewport=viewport,
         )
         payload = results[0]
         text_out = observe_text(payload)
-        if len(results) == 2:
-            _write_snapshot(args.after_out, results[1])
-            step = results[1].get("step") or {}
-            label = f"{step.get('action', 'step')}:{step.get('target', '')}"
-            text_out += f"after-action {label}: second snapshot written to {args.after_out}\n"
+        if len(results) > 1:
+            paths = _step_output_paths(args, len(steps))
+            for path, snapshot in zip(paths, results[1:]):
+                _write_snapshot(path, snapshot)
+                step = snapshot.get("step") or {}
+                label = f"{step.get('action', 'step')}:{step.get('target', '')}"
+                text_out += f"step {step.get('index')}: {label} written to {path}\n"
         return payload, text_out, 0
     if args.command == "act":
         if args.timeout_ms < 1:
