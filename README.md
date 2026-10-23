@@ -262,22 +262,22 @@ python -S scripts/twin_parity.py scripts/interaction.py:press_point scripts/inte
 - The first run found two real drifts, now fixed and recorded: `TWIN_PARSER_DRIFT` (27 of 250 URLs) and `ROUNDING_TIE_DRIFT` (0.562 vs 0.563).
 - Library: `node_calls(module, export, cases)`, `python_calls(fn, cases)`, `mismatches(a, b)`. Exit codes: 0 agree; 1 mismatch; 2 input error.
 
-### Page survey and locator discovery (`scripts/page_inspect.py`, `scripts/page_inspect.mjs`)
+### Page observe, locate, and act (`scripts/page_inspect.py`, `scripts/page_inspect.cjs`)
 
-Read-only, paged operations for an agent: survey one page, count roles, rank locators, and describe one control with a few neighbor lines. The design is the part of ReVa (small operations, stable addresses, similarity ranking, hints) that applies to browsers. See [ReVa mechanisms](docs/reva-mechanisms.md). Later phases (actions, frames, shadow roots, multi-OS, Stagehand) are [issue 117](https://github.com/myon-bioinformatics/browser-test-kit/issues/117).
+Separate commands for a loopback page: passive observe, offline locate, and one declared action. The design follows REA's browser observation notes (morluto/rea, MIT), not that project's server. See [REA observation](docs/rea-observation.md). Later phases stay on [issue 117](https://github.com/myon-bioinformatics/browser-test-kit/issues/117).
 
 ```bash
-python scripts/page_inspect.py survey fixtures/page_inspect.html --browser chromium --json --out survey.json
-python -S scripts/page_inspect.py count survey.json --role button
-python -S scripts/page_inspect.py locate survey.json --query "Save draft" --unique --json
-python -S scripts/page_inspect.py describe survey.json --target id:save-draft
-node scripts/page_inspect.mjs locate survey.json --query "Save draft" --unique --json
+python scripts/page_inspect.py observe http://127.0.0.1:8765/page --json --out observe.json
+python -S scripts/page_inspect.py locate observe.json --query "Save draft" --unique --json
+python scripts/page_inspect.py act http://127.0.0.1:8765/page --action click --locator id:save-draft --json
+node scripts/page_inspect.cjs locate observe.json --query "Save draft" --unique --json
 ```
 
-- Offline commands are stdlib (`python -S`). `survey` is the only command that launches Playwright. Headless is the default.
-- A snapshot address (`id:`, `testid:`, `role:`, `css:`) is the stable handle. `h:N` is only an ordinal in that file. Child frames and open shadow roots are counted and not entered.
-- `locate` ranks by the longest common substring divided by the shorter string. The default threshold is `1` (the query contains the field, or the field contains the query). `--unique` fails when the top score is shared and names the addresses.
-- Exit codes: `0` success; `1` no match or a shared top score; `2` usage, a bad snapshot, or launch/navigate/inspect/cleanup failure.
+- Targets are `http://127.0.0.1:PORT/...` or `http://[::1]:PORT/...` only. Hostnames, file URLs, and missing ports are rejected.
+- `observe` on Chromium reads CDP and does not call the page. Firefox and WebKit report CDP unavailable instead of inventing a DOM. Storage is keys and SHA-256 fingerprints, never values. A missing section is not a claim that two captures match.
+- `act` is click, fill, or wait_for_timeout. It re-queries the locator and rejects `h:N`. Playwright's selector engine runs only for click and fill.
+- The Node CLI is `.cjs` and calls Python through the vendored `vendor/py_launch.cjs` launcher, which requires Node 24. Score, loopback, fingerprint, and evidence comparison are checked with `scripts/twin_parity.py`.
+- Exit codes: `0` success; `1` no match or a shared top score; `2` usage, a bad snapshot, or launch/navigate/inspect/cleanup failure. Headless is the default.
 
 ### Sequence status
 
@@ -289,7 +289,7 @@ Implemented:
 4. Playwright Python API and CLI matrix (`scripts/platform_probe.py`).
 5. Cross-runtime and browser parity guards (`scripts/twin_parity.py`).
 7. terminal-browser quick CLI/TUI lane (`scripts/terminal_browser.py`).
-10. Page survey and locator discovery (`scripts/page_inspect.py`). Stagehand is still a separate, unimplemented lane.
+10. Passive page observe, locate, and a fixed act vocabulary (`scripts/page_inspect.py`). Stagehand is still a separate, unimplemented lane.
 
 Not yet implemented in this repository:
 
@@ -383,12 +383,11 @@ Comparison and digest selection now accept `--page`, `--env`, and a read-only
 `--list` plan. See [selected comparison plans](docs/platform-adapters.md#select-a-comparison-or-digest-plan).
 
 
-Page-inspect network boundary (#116): HTTP(S) targets accept only literal
-`127.0.0.1` or `[::1]` on fixed port **8080**, matching the existing route CLI
-port. Hostnames (including `localhost`), alternate IP spellings, credentials,
-LAN/external addresses and other ports are rejected before browser launch.
-Existing local HTML paths and local `file:///` URLs remain an explicit fixture
-exception. The same request guard applies to page resources; HTTP redirects are
-refused without following them. Service workers and WebSockets are blocked in
-the survey context. There is no port override. This is a browser request boundary,
-not an OS-level sandbox.
+Page-inspect network boundary (issue 116): `observe` and `act` accept only
+`http://127.0.0.1:PORT/...` or `http://[::1]:PORT/...` (HTTPS the same way).
+The port must be written in the URL. Hostnames (including `localhost`),
+credentials, file URLs, and other addresses are rejected before browser launch.
+The same request guard applies to page resources; HTTP redirects are refused
+without following them. Service workers are blocked. This is a browser request
+boundary, not an OS-level sandbox. Storage records key names and SHA-256
+fingerprints only. See [REA observation](docs/rea-observation.md).

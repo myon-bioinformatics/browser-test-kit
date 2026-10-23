@@ -1,14 +1,14 @@
-"""Survey a page and rank locators with small, paged JSON operations.
+"""Observe a loopback page, rank locators, and run a fixed action vocabulary.
 
-Offline commands run under ``python -S``. ``survey`` is the only command that
-imports Playwright. Scores follow the longest-common-substring ratio: the
-length of the longest shared slice divided by the shorter string, using simple
-Unicode lowercasing and UTF-16 code units so the Node twin agrees.
+Offline commands run under ``python -S``. ``observe`` and ``act`` import
+Playwright. Observe reads CDP on Chromium and does not call the page. Act
+re-queries a locator; that is the command that lets Playwright resolve
+selectors in the page. Scores use the longest common substring over the
+shorter UTF-16 length so the Node twin agrees.
 
-    python scripts/page_inspect.py survey fixtures/page_inspect.html --browser chromium --json --out survey.json
-    python -S scripts/page_inspect.py count survey.json --role button
-    python -S scripts/page_inspect.py locate survey.json --query "Save draft" --unique --json
-    python -S scripts/page_inspect.py describe survey.json --target id:save-draft
+    python scripts/page_inspect.py observe http://127.0.0.1:8765/page --json --out observe.json
+    python -S scripts/page_inspect.py locate observe.json --query "Save draft" --unique --json
+    python scripts/page_inspect.py act http://127.0.0.1:8765/page --action click --locator id:save-draft --json
 
 Exit codes: 0 success; 1 no match or a non-unique top score; 2 usage, a bad
 snapshot, or a launch, navigate, inspect, or cleanup failure.
@@ -16,17 +16,23 @@ snapshot, or a launch, navigate, inspect, or cleanup failure.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import platform
 import re
 import sys
 import urllib.parse
-import urllib.request
 from pathlib import Path
 
 SCHEMA_INSPECT = "btk-page-inspect/1"
-SCHEMA_SURVEY = "btk-page-survey/1"
+SCHEMA_OBSERVE = "btk-page-observe/1"
+COMPLETE_COVERAGE = {"complete", "complete_within_window"}
+INTERACTIVE_ROLES = {
+    "button", "link", "textbox", "searchbox", "checkbox", "radio", "combobox",
+    "slider", "spinbutton", "switch", "tab", "menuitem",
+}
+ACT_ACTIONS = {"click", "fill", "wait_for_timeout"}
 HARD_CAP = 500
 SURVEY_LIMIT_DEFAULT = 50
 SURVEY_LIMIT_MAX = 200
@@ -61,8 +67,17 @@ class InspectError(Exception):
 
 
 def utf16_units(text: str) -> tuple[int, ...]:
-    encoded = text.encode("utf-16-le")
-    return tuple(encoded[index] + (encoded[index + 1] << 8) for index in range(0, len(encoded), 2))
+    """UTF-16 code units, including unpaired surrogates that str.encode rejects."""
+    units = []
+    for char in text:
+        code = ord(char)
+        if code > 0xFFFF:
+            code -= 0x10000
+            units.append(0xD800 + (code >> 10))
+            units.append(0xDC00 + (code & 0x3FF))
+        else:
+            units.append(code)
+    return tuple(units)
 
 
 def unit_len(text: str) -> int:
@@ -99,6 +114,82 @@ def similarity(left: str, right: str) -> float:
     return round6(lcs_length(first, second) / min(unit_len(first), unit_len(second)))
 
 
+def _unpaired_surrogate(units: tuple[int, ...]) -> bool:
+    index = 0
+    while index < len(units):
+        unit = units[index]
+        if 0xD800 <= unit <= 0xDBFF:
+            if index + 1 < len(units) and 0xDC00 <= units[index + 1] <= 0xDFFF:
+                index += 2
+                continue
+            return True
+        if 0xDC00 <= unit <= 0xDFFF:
+            return True
+        index += 1
+    return False
+
+
+def storage_fingerprint(value: str) -> dict:
+    """SHA-256 of a storage value. The value itself is not returned."""
+    if not isinstance(value, str):
+        raise InspectError("storage value must be a string", "fingerprint the host string, then drop the value")
+    units = utf16_units(value)
+    if _unpaired_surrogate(units):
+        raw = bytes([0xFF]) + b"".join(unit.to_bytes(2, "little") for unit in units)
+        encoding = "utf16le-unpaired"
+    else:
+        raw = value.encode("utf-8")
+        encoding = "utf8"
+    return {"fingerprint_version": 2, "encoding": encoding, "sha256": hashlib.sha256(raw).hexdigest()}
+
+
+def evidence_relation(left, right) -> str:
+    """Same, different, or unknown. Missing, truncated, and unrequested coverage is never same."""
+    if not isinstance(left, dict) or not isinstance(right, dict):
+        return "unknown"
+    if left.get("coverage") not in COMPLETE_COVERAGE or right.get("coverage") not in COMPLETE_COVERAGE:
+        return "unknown"
+    left_digest = left.get("digest")
+    right_digest = right.get("digest")
+    if not isinstance(left_digest, str) or not isinstance(right_digest, str) or not left_digest or not right_digest:
+        return "unknown"
+    return "same" if left_digest == right_digest else "different"
+
+
+def loopback_target(target: str) -> str:
+    """Accept only http(s) on 127.0.0.1 or ::1 with an explicit port."""
+    if not isinstance(target, str) or not (target.startswith("http://") or target.startswith("https://")):
+        raise InspectError(
+            "target must be an http or https loopback URL",
+            "hostnames, file URLs, and other schemes are rejected",
+        )
+    try:
+        parts = urllib.parse.urlsplit(target)
+        host = parts.hostname
+        port = parts.port
+    except ValueError as exc:
+        raise InspectError(
+            "target is not a loopback URL",
+            "use http://127.0.0.1:PORT/path or http://[::1]:PORT/path",
+        ) from exc
+    if parts.username or parts.password:
+        raise InspectError(
+            "URL must not include credentials",
+            "use http://127.0.0.1:PORT/path with no user or password",
+        )
+    if host not in {"127.0.0.1", "::1"}:
+        raise InspectError(
+            "target host must be a loopback address",
+            "use 127.0.0.1 or [::1] with an explicit port; localhost and other hosts are rejected",
+        )
+    if port is None:
+        raise InspectError(
+            "target needs an explicit port",
+            "write the port; implicit 80 and 443 are rejected",
+        )
+    return target
+
+
 def clip(value: str, limit: int = 120) -> str:
     return re.sub(r"\s+", " ", value or "").strip()[:limit]
 
@@ -107,30 +198,12 @@ def os_name() -> str:
     return {"Darwin": "macOS", "Windows": "Windows", "Linux": "Linux"}.get(platform.system(), platform.system())
 
 
-def collect_source() -> str:
-    candidates = [Path(__file__).with_name("page_inspect_collect.js")]
-    candidates.append(Path(sys.prefix) / "share/browser-test-kit/page_inspect_collect.js")
-    try:
-        import site
-        candidates.append(Path(site.getuserbase()) / "share/browser-test-kit/page_inspect_collect.js")
-    except Exception:
-        pass
-    for path in candidates:
-        if path.is_file():
-            return path.read_text(encoding="utf-8")
-    raise InspectError(
-        "page collect script is not installed",
-        "run survey from a checkout, or reinstall the package including its shared files",
-        stage="launch",
-    )
-
-
 def _require_str(item: dict, key: str) -> str:
     value = item.get(key, "")
     if value is None:
         return ""
     if not isinstance(value, str):
-        raise InspectError(f"{key} must be a string", "the survey payload was modified; run survey again", stage="inspect")
+        raise InspectError(f"{key} must be a string", "the observe payload was modified; run observe again", stage="inspect")
     return value
 
 
@@ -139,19 +212,19 @@ def _require_bool(item: dict, key: str, default: bool | None = None) -> bool:
         return default
     value = item.get(key)
     if not isinstance(value, bool):
-        raise InspectError(f"{key} must be a boolean", "the survey payload was modified; run survey again", stage="inspect")
+        raise InspectError(f"{key} must be a boolean", "the observe payload was modified; run observe again", stage="inspect")
     return value
 
 
 def _box(item: dict) -> dict:
     raw = item.get("box")
     if not isinstance(raw, dict):
-        raise InspectError("box must be an object", "the survey payload was modified; run survey again", stage="inspect")
+        raise InspectError("box must be an object", "the observe payload was modified; run observe again", stage="inspect")
     box = {}
     for key in ("x", "y", "width", "height"):
         value = raw.get(key, 0)
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
-            raise InspectError(f"box.{key} must be a finite number", "the survey payload was modified; run survey again", stage="inspect")
+            raise InspectError(f"box.{key} must be a finite number", "the observe payload was modified; run observe again", stage="inspect")
         box[key] = int(math.floor(float(value)))
     return box
 
@@ -170,16 +243,16 @@ def _locator(kind: str, selector: str, unique: bool, nth: int | None) -> dict:
 
 
 def normalize_elements(raw: dict, *, start: int = 0, limit: int = SURVEY_LIMIT_DEFAULT) -> dict:
-    """Turn a collect-script payload into addressed elements and one page of them."""
+    """Turn collected controls into addressed elements and one page of them."""
     if not isinstance(raw, dict) or not isinstance(raw.get("elements"), list):
-        raise InspectError("survey payload has no elements list", "run survey again", stage="inspect")
+        raise InspectError("observe payload has no elements list", "run observe again", stage="inspect")
     _check_page(start, limit, SURVEY_LIMIT_MAX)
     prepared = []
     counts: dict[tuple[str, str], int] = {}
     nths = []
     for item in raw["elements"]:
         if not isinstance(item, dict):
-            raise InspectError("survey element must be an object", "run survey again", stage="inspect")
+            raise InspectError("observe element must be an object", "run observe again", stage="inspect")
         role = clip(_require_str(item, "role"), 40) or "generic"
         name = clip(_require_str(item, "name"))
         key = (role, name)
@@ -420,14 +493,14 @@ def count_elements(elements: list, *, query: str = "", role: str = "", threshold
 
 def decode_address(value: str) -> str:
     if re.search(r"%(?![0-9A-Fa-f]{2})", value):
-        raise InspectError("role address has a bad percent escape", "copy the address from survey or locate")
+        raise InspectError("role address has a bad percent escape", "copy the address from observe or locate")
     return urllib.parse.unquote(value)
 
 
 def _split_role_address(value: str) -> tuple[str, str, int]:
     match = _ROLE_ADDRESS.fullmatch(value)
     if not match:
-        raise InspectError("role address must look like role:button/Save%20draft#0", "copy an address from locate or survey")
+        raise InspectError("role address must look like role:button/Save%20draft#0", "copy an address from locate or observe")
     role, name, nth = match.groups()
     return decode_address(role), decode_address(name), int(nth)
 
@@ -487,7 +560,7 @@ def resolve_target(elements: list, target: str) -> dict:
     return {
         "schema": SCHEMA_INSPECT, "ok": False, "operation": "describe", "stage": "input",
         "error": "target is not in this snapshot",
-        "hint": "h:N is valid only in the snapshot that minted it; reuse an address or run survey again",
+        "hint": "h:N is valid only in the snapshot that minted it; reuse an address or run observe again",
         "suggestions": suggest(views, text),
     }
 
@@ -583,8 +656,10 @@ def describe_element(elements: list, target: str, *, context: int = CONTEXT_DEFA
 
 def operations() -> dict:
     items = [
-        {"name": "survey", "needs": "playwright", "summary": "Collect visible controls from one page into a snapshot",
+        {"name": "observe", "needs": "playwright", "summary": "Passive CDP snapshot of one loopback page",
          "limit_default": SURVEY_LIMIT_DEFAULT, "limit_max": SURVEY_LIMIT_MAX},
+        {"name": "act", "needs": "playwright", "summary": "One declared action that re-queries a locator",
+         "limit_default": None, "limit_max": None},
         {"name": "count", "needs": "snapshot", "summary": "Count matches and roles without element bodies",
          "limit_default": None, "limit_max": None},
         {"name": "locate", "needs": "snapshot", "summary": "Rank controls by longest-common-substring similarity and page them",
@@ -596,7 +671,7 @@ def operations() -> dict:
     ]
     return {
         "schema": SCHEMA_INSPECT, "ok": True, "operation": "operations", "items": items,
-        "hint": "count before locate on a large snapshot; describe one address instead of printing every control",
+        "hint": "observe, locate, and act are separate. count before locate; act re-queries an address and rejects h:N",
     }
 
 
@@ -615,42 +690,25 @@ def context_options(devices: dict, browser_name: str, profile: str, headed: bool
     return args
 
 
-SURVEY_PORT = 8080
-NETWORK_TARGET = re.compile(rf"https?://(?:127\.0\.0\.1|\[::1\]):{SURVEY_PORT}(?=[/?#]|$)", re.IGNORECASE)
-
-
-def target_url(target: str) -> str:
-    hint = "use an existing local HTML file or http(s)://127.0.0.1:8080 / http(s)://[::1]:8080; hostnames and other ports are not allowed"
-    if target.startswith(("//", "\\\\")) or ("://" in target and
-            (any(ord(c) <= 32 or ord(c) == 127 for c in target) or "\\" in target)):
-        raise InspectError("URL is outside the survey boundary", hint)
-    if "://" in target:
-        if NETWORK_TARGET.match(target):
-            return target
-        try:
-            parts = urllib.parse.urlsplit(target)
-            if parts.scheme == "file" and not parts.netloc:
-                local = urllib.request.url2pathname(parts.path)
-                if not local.startswith(("//", "\\\\")) and Path(local).is_file():
-                    return target
-        except ValueError:
-            pass
-        raise InspectError("URL is outside the survey boundary", hint)
-    path = Path(target)
-    if not path.is_file():
-        raise InspectError(f"page not found: {target}", "pass an existing HTML file or an http(s) or file URL")
-    return path.resolve().as_uri()
+def strip_userinfo(url: str) -> str:
+    parts = urllib.parse.urlsplit(url)
+    if parts.scheme not in {"http", "https"}:
+        return url
+    host = parts.hostname or ""
+    if ":" in host:
+        host = f"[{host}]"
+    netloc = host
+    if parts.port is not None:
+        netloc = f"{netloc}:{parts.port}"
+    return urllib.parse.urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
 
 
 def restrict_request(route):
-    """Inspect only the fixed loopback service; never follow HTTP redirects."""
+    """Stay on loopback and do not follow redirects. This does not call the page."""
     try:
-        target_url(route.request.url)
+        loopback_target(route.request.url)
     except InspectError:
         route.abort("blockedbyclient")
-        return
-    if route.request.url.startswith("file:"):
-        route.continue_()
         return
     response = route.fetch(max_redirects=0)
     if 300 <= response.status < 400:
@@ -659,30 +717,39 @@ def restrict_request(route):
         route.fulfill(response=response)
 
 
-def assemble_survey(raw: dict, *, environment: dict, url: str, start: int, limit: int) -> dict:
+def _section(source: str | None, coverage: str, body: dict | None = None) -> dict:
+    payload = {"source": source, "coverage": coverage}
+    if body:
+        payload.update(body)
+    if coverage in COMPLETE_COVERAGE:
+        canonical = json.dumps(body or {}, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        payload["digest"] = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return payload
+
+
+def assemble_observe(raw: dict, *, environment: dict, url: str, start: int, limit: int, sections: dict, limits: dict) -> dict:
     normalized = normalize_elements(raw, start=start, limit=limit)
-    hints = []
+    hints = [
+        "h:N is an ordinal in this snapshot only. act rejects it and queries the address again",
+        "a missing or not_requested section is not evidence that the page had nothing",
+    ]
     if raw.get("child_frames"):
-        hints.append("child frames were counted and not surveyed")
-    if raw.get("shadow_roots") is True:
-        hints.append("open shadow roots were detected and not entered")
-    if raw.get("shadow_scan") == "partial":
-        hints.append("the shadow scan stopped at 2000 elements")
+        hints.append("child frames were counted and their documents were not entered")
+    hints.append("DOM attributes are not read inside shadow roots; accessibility names may still include open-shadow controls")
     if normalized["truncated"]:
-        hints.append("this snapshot is a page of the survey; raise --limit or pass --role")
-    hints.append("h:N is valid only in this snapshot; reuse address with describe and locate")
+        hints.append("this snapshot is a page of the observe result; raise --limit or pass --role")
     child_frames = raw.get("child_frames") or 0
     if isinstance(child_frames, bool) or not isinstance(child_frames, int):
-        raise InspectError("child_frames must be an integer", "run survey again", stage="inspect")
+        raise InspectError("child_frames must be an integer", "run observe again", stage="inspect")
     return {
-        "schema": SCHEMA_SURVEY,
+        "schema": SCHEMA_OBSERVE,
         "ok": True,
-        "url": url,
+        "url": strip_userinfo(url),
         "title": clip(str(raw.get("title") or ""), 200),
         "environment": environment,
+        "limits": limits,
+        "sections": sections,
         "child_frames": child_frames,
-        "shadow_roots": raw.get("shadow_roots"),
-        "shadow_scan": raw.get("shadow_scan") or "complete",
         "truncated": normalized["truncated"],
         "total": normalized["total"],
         "start": start,
@@ -702,102 +769,537 @@ def _close_browser(browser):
     return None
 
 
-def survey_page(*, url: str, browser_name: str, profile: str, headed: bool, channel: str | None,
-                include_hidden: bool, role: str, start: int, limit: int) -> dict:
-    url = target_url(url)  # Also validate direct library callers before launching.
+def _playwright():
     try:
         from playwright.sync_api import sync_playwright
     except ImportError as exc:
         raise InspectError(
             "Playwright is not available in this interpreter",
-            "survey needs the browser extra; count, locate, describe, and operations run under python -S on a saved snapshot",
+            "observe and act need the browser extra; count, locate, describe, and operations run under python -S",
             stage="launch",
         ) from exc
+    return sync_playwright
+
+
+def _environment(browser, browser_name, channel, headed, profile, viewport) -> dict:
+    return {
+        "os": os_name(),
+        "browser": browser_name,
+        "version": browser.version,
+        "channel": channel,
+        "headless": not headed,
+        "profile": profile,
+        "viewport": {"width": viewport.get("width"), "height": viewport.get("height")},
+    }
+
+
+def _unavailable_sections(reason: str) -> dict:
+    body = {"reason": reason}
+    return {
+        "dom": _section(None, "unavailable", body),
+        "accessibility": _section(None, "unavailable", body),
+        "scripts": _section(None, "unavailable", body),
+        "resources": _section(None, "unavailable", body),
+        "network": _section(None, "unavailable", body),
+        "console": _section(None, "unavailable", body),
+        "storage": _section(None, "not_requested"),
+        "frames": _section(None, "unavailable", body),
+    }
+
+
+def _ax_text(field) -> str:
+    if isinstance(field, dict) and field.get("value") is not None:
+        return str(field.get("value"))
+    return ""
+
+
+def _walk_dom(node, found: list) -> bool:
+    truncated = False
+    if node.get("nodeType") == 1:
+        if len(found) >= HARD_CAP:
+            return True
+        attrs = node.get("attributes") or []
+        names = []
+        values = {}
+        for index in range(0, len(attrs) - 1, 2):
+            names.append(str(attrs[index]))
+            values[str(attrs[index])] = attrs[index + 1]
+        tag = str(node.get("nodeName") or "").lower()
+        found.append({
+            "node_id": node.get("nodeId"),
+            "backend_id": node.get("backendNodeId"),
+            "tag": tag,
+            "attr_names": names,
+            "id": str(values.get("id") or ""),
+            "testid": str(values.get("data-testid") or ""),
+            "hidden_attr": "hidden" in names or values.get("aria-hidden") == "true",
+            "script_src": str(values.get("src") or "") if tag == "script" else "",
+            "inline_script": tag == "script" and "src" not in names,
+        })
+    for child in node.get("children") or []:
+        if _walk_dom(child, found):
+            truncated = True
+            break
+    return truncated
+
+
+def _frame_count(node) -> int:
+    return 1 + sum(_frame_count(child) for child in node.get("childFrames") or [])
+
+
+def _controls_from_cdp(dom_nodes, ax_nodes, *, include_hidden: bool, role: str) -> tuple[list, dict]:
+    by_backend = {node["backend_id"]: node for node in dom_nodes if node.get("backend_id") is not None}
+    id_counts: dict[str, int] = {}
+    testid_counts: dict[str, int] = {}
+    for node in dom_nodes:
+        if node["id"]:
+            id_counts[node["id"]] = id_counts.get(node["id"], 0) + 1
+        if node["testid"]:
+            testid_counts[node["testid"]] = testid_counts.get(node["testid"], 0) + 1
+    elements = []
+    wanted = role.lower()
+    for ax in ax_nodes:
+        if ax.get("ignored") and not include_hidden:
+            continue
+        role_name = _ax_text(ax.get("role")).lower()
+        if role_name not in INTERACTIVE_ROLES:
+            continue
+        if wanted and role_name != wanted:
+            continue
+        dom = by_backend.get(ax.get("backendDOMNodeId"), {})
+        if dom.get("hidden_attr") and not include_hidden:
+            continue
+        disabled = False
+        for prop in ax.get("properties") or []:
+            if prop.get("name") == "disabled" and isinstance(prop.get("value"), dict) and prop["value"].get("value") is True:
+                disabled = True
+        element_id = dom.get("id") or ""
+        testid = dom.get("testid") or ""
+        name = clip(_ax_text(ax.get("name")))
+        elements.append({
+            "tag": dom.get("tag") or "",
+            "role": role_name,
+            "name": name,
+            "text": name,
+            "id": element_id,
+            "testid": testid,
+            "href": "",
+            "visible": not bool(ax.get("ignored") or dom.get("hidden_attr")),
+            "enabled": not disabled,
+            "in_viewport": True,
+            "obscured": False,
+            "box": {"x": 0, "y": 0, "width": 0, "height": 0},
+            "parent_tag": "",
+            "css": f"#{element_id}" if element_id and id_counts.get(element_id) == 1 else "",
+            "id_unique": bool(element_id) and id_counts.get(element_id) == 1,
+            "testid_unique": bool(testid) and testid_counts.get(testid) == 1,
+            "css_unique": bool(element_id) and id_counts.get(element_id) == 1,
+        })
+    scripts = []
+    for node in dom_nodes:
+        if node["tag"] != "script":
+            continue
+        if node["script_src"]:
+            scripts.append({"kind": "external", "url": strip_userinfo(node["script_src"])})
+        elif node["inline_script"]:
+            scripts.append({"kind": "inline"})
+    return elements, {"scripts": scripts, "dom_nodes": len(dom_nodes), "ax_nodes": len(ax_nodes)}
+
+
+def _storage_section(client, origin: str, *, keys: bool, fingerprints: bool, sent: list) -> dict:
+    if not keys and not fingerprints:
+        return _section(None, "not_requested")
+    if fingerprints and not keys:
+        raise InspectError(
+            "storage fingerprints require key names",
+            "pass --include-storage-keys with --include-storage-fingerprints",
+        )
+    try:
+        sent.append("DOMStorage.enable")
+        client.send("DOMStorage.enable")
+        sent.append("DOMStorage.getDOMStorageItems")
+        local = client.send("DOMStorage.getDOMStorageItems", {"storageId": {"securityOrigin": origin, "isLocalStorage": True}})
+        session = client.send("DOMStorage.getDOMStorageItems", {"storageId": {"securityOrigin": origin, "isLocalStorage": False}})
+        sent.append("Network.getCookies")
+        cookies = client.send("Network.getCookies")
+    except Exception as exc:
+        return _section("cdp:DOMStorage", "unavailable", {"reason": type(exc).__name__})
+    areas = []
+    for kind, rows in (("local", local.get("entries") or []), ("session", session.get("entries") or [])):
+        items = []
+        for row in rows:
+            if not isinstance(row, list) or not row:
+                continue
+            key = str(row[0])
+            item = {"key": key}
+            if fingerprints and len(row) > 1:
+                item.update(storage_fingerprint(str(row[1])))
+            items.append(item)
+        areas.append({"area": kind, "items": items})
+    cookie_items = []
+    for cookie in cookies.get("cookies") or []:
+        item = {"key": str(cookie.get("name") or ""), "domain": cookie.get("domain") or "", "path": cookie.get("path") or ""}
+        if fingerprints:
+            item.update(storage_fingerprint(str(cookie.get("value") or "")))
+        cookie_items.append(item)
+    areas.append({"area": "cookie", "items": cookie_items})
+    return _section("cdp:DOMStorage+Network.getCookies", "complete", {"areas": areas, "values": "redacted"})
+
+
+def _cdp_send(client, method: str, params: dict | None, sent: list):
+    if method in {"Runtime.evaluate", "Runtime.callFunctionOn"}:
+        raise InspectError(
+            "observe does not call page JavaScript",
+            "act is the command that lets Playwright resolve a locator",
+            stage="inspect",
+        )
+    sent.append(method)
+    return client.send(method, params or {})
+
+
+def _with_browser(url, browser_name, profile, headed, channel):
+    sync_playwright = _playwright()
+    playwright = sync_playwright().start()
     browser = None
-    failure: InspectError | None = None
+    try:
+        kwargs = {"headless": not headed}
+        if channel:
+            kwargs["channel"] = channel
+        try:
+            browser = getattr(playwright, browser_name).launch(**kwargs)
+        except Exception as exc:
+            raise InspectError(
+                f"{type(exc).__name__}: {exc}",
+                "install the browser that matches this Playwright build. Headless commands use the shell build; --headed needs the full browser",
+                stage="launch",
+            ) from exc
+        options = context_options(playwright.devices, browser_name, profile, headed)
+        context = browser.new_context(**options, service_workers="block")
+        context.route("**/*", restrict_request)
+        page = context.new_page()
+        page.set_default_timeout(15000)
+        page.set_default_navigation_timeout(30000)
+        return playwright, browser, page
+    except Exception:
+        if browser is not None:
+            _close_browser(browser)
+        playwright.stop()
+        raise
+
+
+def _finish(playwright, browser, failure, result):
+    close_note = _close_browser(browser)
+    try:
+        playwright.stop()
+    except Exception as exc:
+        extra = f"{type(exc).__name__}: {exc}"
+        close_note = f"{close_note}; {extra}" if close_note else extra
+    if failure is not None:
+        if close_note:
+            failure.hint = failure.hint + f" Browser close also failed: {close_note}"
+        raise failure
+    if close_note:
+        raise InspectError("browser close failed", close_note, stage="cleanup")
+    return result
+
+
+def observe_page(*, url: str, browser_name: str, profile: str, headed: bool, channel: str | None,
+                 include_hidden: bool, include_storage_keys: bool, include_storage_fingerprints: bool,
+                 role: str, start: int, limit: int) -> dict:
+    url = loopback_target(url)
+    playwright, browser, page = _with_browser(url, browser_name, profile, headed, channel)
+    failure = None
     result = None
     try:
-        with sync_playwright() as playwright:
+        sent: list[str] = []
+        network: list[dict] = []
+        console: list[dict] = []
+        network_truncated = False
+        console_truncated = False
+        client = None
+        try:
+            client = page.context.new_cdp_session(page)
+        except Exception as exc:
+            viewport = page.viewport_size or {}
+            limits = {
+                "page_js_called": False,
+                "navigation_runs_page_scripts": False,
+                "service_workers": "blocked",
+                "reason": "cdp_session_unavailable",
+                "detail": type(exc).__name__,
+                "cdp_methods": sent,
+            }
+            result = assemble_observe(
+                {"title": "", "elements": [], "child_frames": 0, "total": 0, "truncated": False},
+                environment=_environment(browser, browser_name, channel, headed, profile, viewport),
+                url=url, start=start, limit=limit, sections=_unavailable_sections("cdp_session_unavailable"),
+                limits=limits,
+            )
+            return _finish(playwright, browser, None, result)
+        requests: dict[str, str] = {}
+
+        def on_request(event):
+            request = event.get("request") or {}
+            requests[event.get("requestId")] = request.get("method") or ""
+
+        def on_response(event):
+            nonlocal network_truncated
+            if len(network) >= 100:
+                network_truncated = True
+                return
+            response = event.get("response") or {}
+            network.append({
+                "method": requests.get(event.get("requestId"), ""),
+                "status": response.get("status"),
+                "mime": response.get("mimeType") or "",
+                "type": event.get("type") or "",
+                "url": strip_userinfo(response.get("url") or ""),
+            })
+
+        def on_console(event):
+            nonlocal console_truncated
+            if len(console) >= 50:
+                console_truncated = True
+                return
+            args = event.get("args") or []
+            console.append({
+                "type": event.get("type") or "",
+                "argument_types": [arg.get("type") if isinstance(arg, dict) else "unknown" for arg in args],
+            })
+
+        client.on("Network.requestWillBeSent", on_request)
+        client.on("Network.responseReceived", on_response)
+        client.on("Runtime.consoleAPICalled", on_console)
+        _cdp_send(client, "Network.enable", {}, sent)
+        _cdp_send(client, "Runtime.enable", {}, sent)
+        try:
+            page.goto(url, wait_until="load", timeout=30000)
+        except Exception as exc:
+            raise InspectError(
+                f"{type(exc).__name__}: {exc}",
+                "check that the loopback server is up. Core checks serve a local fixture on 127.0.0.1",
+                stage="navigate",
+            ) from exc
+        document = _cdp_send(client, "DOM.getDocument", {"depth": -1, "pierce": False}, sent)
+        ax = _cdp_send(client, "Accessibility.getFullAXTree", {}, sent)
+        resources = _cdp_send(client, "Page.getResourceTree", {}, sent)
+        frames = _cdp_send(client, "Page.getFrameTree", {}, sent)
+        dom_nodes: list[dict] = []
+        dom_truncated = _walk_dom(document.get("root") or {}, dom_nodes)
+        elements, meta = _controls_from_cdp(dom_nodes, ax.get("nodes") or [], include_hidden=include_hidden, role=role)
+        title = ""
+        for ax_node in ax.get("nodes") or []:
+            if _ax_text(ax_node.get("role")) == "RootWebArea":
+                title = clip(_ax_text(ax_node.get("name")), 200)
+                break
+        child_frames = max(0, _frame_count(frames.get("frameTree") or {}) - 1)
+        resource_rows = []
+        for item in (resources.get("frameTree") or {}).get("resources") or []:
+            resource_rows.append({
+                "type": item.get("type") or "",
+                "mime": item.get("mimeType") if isinstance(item.get("mimeType"), str) else "",
+                "url": strip_userinfo(item.get("url") or ""),
+            })
+        origin = urllib.parse.urlsplit(page.url)
+        origin_text = f"{origin.scheme}://{origin.netloc}"
+        storage = _storage_section(
+            client, origin_text, keys=include_storage_keys, fingerprints=include_storage_fingerprints, sent=sent,
+        )
+        network_coverage = "truncated" if network_truncated else "attach_limited"
+        console_coverage = "truncated" if console_truncated else "attach_limited"
+        sections = {
+            "dom": _section("cdp:DOM.getDocument", "truncated" if dom_truncated else "complete", {
+                "nodes": meta["dom_nodes"], "attribute_values": "id and data-testid only",
+            }),
+            "accessibility": _section("cdp:Accessibility.getFullAXTree", "complete", {"nodes": meta["ax_nodes"]}),
+            "scripts": _section("cdp:DOM.getDocument", "complete_within_window", {
+                "items": meta["scripts"], "note": "scripts with no DOM node are outside this section",
+            }),
+            "resources": _section("cdp:Page.getResourceTree", "complete", {"items": resource_rows}),
+            "network": _section("cdp:Network", network_coverage, {
+                "prior_activity_available": False, "bodies": "not_requested", "items": network,
+            }),
+            "console": _section("cdp:Runtime.consoleAPICalled", console_coverage, {
+                "text": "not_requested", "prior_activity_available": False, "items": console,
+            }),
+            "storage": storage,
+            "frames": _section("cdp:Page.getFrameTree", "complete", {
+                "child_frames": child_frames, "contents": "not_entered",
+            }),
+        }
+        viewport = page.viewport_size or {}
+        limits = {
+            "page_js_called": False,
+            "navigation_runs_page_scripts": True,
+            "runtime_domain": "console events only",
+            "service_workers": "blocked",
+            "redirects": "blocked",
+            "non_loopback": "blocked",
+            "cdp_methods": sent,
+        }
+        result = assemble_observe(
+            {"title": title, "elements": elements, "child_frames": child_frames, "total": len(elements), "truncated": dom_truncated},
+            environment=_environment(browser, browser_name, channel, headed, profile, viewport),
+            url=page.url, start=start, limit=limit, sections=sections, limits=limits,
+        )
+    except InspectError as exc:
+        failure = exc
+    except Exception as exc:
+        failure = InspectError(
+            f"{type(exc).__name__}: {exc}",
+            "the CDP read failed; the snapshot was not written",
+            stage="inspect",
+        )
+    return _finish(playwright, browser, failure, result)
+
+
+def _action_locator(page, locator: str):
+    text = (locator or "").strip()
+    if text.startswith("h:"):
+        raise InspectError(
+            "act does not accept a snapshot ordinal",
+            "pass id:, testid:, role:, or css: so the control is queried again",
+        )
+    if text.startswith("id:"):
+        ident = text[3:]
+        if not SAFE.fullmatch(ident):
+            raise InspectError("id locator has unsafe characters", "use the id: value from observe")
+        return page.locator("#" + ident), True
+    if text.startswith("testid:"):
+        ident = text[7:]
+        if not SAFE.fullmatch(ident):
+            raise InspectError("testid locator has unsafe characters", "use the testid: value from observe")
+        return page.get_by_test_id(ident), True
+    if text.startswith("css:"):
+        selector = text[4:]
+        if "javascript:" in selector.lower():
+            raise InspectError("css locator cannot carry a script URL", "pass a CSS selector")
+        return page.locator(selector), True
+    if text.startswith("role:"):
+        role, name, nth = _split_role_address(text[5:])
+        return page.get_by_role(role, name=name, exact=True).nth(nth), True
+    raise InspectError(
+        "act locator must be id:, testid:, role:, or css:",
+        "observe prints those addresses; h:N is not accepted",
+    )
+
+
+def act_page(*, url: str, browser_name: str, profile: str, headed: bool, channel: str | None,
+             action: str, locator: str, text: str, timeout_ms: int) -> dict:
+    url = loopback_target(url)
+    if action not in ACT_ACTIONS:
+        raise InspectError(
+            f"unknown action {action}",
+            "use click, fill, or wait_for_timeout",
+        )
+    if action == "fill" and text is None:
+        raise InspectError("fill needs --text", "pass the literal text to enter")
+    if action != "wait_for_timeout":
+        if not locator or locator.strip().startswith("h:"):
+            raise InspectError(
+                "act does not accept a snapshot ordinal",
+                "pass id:, testid:, role:, or css: so the control is queried again",
+            )
+        if not locator.startswith(("id:", "testid:", "role:", "css:")):
+            raise InspectError(
+                "act locator must be id:, testid:, role:, or css:",
+                "observe prints those addresses; h:N is not accepted",
+            )
+    playwright, browser, page = _with_browser(url, browser_name, profile, headed, channel)
+    failure = None
+    result = None
+    try:
+        try:
+            page.goto(url, wait_until="load", timeout=30000)
+        except Exception as exc:
+            raise InspectError(
+                f"{type(exc).__name__}: {exc}",
+                "check that the loopback server is up",
+                stage="navigate",
+            ) from exc
+        page_js = False
+        try:
+            if action == "wait_for_timeout":
+                page.wait_for_timeout(timeout_ms)
+            else:
+                target, page_js = _action_locator(page, locator)
+                if action == "click":
+                    target.click(timeout=timeout_ms)
+                else:
+                    target.fill(text, timeout=timeout_ms)
+        except InspectError:
+            raise
+        except Exception as exc:
+            raise InspectError(
+                f"{type(exc).__name__}: {exc}",
+                "the locator was resolved on this call. If it missed, observe again and pass that address",
+                stage="inspect",
+            ) from exc
+        if browser_name == "chromium":
             try:
-                launcher = getattr(playwright, browser_name)
-                kwargs = {"headless": not headed}
-                if channel:
-                    kwargs["channel"] = channel
-                browser = launcher.launch(**kwargs)
+                client = page.context.new_cdp_session(page)
+                ax = _cdp_send(client, "Accessibility.getFullAXTree", {}, [])
+                names = []
+                for node in ax.get("nodes") or []:
+                    role_name = _ax_text(node.get("role")).lower()
+                    if role_name in INTERACTIVE_ROLES and not node.get("ignored"):
+                        names.append(clip(_ax_text(node.get("name"))))
+                ax_section = _section("cdp:Accessibility.getFullAXTree", "complete", {"names": names})
             except Exception as exc:
-                raise InspectError(
-                    f"{type(exc).__name__}: {exc}",
-                    "install the browser that matches this Playwright build. Headless survey uses the shell build; --headed needs the full browser",
-                    stage="launch",
-                ) from exc
-            try:
-                options = context_options(playwright.devices, browser_name, profile, headed)
-                context = browser.new_context(**options, service_workers="block")
-                context.route("**/*", restrict_request)
-                context.route_web_socket("**/*", lambda websocket: websocket.close())
-                page = context.new_page()
-                page.set_default_timeout(15000)
-                page.set_default_navigation_timeout(30000)
-                try:
-                    page.goto(url, wait_until="load", timeout=30000)
-                except Exception as exc:
-                    raise InspectError(
-                        f"{type(exc).__name__}: {exc}",
-                        "check the URL and that the page finishes loading. Core checks should use a local fixture",
-                        stage="navigate",
-                    ) from exc
-                try:
-                    raw = page.evaluate(collect_source(), {
-                        "includeHidden": include_hidden, "role": role, "hardCap": HARD_CAP,
-                    })
-                except Exception as exc:
-                    raise InspectError(
-                        f"{type(exc).__name__}: {exc}",
-                        "the page script failed in this engine; the snapshot was not written",
-                        stage="inspect",
-                    ) from exc
-                viewport = page.viewport_size or {}
-                environment = {
-                    "os": os_name(),
-                    "browser": browser_name,
-                    "version": browser.version,
-                    "channel": channel,
-                    "headless": not headed,
-                    "profile": profile,
-                    "viewport": {"width": viewport.get("width"), "height": viewport.get("height")},
-                }
-                result = assemble_survey(raw, environment=environment, url=page.url, start=start, limit=limit)
-            except InspectError as exc:
-                failure = exc
-            close_note = _close_browser(browser)
-            browser = None
-            if failure is not None:
-                if close_note:
-                    failure.hint = failure.hint + f" Browser close also failed: {close_note}"
-                raise failure
-            if close_note:
-                raise InspectError("browser close failed", close_note, stage="cleanup")
-            return result
-    except InspectError:
-        raise
+                ax_section = _section("cdp:Accessibility.getFullAXTree", "unavailable", {"reason": type(exc).__name__})
+        else:
+            ax_section = _section(None, "not_requested")
+        viewport = page.viewport_size or {}
+        result = {
+            "schema": SCHEMA_INSPECT,
+            "ok": True,
+            "operation": "act",
+            "action": action,
+            "locator": locator,
+            "url": strip_userinfo(page.url),
+            "environment": _environment(browser, browser_name, channel, headed, profile, viewport),
+            "limits": {
+                "page_js_called": page_js,
+                "bounded_to": [action],
+                "ordinals": "rejected",
+                "dom": "not_requested",
+                "selector_engine": "playwright" if page_js else "none",
+            },
+            "sections": {
+                "url": _section("playwright:page.url", "complete", {"url": strip_userinfo(page.url)}),
+                "accessibility": ax_section,
+                "dom": _section(None, "not_requested"),
+                "storage": _section(None, "not_requested"),
+            },
+            "hint": "url was captured. dom was not requested, so this result cannot say the markup was unchanged",
+        }
+    except InspectError as exc:
+        failure = exc
+    except Exception as exc:
+        failure = InspectError(
+            f"{type(exc).__name__}: {exc}",
+            "the action failed before it could write a result",
+            stage="inspect",
+        )
+    return _finish(playwright, browser, failure, result)
 
 
 def read_snapshot(path: str) -> dict:
     file = Path(path)
     if not file.is_file():
-        raise InspectError(f"snapshot not found: {path}", "run survey --out this path first")
+        raise InspectError(f"snapshot not found: {path}", "run observe --out this path first")
     try:
         data = json.loads(file.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        raise InspectError("snapshot is not JSON", "run survey again and pass that file") from exc
-    if not isinstance(data, dict) or data.get("schema") != SCHEMA_SURVEY:
-        raise InspectError("snapshot schema is not btk-page-survey/1", "pass a file written by survey, not a locate result")
+        raise InspectError("snapshot is not JSON", "run observe again and pass that file") from exc
+    if not isinstance(data, dict) or data.get("schema") != SCHEMA_OBSERVE:
+        raise InspectError("snapshot schema is not btk-page-observe/1", "pass a file written by observe, not a locate result")
     elements = data.get("elements")
     if not isinstance(elements, list):
-        raise InspectError("snapshot has no elements list", "run survey again")
+        raise InspectError("snapshot has no elements list", "run observe again")
     for element in elements:
         if not isinstance(element, dict) or not isinstance(element.get("address"), str) or not isinstance(element.get("handle"), str):
-            raise InspectError("snapshot element is missing address or handle", "run survey again")
+            raise InspectError("snapshot element is missing address or handle", "run observe again")
     return data
 
 
@@ -824,11 +1326,11 @@ def error_text(payload: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def survey_text(payload: dict) -> str:
+def observe_text(payload: dict) -> str:
     env = payload["environment"]
     mode = "headless" if env.get("headless") else "headed"
     lines = [
-        f"btk-page-survey/1 {env.get('os')} {env.get('browser')} {env.get('profile')} {mode} "
+        f"btk-page-observe/1 {env.get('os')} {env.get('browser')} {env.get('profile')} {mode} "
         f"elements={payload.get('total')} showing={len(payload.get('elements') or [])}"
     ]
     lines.extend(element_line(element) for element in payload.get("elements") or [])
@@ -894,16 +1396,28 @@ def build_parser() -> argparse.ArgumentParser:
     common.add_argument("--out", help="write the JSON document to this path; the parent directory must exist")
     parser = argparse.ArgumentParser(prog="page_inspect.py", description=__doc__.split("\n\n")[0], allow_abbrev=False)
     sub = parser.add_subparsers(dest="command", required=True)
-    survey = sub.add_parser("survey", parents=[common], help="collect controls from a page", allow_abbrev=False)
-    survey.add_argument("target", help="HTML file, or an http(s) or file URL without credentials")
-    survey.add_argument("--browser", choices=("chromium", "firefox", "webkit"), default="chromium")
-    survey.add_argument("--profile", choices=tuple(PROFILES), default="desktop")
-    survey.add_argument("--channel", help="branded browser channel, for example chrome")
-    survey.add_argument("--headed", action="store_true", help="launch the full browser instead of headless")
-    survey.add_argument("--include-hidden", action="store_true", help="keep controls that are not visible")
-    survey.add_argument("--role", default="", help="only this role")
-    survey.add_argument("--start", type=_bounded(100000), default=0)
-    survey.add_argument("--limit", type=_bounded(SURVEY_LIMIT_MAX), default=SURVEY_LIMIT_DEFAULT)
+    observe = sub.add_parser("observe", parents=[common], help="passive CDP snapshot of a loopback page", allow_abbrev=False)
+    observe.add_argument("target", help="http://127.0.0.1:PORT/path or http://[::1]:PORT/path")
+    observe.add_argument("--browser", choices=("chromium", "firefox", "webkit"), default="chromium")
+    observe.add_argument("--profile", choices=tuple(PROFILES), default="desktop")
+    observe.add_argument("--channel", help="branded browser channel, for example chrome")
+    observe.add_argument("--headed", action="store_true", help="launch the full browser instead of headless")
+    observe.add_argument("--include-hidden", action="store_true", help="keep controls the accessibility tree ignored")
+    observe.add_argument("--include-storage-keys", action="store_true", help="record storage key names, never values")
+    observe.add_argument("--include-storage-fingerprints", action="store_true", help="add SHA-256 fingerprints; requires keys")
+    observe.add_argument("--role", default="", help="only this role")
+    observe.add_argument("--start", type=_bounded(100000), default=0)
+    observe.add_argument("--limit", type=_bounded(SURVEY_LIMIT_MAX), default=SURVEY_LIMIT_DEFAULT)
+    act = sub.add_parser("act", parents=[common], help="one declared action that re-queries a locator", allow_abbrev=False)
+    act.add_argument("target", help="loopback URL; a snapshot ordinal is not accepted")
+    act.add_argument("--action", required=True, choices=tuple(sorted(ACT_ACTIONS)))
+    act.add_argument("--locator", default="", help="id:, testid:, role:, or css: from observe")
+    act.add_argument("--text", default=None, help="literal text for fill")
+    act.add_argument("--timeout-ms", type=_bounded(120000), default=5000)
+    act.add_argument("--browser", choices=("chromium", "firefox", "webkit"), default="chromium")
+    act.add_argument("--profile", choices=tuple(PROFILES), default="desktop")
+    act.add_argument("--channel", help="branded browser channel, for example chrome")
+    act.add_argument("--headed", action="store_true")
     locate_parser = sub.add_parser("locate", parents=[common], help="rank controls in a snapshot", allow_abbrev=False)
     locate_parser.add_argument("snapshot")
     locate_parser.add_argument("--query", default="")
@@ -929,15 +1443,27 @@ def dispatch(args: argparse.Namespace) -> tuple[dict, str, int]:
     if args.command == "operations":
         payload = operations()
         return payload, operations_text(payload), 0
-    if args.command == "survey":
+    if args.command == "observe":
         if args.limit < 1:
             raise InspectError("limit must be at least 1", f"use 1..{SURVEY_LIMIT_MAX}")
-        payload = survey_page(
-            url=target_url(args.target), browser_name=args.browser, profile=args.profile, headed=args.headed,
-            channel=args.channel or None, include_hidden=args.include_hidden, role=args.role,
-            start=args.start, limit=args.limit,
+        payload = observe_page(
+            url=args.target, browser_name=args.browser, profile=args.profile, headed=args.headed,
+            channel=args.channel or None, include_hidden=args.include_hidden,
+            include_storage_keys=args.include_storage_keys,
+            include_storage_fingerprints=args.include_storage_fingerprints,
+            role=args.role, start=args.start, limit=args.limit,
         )
-        return payload, survey_text(payload), 0
+        return payload, observe_text(payload), 0
+    if args.command == "act":
+        if args.timeout_ms < 1:
+            raise InspectError("timeout-ms must be at least 1", "use 1..120000")
+        payload = act_page(
+            url=args.target, browser_name=args.browser, profile=args.profile, headed=args.headed,
+            channel=args.channel or None, action=args.action, locator=args.locator,
+            text=args.text, timeout_ms=args.timeout_ms,
+        )
+        text_out = f"action={payload['action']} url={payload['url']}\nhint: {payload['hint']}\n"
+        return payload, text_out, 0
     snapshot = read_snapshot(args.snapshot)
     elements = snapshot["elements"]
     if args.command == "count":
