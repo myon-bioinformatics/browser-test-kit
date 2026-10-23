@@ -56,6 +56,24 @@ JavaScript dialogs are recorded and dismissed unless `--dialog-policy accept` is
 
 `compare` reads two `btk-page-observe/1` files and runs no browser. It reuses `evidence_relation`, so a section is `same` only when both sides are complete and their digests match. Shadow-root counts and child-frame and element totals are reported as left, right, and delta. A count is `null` when that side's section was not complete. Environment differences (OS, browser, profile, headless) are reported but do not change the section relations.
 
+## Touch gestures
+
+`tap` is Playwright `locator.tap`. It is supported on Chromium, Firefox, and WebKit only when the context `hasTouch` is true. A mouse click is not substituted.
+
+`long-press`, `swipe`, and `touch-scroll` also need `hasTouch`. Chromium performs them. Firefox and WebKit stay `unsupported`: Playwright's Firefox protocol only has `Page.dispatchTapEvent`, and WebKit only has `Input.dispatchTapEvent`. Both are a point tap, with no hold, no move, and no touch scroll, and neither engine opens a CDP Input session. A mouse event is not substituted. A Chromium step that does run still carries `unsupported_reason` for those two engines, and the `support` map names each engine.
+
+Deterministic logic borrowed from other code, with no model call:
+
+| Source | License | What was used |
+| --- | --- | --- |
+| Stagehand understudy (`browserbase/stagehand`) | MIT | Do not dispatch when the element has no positive box after scrolling it into view. Interpolate a drag as `t = i / steps`, about one point every 20 CSS pixels, at least 2 points and at most 30. |
+| Chromium DevTools `Input` | BSD-3-Clause, Chromium | `Input.synthesizeTapGesture` with `gestureSourceType: "touch"` and a duration for long-press. `Input.dispatchTouchEvent` (`touchStart`, `touchMove`, `touchEnd`) for swipe and touch-scroll. Playwright's own Chromium tap is that same touch pair with no gap; the hold and the move are the part it does not expose. A short dwell before `touchEnd` keeps the browser from flinging past the finger travel. |
+| Playwright | Apache-2.0 | `locator.tap`, `mouse.wheel`, `scroll_into_view_if_needed`, and `bounding_box` wherever those already do the job. |
+
+Not ported: Stagehand's model tools, its `Runtime.callFunctionOn` scroll, and its mouse-wheel scroll. `scroll:DX,DY` stays one Playwright `mouse.wheel`. `Input.synthesizeScrollGesture` with `gestureSourceType: "touch"` was measured on headless Chromium and did not change `cssVisualViewport.pageY`. The same call without that source scrolled as a mouse wheel, so it is not used as touch-scroll.
+
+`long-press:LOCATOR` holds for 700 milliseconds. `long-press:LOCATOR=MS` is from 500 to 3000. `swipe:LOCATOR` moves the finger `160,0`. `swipe:LOCATOR=DX,DY` is that finger movement. `touch-scroll:LOCATOR` scrolls the content by `0,400`, the same sign as `mouse.wheel`; the finger moves the opposite way. A stroke that does not fit in the viewport is repeated from the element. Later strokes do not scroll that element back into view, so a document scroll is not undone. `limits.scroll_y` after `touch-scroll` is the same `Page.getLayoutMetrics` value as after the wheel.
+
 ## Deferred on issue 117
 
 Child frames and shadow roots as their own address spaces. Observe counts child frames and author open plus closed shadow roots (pierced DOM, `shadow_roots` section, `contents: not_entered`, `user_agent` for Chromium built-in roots); it does not enter either and does not read shadow attributes. macOS, Windows, Linux, and Android Chrome or WebView as a recorded matrix. Branded channels as a matrix. A Stagehand caller. A headed lane in CI. An agent transport after these envelopes stay stable. Screenshot comparison and full scenario diffs.

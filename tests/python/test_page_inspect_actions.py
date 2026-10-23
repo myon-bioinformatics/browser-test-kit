@@ -125,8 +125,22 @@ def test_primary_is_playwright_control_or_meta_and_not_an_os_matrix():
     assert "ControlOrMeta" in body
     for name in ("long-press", "swipe", "touch-scroll"):
         support, reason = page_inspect.action_support(name, has_touch=True)
-        assert support == {browser: "unsupported" for browser in BROWSERS}
-        assert "Playwright" in reason
+        assert support == {"chromium": "supported", "firefox": "unsupported", "webkit": "unsupported"}
+        assert "dispatchTapEvent" in reason
+        assert "mouse" in reason
+        denied_touch, denied_reason = page_inspect.action_support(name, has_touch=False)
+        assert denied_touch == {browser: "unsupported" for browser in BROWSERS}
+        assert "hasTouch" in denied_reason
+        assert "mouse" in denied_reason
+    held = page_inspect.parse_step("long-press:id:touch=700")
+    assert held["duration_ms"] == 700
+    assert page_inspect.parse_step("long-press:id:touch")["duration_ms"] == 700
+    assert page_inspect.parse_step("swipe:id:source")["dx"] == 160
+    assert page_inspect.parse_step("touch-scroll:id:below=0,400")["dy"] == 400
+    with pytest.raises(page_inspect.InspectError):
+        page_inspect.parse_step("long-press:id:touch=100")
+    with pytest.raises(page_inspect.InspectError):
+        page_inspect.parse_step("swipe:id:source=0,0")
     denied, _reason = page_inspect.action_support("tap", has_touch=False)
     allowed, _reason = page_inspect.action_support("tap", has_touch=True)
     assert denied == {browser: "unsupported" for browser in BROWSERS}
@@ -441,6 +455,110 @@ def test_touch_requires_a_touch_context_and_phones_are_emulation(tmp_path):
     assert names_of(agreed["observations"][1]).get("marker") == "accepted"
     dialog = agreed["observations"][1]["sections"]["dialogs"]["items"][0]
     assert dialog["type"] == "confirm" and dialog["action"] == "accept"
+
+
+GESTURE = """<!doctype html><meta charset=utf-8>
+<style>body{height:4000px;margin:0;} #pad{position:absolute;left:20px;top:120px;width:300px;height:180px;}</style>
+<button id=marker type=button>idle</button>
+<button id=moved type=button>still</button>
+<div id=pad>pad</div>
+<script>
+const marker = document.getElementById("marker");
+let t0 = 0;
+document.getElementById("pad").addEventListener("pointerdown", (event) => {
+  t0 = performance.now();
+  marker.textContent = "down-" + event.pointerType;
+});
+document.getElementById("pad").addEventListener("pointerup", (event) => {
+  marker.textContent = "up-" + event.pointerType + "-" + Math.round(performance.now() - t0);
+});
+document.addEventListener("touchmove", (event) => {
+  const touch = event.touches[0];
+  if (!touch) return;
+  marker.dataset.x = String(Math.round(touch.clientX));
+}, {passive: true});
+document.addEventListener("touchend", () => {
+  if (marker.textContent.startsWith("down-")) marker.textContent = "swiped-" + (marker.dataset.x || "");
+});
+window.addEventListener("scroll", () => {
+  document.getElementById("moved").textContent = "scrolled-" + Math.round(window.scrollY);
+});
+</script>
+"""
+
+
+@pytest.mark.browser
+def test_chromium_touch_gestures_use_touch_input(tmp_path):
+    (tmp_path / "index.html").write_text(GESTURE, encoding="utf-8")
+    server = _serve(tmp_path)
+    url = f"http://127.0.0.1:{server.server_address[1]}/index.html"
+    try:
+        done = _run([
+            "observe", url, "--touch", "--viewport", "390x700",
+            "--step", "long-press:id:pad=700",
+            "--step", "swipe:id:pad=160,0",
+            "--step", "touch-scroll:id:pad=0,400",
+            "--json",
+        ])
+    finally:
+        server.shutdown()
+    assert done.returncode == 0, done.stderr + done.stdout[:2000]
+    payload = json.loads(done.stdout)
+    assert payload["ok"] is True
+    assert payload["observations"][0]["environment"]["has_touch"] is True
+    by_action = {step["action"]: step for step in payload["steps"]}
+    held = by_action["long-press"]
+    assert held["status"] == "done"
+    assert held["duration_ms"] == 700
+    assert held["page_js_called"] is True
+    assert held["support"] == {"chromium": "supported", "firefox": "unsupported", "webkit": "unsupported"}
+    assert "dispatchTapEvent" in held["unsupported_reason"]
+    hold = names_of(payload["observations"][1]).get("marker", "")
+    assert hold.startswith("up-touch-"), hold
+    assert 600 <= int(hold.rsplit("-", 1)[1]) <= 1100
+    swiped = by_action["swipe"]
+    assert swiped["status"] == "done" and swiped["dx"] == 160 and swiped["input"] == "touch"
+    swipe_name = names_of(payload["observations"][2]).get("marker", "")
+    assert swipe_name.startswith("swiped-"), swipe_name
+    assert int(swipe_name.split("-", 1)[1]) >= 280
+    scrolled = by_action["touch-scroll"]
+    assert scrolled["status"] == "done" and scrolled["dy"] == 400
+    scroll_name = names_of(payload["observations"][3]).get("moved", "")
+    scroll_y = payload["observations"][3]["limits"].get("scroll_y")
+    assert scroll_name.startswith("scrolled-"), (scroll_name, scroll_y, scrolled)
+    assert 300 <= scroll_y <= 480, (scroll_y, scroll_name)
+    raw = done.stdout
+    assert "mouse" in held["unsupported_reason"]
+
+
+@pytest.mark.browser
+@pytest.mark.parametrize("browser_name", ("firefox", "webkit"))
+def test_other_engines_keep_gestures_unsupported_with_touch(tmp_path, browser_name):
+    (tmp_path / "index.html").write_text(PAGE, encoding="utf-8")
+    server = _serve(tmp_path)
+    url = f"http://127.0.0.1:{server.server_address[1]}/index.html"
+    try:
+        done = _run([
+            "observe", url, "--browser", browser_name, "--touch", "--viewport", "390x700",
+            "--step", "tap:id:touch",
+            "--step", "long-press:id:touch",
+            "--step", "swipe:id:source",
+            "--step", "touch-scroll:id:below",
+            "--json",
+        ])
+    finally:
+        server.shutdown()
+    assert done.returncode == 0, done.stderr
+    payload = json.loads(done.stdout)
+    assert payload["steps"][0]["status"] == "done"
+    assert payload["steps"][0]["support"][browser_name] == "supported"
+    for step in payload["steps"][1:]:
+        assert step["status"] == "unsupported"
+        assert step["support"]["chromium"] == "supported"
+        assert step["support"][browser_name] == "unsupported"
+        assert "dispatchTapEvent" in step["reason"]
+        assert "mouse" in step["reason"]
+        assert step["page_js_called"] is False
 
 
 @pytest.mark.browser

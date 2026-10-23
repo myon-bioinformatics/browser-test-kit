@@ -59,11 +59,6 @@ LOCATOR_ACTIONS = {
     "click", "dblclick", "rightclick", "hover", "scroll-into-view", "clear",
     "focus", "blur", "check", "uncheck", "submit", "tap", "long-press", "swipe", "touch-scroll",
 }
-NO_PLAYWRIGHT_API = {
-    "long-press": "Playwright has no long-press on Chromium, Firefox, or WebKit; a delayed click was not substituted",
-    "swipe": "Playwright has no swipe on Chromium, Firefox, or WebKit; a mouse drag was not substituted",
-    "touch-scroll": "Playwright has no touch scroll on Chromium, Firefox, or WebKit; a mouse wheel was not substituted",
-}
 TAP_NEEDS_TOUCH = "tap needs a hasTouch context; a mouse click was not substituted"
 KEY_MODIFIERS = {"Primary", "Control", "Ctrl", "Meta", "Command", "Alt", "Shift", "ControlOrMeta"}
 PAGE_LOAD_STATES = {"load", "domcontentloaded", "networkidle", "commit"}
@@ -75,6 +70,26 @@ MAX_VALUE_CHARS = 65536
 NAVIGATION_TIMEOUT_MS = 30000
 POPUP_EVENT_TIMEOUT_MS = 1000
 SCROLL_SETTLE_MS = 200
+LONG_PRESS_DEFAULT_MS = 700
+LONG_PRESS_MIN_MS = 500
+LONG_PRESS_MAX_MS = 3000
+SWIPE_DEFAULT_DX = 160
+SWIPE_DEFAULT_DY = 0
+TOUCH_SCROLL_DEFAULT_DX = 0
+TOUCH_SCROLL_DEFAULT_DY = 400
+GESTURE_POINT_PX = 20
+GESTURE_MIN_STEPS = 2
+GESTURE_MAX_STEPS = 30
+TOUCH_MOVE_PAUSE_S = 0.016
+TOUCH_DWELL_S = 0.12
+TOUCH_STROKE_MARGIN = 8
+TOUCH_SCROLL_PASSES = 8
+TOUCH_GESTURES = {"long-press", "swipe", "touch-scroll"}
+TOUCH_ENGINE_LIMIT = (
+    "Firefox Page.dispatchTapEvent and WebKit Input.dispatchTapEvent are a point tap with no hold, move, or touch scroll, "
+    "and those engines have no CDP Input session. A mouse event was not substituted. "
+    "Chromium uses Input.synthesizeTapGesture for long-press and Input.dispatchTouchEvent for swipe and touch-scroll when hasTouch is set."
+)
 _secrets: contextvars.ContextVar[tuple[str, ...]] = contextvars.ContextVar("page_inspect_secrets", default=())
 HARD_CAP = 500
 SURVEY_LIMIT_DEFAULT = 50
@@ -817,16 +832,26 @@ def resolve_key(key: str) -> str:
 def _action_catalog(action: str) -> dict:
     support, reason = action_support(action, has_touch=True)
     item = {"name": action, "support": support, "note": reason}
-    if action == "tap":
+    if action == "tap" or action in TOUCH_GESTURES:
         item["without_has_touch"] = action_support(action, has_touch=False)[0]
+    if action == "tap":
         item["note"] = "tap is supported on Chromium, Firefox, and WebKit only when the context hasTouch is true"
     return item
 
 
 def action_support(action: str, *, has_touch: bool) -> tuple[dict, str | None]:
     browsers = ("chromium", "firefox", "webkit")
-    if action in NO_PLAYWRIGHT_API:
-        return {name: "unsupported" for name in browsers}, NO_PLAYWRIGHT_API[action]
+    if action in TOUCH_GESTURES:
+        if not has_touch:
+            return (
+                {name: "unsupported" for name in browsers},
+                f"{action} needs a hasTouch context; a mouse event was not substituted",
+            )
+        return {
+            "chromium": "supported",
+            "firefox": "unsupported",
+            "webkit": "unsupported",
+        }, TOUCH_ENGINE_LIMIT
     if action == "tap" and not has_touch:
         return {name: "unsupported" for name in browsers}, TAP_NEEDS_TOUCH
     return {name: "supported" for name in browsers}, None
@@ -891,6 +916,39 @@ def load_file_path(raw: str) -> dict:
     if not path.is_file():
         raise InspectError("set-files path is not a file", "pass the file path. Contents are not copied into the output")
     return {"source": source, "path": str(path)}
+
+
+def _parse_signed_pair(text: str, action: str) -> tuple[int, int]:
+    coords = (text or "").split(",", 1)
+    if len(coords) != 2:
+        raise InspectError(f"{action} needs DX,DY", "use two integers separated by a comma")
+    try:
+        dx = int(coords[0].strip(), 10)
+        dy = int(coords[1].strip(), 10)
+    except ValueError as exc:
+        raise InspectError(f"{action} needs integer DX and DY", f"example: {action}:id:card=0,400") from exc
+    if abs(dx) > 20000 or abs(dy) > 20000:
+        raise InspectError(f"{action} delta is too large", "keep DX and DY within 20000")
+    if dx == 0 and dy == 0:
+        raise InspectError(f"{action} delta is zero", "pass a non-zero DX,DY. A mouse event was not substituted")
+    return dx, dy
+
+
+def _parse_long_press_ms(spec: str | None) -> int:
+    if spec is None or spec == "":
+        return LONG_PRESS_DEFAULT_MS
+    if not re.fullmatch(r"[1-9][0-9]*", spec.strip()):
+        raise InspectError(
+            "long-press duration must be a whole number of milliseconds",
+            "example: long-press:id:card=700",
+        )
+    duration = int(spec.strip())
+    if duration < LONG_PRESS_MIN_MS or duration > LONG_PRESS_MAX_MS:
+        raise InspectError(
+            "long-press duration must be from 500 to 3000 milliseconds",
+            "a shorter press is a tap. Pass long-press:LOCATOR=700",
+        )
+    return duration
 
 
 def _split_locator_value(rest: str) -> tuple[str, str | None]:
@@ -983,6 +1041,22 @@ def parse_step(text: str) -> dict:
             raise InspectError("scroll delta is too large", "keep DX and DY within 20000")
         step["dx"] = dx
         step["dy"] = dy
+        return step
+    if action == "long-press":
+        locator, spec = _split_locator_value(rest)
+        step["locator"] = _require_locator(locator)
+        step["duration_ms"] = _parse_long_press_ms(spec)
+        return step
+    if action in TOUCH_GESTURES:
+        locator, spec = _split_locator_value(rest)
+        step["locator"] = _require_locator(locator)
+        if spec is None:
+            if action == "swipe":
+                step["dx"], step["dy"] = SWIPE_DEFAULT_DX, SWIPE_DEFAULT_DY
+            else:
+                step["dx"], step["dy"] = TOUCH_SCROLL_DEFAULT_DX, TOUCH_SCROLL_DEFAULT_DY
+        else:
+            step["dx"], step["dy"] = _parse_signed_pair(spec, action)
         return step
     if action == "wait":
         step["wait"] = _parse_wait(rest)
@@ -1107,6 +1181,12 @@ def act_arguments_to_step(action: str, locator: str, text: str | None, text_env:
         if value is None:
             raise InspectError(f"{action} needs a value", "pass --text, --text-env, or --text-file. The value is redacted in the output")
         return parse_step(f"{action}:{locator}={value}")
+    if action in TOUCH_GESTURES:
+        if not locator:
+            raise InspectError(f"{action} needs a locator", "pass id:, testid:, role:, or css:")
+        if value is None:
+            return parse_step(f"{action}:{locator}")
+        return parse_step(f"{action}:{locator}={value}")
     if action not in STEP_ACTIONS:
         raise InspectError(f"unknown action {action}", "use the stage 1-2 vocabulary")
     if not locator:
@@ -1152,6 +1232,11 @@ def publish_step(step: dict, outcome: dict, *, url_before: str, url_after: str, 
         record["wait"] = {key: value for key, value in step["wait"].items() if key != "locator"}
     if step.get("viewport"):
         record["viewport"] = step["viewport"]
+    if step.get("duration_ms") is not None:
+        record["duration_ms"] = step["duration_ms"]
+    if step["action"] in TOUCH_GESTURES and step.get("dx") is not None:
+        record["dx"] = step["dx"]
+        record["dy"] = step["dy"]
     if outcome.get("reason"):
         record["reason"] = outcome["reason"]
     if outcome.get("unsupported_reason"):
@@ -1287,6 +1372,12 @@ def perform_action(page, step: dict, *, timeout_ms: int, has_touch: bool, browse
         if action == "tap":
             _call_and_allow_popup(page, lambda: target().tap(timeout=timeout_ms))
             return _done(support, "touch", True)
+        if action in TOUCH_GESTURES:
+            scroll_y = _perform_chromium_touch(page, step, timeout_ms=timeout_ms)
+            extra = {"unsupported_reason": TOUCH_ENGINE_LIMIT}
+            if scroll_y is not None:
+                extra["scroll_y"] = scroll_y
+            return _done(support, "touch", True, **extra)
     except InspectError:
         raise
     except Exception as exc:
@@ -1772,6 +1863,18 @@ def _storage_section(client, origin: str, *, keys: bool, fingerprints: bool, sen
     return _section("cdp:DOMStorage+Network.getCookies", "complete", {"areas": areas, "values": "redacted"})
 
 
+def _offsets_from_metrics(metrics) -> dict | None:
+    visual = metrics.get("cssVisualViewport") if isinstance(metrics, dict) else None
+    if not isinstance(visual, dict):
+        return None
+    offsets = {}
+    for key in ("pageX", "pageY"):
+        value = visual.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            offsets[key] = int(round(value))
+    return offsets or None
+
+
 def _css_visual_offsets(page) -> dict | None:
     """CSS visual viewport offsets from Page.getLayoutMetrics. No page JavaScript."""
     client = None
@@ -1786,15 +1889,173 @@ def _css_visual_offsets(page) -> dict | None:
                 client.detach()
             except Exception:
                 pass
-    visual = metrics.get("cssVisualViewport") if isinstance(metrics, dict) else None
-    if not isinstance(visual, dict):
+    return _offsets_from_metrics(metrics)
+
+
+def _layout_offsets(client) -> dict | None:
+    try:
+        return _offsets_from_metrics(client.send("Page.getLayoutMetrics"))
+    except Exception:
         return None
-    offsets = {}
-    for key in ("pageX", "pageY"):
-        value = visual.get(key)
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
-            offsets[key] = int(round(value))
-    return offsets or None
+
+
+def _dispatch_touch(client, kind: str, x: float | None = None, y: float | None = None) -> None:
+    if kind == "touchEnd":
+        points: list[dict] = []
+    else:
+        points = [{"x": int(round(x)), "y": int(round(y)), "id": 1}]
+    client.send("Input.dispatchTouchEvent", {"type": kind, "touchPoints": points, "modifiers": 0})
+
+
+def _interpolate_points(x0: float, y0: float, x1: float, y1: float) -> list[tuple[float, float]]:
+    """Stagehand drag path: t = i / steps from the start point to the end point."""
+    distance = math.hypot(x1 - x0, y1 - y0)
+    steps = max(GESTURE_MIN_STEPS, min(GESTURE_MAX_STEPS, math.ceil(distance / GESTURE_POINT_PX)))
+    points = []
+    for index in range(1, steps + 1):
+        t = index / steps
+        points.append((x0 + (x1 - x0) * t, y0 + (y1 - y0) * t))
+    return points
+
+
+def _touch_drag(client, x0: float, y0: float, x1: float, y1: float) -> None:
+    """Finger path via Input.dispatchTouchEvent.
+
+    Sleep instead of page.wait_for_timeout. A Playwright wait while the finger
+    is down was measured to drop the rest of the gesture on headless Chromium.
+    The dwell before touchEnd stops the fling that would scroll past the drag.
+    """
+    started = False
+    try:
+        _dispatch_touch(client, "touchStart", x0, y0)
+        started = True
+        time.sleep(TOUCH_MOVE_PAUSE_S)
+        for x, y in _interpolate_points(x0, y0, x1, y1):
+            _dispatch_touch(client, "touchMove", x, y)
+            time.sleep(TOUCH_MOVE_PAUSE_S)
+        _dispatch_touch(client, "touchMove", x1, y1)
+        time.sleep(TOUCH_DWELL_S)
+    finally:
+        if started:
+            try:
+                _dispatch_touch(client, "touchEnd")
+            except Exception:
+                pass
+
+
+def _fit_stroke(origin_x: float, origin_y: float, finger_dx: float, finger_dy: float, viewport: dict) -> tuple[float, float, float, float]:
+    """Place the finger path inside the viewport, shifting the start so the stroke is not clipped."""
+    margin = TOUCH_STROKE_MARGIN
+    max_x = max(margin + 1, viewport["width"] - margin)
+    max_y = max(margin + 1, viewport["height"] - margin)
+
+    def clamp_finger(finger: float, limit: float) -> float:
+        span = limit - margin
+        return max(-span, min(span, finger))
+
+    finger_dx = clamp_finger(finger_dx, max_x)
+    finger_dy = clamp_finger(finger_dy, max_y)
+
+    def start_on(origin: float, finger: float, limit: float) -> float:
+        low = max(margin, margin - finger)
+        high = min(limit, limit - finger)
+        if low > high:
+            return margin
+        if origin < low:
+            return low
+        if origin > high:
+            return high
+        return origin
+
+    start_x = start_on(origin_x, finger_dx, max_x)
+    start_y = start_on(origin_y, finger_dy, max_y)
+    return start_x, start_y, start_x + finger_dx, start_y + finger_dy
+
+
+def _gesture_origin(page, locator: str, timeout_ms: int, *, bring_into_view: bool) -> tuple[float, float, dict]:
+    """Center of the visible box. A missing box is not dispatched at 0,0."""
+    found, _calls_page = _action_locator(page, locator)
+    if bring_into_view:
+        found.scroll_into_view_if_needed(timeout=timeout_ms)
+    box = found.bounding_box()
+    viewport = page.viewport_size or dict(DESKTOP_VIEWPORT)
+    if box and box.get("width", 0) > 0 and box.get("height", 0) > 0:
+        center_x = box["x"] + box["width"] / 2
+        center_y = box["y"] + box["height"] / 2
+        inside = 1 <= center_x <= viewport["width"] - 1 and 1 <= center_y <= viewport["height"] - 1
+        if inside:
+            return center_x, center_y, viewport
+    if bring_into_view:
+        raise InspectError(
+            "element has no visible box",
+            "the locator was scrolled into view and still has no positive box inside the viewport. The gesture was not sent at 0,0",
+            stage="inspect",
+        )
+    return viewport["width"] / 2, viewport["height"] / 2, viewport
+
+
+def _perform_chromium_touch(page, step: dict, *, timeout_ms: int) -> int | None:
+    """Chromium CDP touch gestures. Firefox and WebKit never reach this."""
+    try:
+        client = page.context.new_cdp_session(page)
+    except Exception as exc:
+        raise InspectError(
+            "CDP Input session is not available",
+            "Chromium touch gestures need a CDP session",
+            stage="inspect",
+        ) from exc
+    try:
+        action = step["action"]
+        if action == "long-press":
+            x, y, _viewport = _gesture_origin(page, step["locator"], timeout_ms, bring_into_view=True)
+            client.send("Input.synthesizeTapGesture", {
+                "x": x,
+                "y": y,
+                "duration": int(step["duration_ms"]),
+                "gestureSourceType": "touch",
+            })
+            return None
+        if action == "swipe":
+            x, y, viewport = _gesture_origin(page, step["locator"], timeout_ms, bring_into_view=True)
+            start_x, start_y, end_x, end_y = _fit_stroke(x, y, step["dx"], step["dy"], viewport)
+            if abs(end_x - start_x) < 1 and abs(end_y - start_y) < 1:
+                raise InspectError(
+                    "swipe does not fit in the viewport",
+                    "use a shorter DX,DY. A mouse drag was not substituted",
+                    stage="inspect",
+                )
+            _touch_drag(client, start_x, start_y, end_x, end_y)
+            return None
+        remaining_x = float(step["dx"])
+        remaining_y = float(step["dy"])
+        for pass_index in range(TOUCH_SCROLL_PASSES):
+            if abs(remaining_x) < 1 and abs(remaining_y) < 1:
+                break
+            x, y, viewport = _gesture_origin(
+                page, step["locator"], timeout_ms, bring_into_view=pass_index == 0,
+            )
+            start_x, start_y, end_x, end_y = _fit_stroke(x, y, -remaining_x, -remaining_y, viewport)
+            traveled_x = start_x - end_x
+            traveled_y = start_y - end_y
+            if abs(traveled_x) < 1 and abs(traveled_y) < 1:
+                break
+            before = _layout_offsets(client)
+            _touch_drag(client, start_x, start_y, end_x, end_y)
+            time.sleep(0.05)
+            after = _layout_offsets(client)
+            if before and after and after.get("pageX") == before.get("pageX") and after.get("pageY") == before.get("pageY"):
+                break
+            remaining_x -= traveled_x
+            remaining_y -= traveled_y
+        offsets = _layout_offsets(client)
+        if offsets is None:
+            return None
+        return offsets.get("pageY")
+    finally:
+        try:
+            client.detach()
+        except Exception:
+            pass
 
 
 def _cdp_send(client, method: str, params: dict | None, sent: list):
