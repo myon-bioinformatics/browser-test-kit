@@ -5,11 +5,15 @@
 shell. Headless launches (the default, ``playwright screenshot``/``pdf``, pytest/Node
 code without ``headless=False``) use only the shell; a config with
 ``channel: 'chromium'`` (new headless) or ``headless: false`` uses only the full
-build. For every install line in ``.github/workflows`` this looks at what the same
-job runs afterwards and at the Playwright configs, then prints one line::
+build. A job that launches bundled Chromium both ways (a collect/launch without
+``--headed``, and another with ``--headed``) needs both downloads, so the install
+line should carry neither flag. ``--channel`` selects a branded browser and uses
+neither build. For every install line in ``.github/workflows`` this looks at what
+the same job runs afterwards and at the Playwright configs, then prints one line::
 
     ok      .github/workflows/ci.yml:22 --only-shell (job runs headless only)
     suggest .github/workflows/portal.yml:37 add --no-shell (config uses channel 'chromium')
+    ok      .github/workflows/matrix.yml:40 full + shell (job uses both the full build and the shell)
     warn    .github/workflows/e2e.yml:40 installs firefox but no config project uses it
 
 Heuristics, not a proof: commands are matched by text and configs by regex.
@@ -85,6 +89,33 @@ def jobs(text):
     return out
 
 
+def chromium_modes(after):
+    """Return whether later commands launch bundled Chromium headed and/or headless.
+
+    ``for name in ... chromium ...`` makes ``$name`` a Chromium launch. A later
+    ``for`` of the same name replaces that set. ``--channel`` is a branded browser.
+    """
+    chromium_vars = {}
+    for line in after.splitlines():
+        match = re.search(r"\bfor\s+(\w+)\s+in\s+([^;\n]+)", line)
+        if match:
+            chromium_vars[match.group(1)] = bool(re.search(r"\bchromium\b", match.group(2)))
+    full = shell = False
+    for line in after.splitlines():
+        if line.lstrip().startswith("#"):
+            continue
+        for target in re.findall(r"--browser(?:=|\s+)[\"']?\$?(\w+)", line):
+            if target != "chromium" and not chromium_vars.get(target):
+                continue
+            if re.search(r"--channel\b", line):
+                continue
+            if re.search(r"--headed\b", line):
+                full = True
+            else:
+                shell = True
+    return full, shell
+
+
 def plan(root):
     engines, full_reasons = config_facts(root)
     rows = []
@@ -109,9 +140,10 @@ def plan(root):
                 uses_config = bool(re.search(r"playwright\s+test\b|npm\s+(?:run\s+)?test|npx\s+playwright\s+test", after))
                 uses_cli = bool(re.search(r"playwright\s+(?:screenshot|pdf)\b", after))
                 headed = bool(re.search(r"--headed\b", after))
-                needs_full = headed or (uses_config and bool(full_reasons))
-                needs_shell = uses_cli or not (uses_config and full_reasons) and not headed
-                if needs_full and needs_shell and uses_cli:
+                _launch_full, launch_shell = chromium_modes(after)
+                needs_full = _launch_full or headed or (uses_config and bool(full_reasons))
+                needs_shell = launch_shell or uses_cli or not (uses_config and full_reasons) and not headed
+                if needs_full and needs_shell:
                     want, why = None, "job uses both the full build and the shell"
                 elif needs_full:
                     want, why = "--no-shell", "; ".join(full_reasons) if not headed else "job runs --headed"

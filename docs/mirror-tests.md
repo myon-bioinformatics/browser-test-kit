@@ -64,17 +64,24 @@ reported by `extract_sections` / `extract_links` / `extract_images` (e.g. a
 ## Lighter Playwright where a browser is still needed
 
 `playwright install chromium` downloads the full Chromium **and** the headless shell
-(measured for Playwright 1.63: 597 MB + 323 MB). Headless runs (the default, and every
-CI job here) only launch the headless shell, so CI can use
+(measured for Playwright 1.63: 597 MB + 323 MB). Headless runs (the default) only
+launch the headless shell, so a job that never opens a headed window can use
 
 ```sh
 npx playwright install --with-deps --only-shell chromium
 ```
 
-and skip the unused 597 MB. `--headed` local runs still need the full build.
+and skip the unused 597 MB. `--headed` runs still need the full build.
 Firefox/WebKit are unaffected. `npx playwright screenshot` / `pdf` also launch the
 headless shell. The opposite case: a config with `channel: 'chromium'` (new headless)
 launches the full build only, so install it with `--no-shell` and skip the 323 MB shell.
+A job that does both needs neither flag. `platform-matrix` launches Chromium headless
+for each profile (`platform_probe.py collect` defaults to `headless=True`) and then
+again with `--headed` under `xvfb-run` on Linux, so its install stays
+
+```sh
+python -m playwright install --with-deps chromium firefox webkit
+```
 
 ## Mirror candidates elsewhere
 
