@@ -114,11 +114,16 @@ function explicitPort(target) {
 }
 
 function helpText() {
-  return `page_inspect.cjs — observe a loopback page, rank locators, and run one action.
+  return `btk.cjs — the Node entry point for scripts/btk.py (same commands, same output).
+
+usage: node scripts/btk.cjs <command> [args]
+  observe, act, locate, count, describe, compare, operations   loopback page inspection
+  fetch                                                       fetch one archive member (integrity first)
+  plan                                                        recommend playwright install lines per job
 
 Commands delegate to btk.py through vendor/py_launch.cjs (Node 24+).
-offline: node scripts/page_inspect.cjs locate SNAPSHOT --query TEXT --json
-live:    node scripts/page_inspect.cjs observe http://127.0.0.1:PORT/page --json
+offline: node scripts/btk.cjs locate SNAPSHOT --query TEXT --json
+live:    node scripts/btk.cjs observe http://127.0.0.1:PORT/page --json
 `;
 }
 
@@ -145,7 +150,7 @@ function main(argv) {
     process.stderr.write("error: short options are not accepted\nhint: pass --help\n");
     return 2;
   }
-  if (argv.length === 0 || argv.includes("--help")) {
+  if (argv.length === 0 || argv[0] === "--help") {
     process.stdout.write(helpText());
     return argv.length === 0 ? 2 : 0;
   }

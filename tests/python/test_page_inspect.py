@@ -216,7 +216,7 @@ def test_twins_agree_on_score_loopback_fingerprint_and_evidence():
     for python_name, node_name, cases in pairs:
         done = subprocess.run(
             [sys.executable, "-S", str(ROOT / "scripts" / "twin_parity.py"),
-             f"scripts/btk.py:{python_name}", f"scripts/page_inspect.cjs:{node_name}"],
+             f"scripts/btk.py:{python_name}", f"scripts/btk.cjs:{node_name}"],
             input=json.dumps(cases), text=True, capture_output=True, cwd=ROOT, timeout=30,
         )
         assert done.returncode == 0, done.stdout + done.stderr

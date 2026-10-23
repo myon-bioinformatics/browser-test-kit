@@ -262,7 +262,7 @@ python -S scripts/twin_parity.py scripts/interaction.py:press_point scripts/inte
 - The first run found two real drifts, now fixed and recorded: `TWIN_PARSER_DRIFT` (27 of 250 URLs) and `ROUNDING_TIE_DRIFT` (0.562 vs 0.563).
 - Library: `node_calls(module, export, cases)`, `python_calls(fn, cases)`, `mismatches(a, b)`. Exit codes: 0 agree; 1 mismatch; 2 input error.
 
-### Page observe, locate, and act (`scripts/btk.py`, `scripts/page_inspect.cjs`)
+### Page observe, locate, and act (`scripts/btk.py`, `scripts/btk.cjs`)
 
 Separate commands for a loopback page: passive observe, offline locate, and one declared action. The design follows REA's browser observation notes (morluto/rea, MIT), not that project's server. See [REA observation](docs/rea-observation.md). Later phases stay on [issue 117](https://github.com/myon-bioinformatics/browser-test-kit/issues/117).
 
@@ -270,7 +270,7 @@ Separate commands for a loopback page: passive observe, offline locate, and one 
 python scripts/btk.py observe http://127.0.0.1:8765/page --json --out observe.json
 python -S scripts/btk.py locate observe.json --query "Save draft" --unique --json
 python scripts/btk.py act http://127.0.0.1:8765/page --action click --locator id:save-draft --json
-node scripts/page_inspect.cjs locate observe.json --query "Save draft" --unique --json
+node scripts/btk.cjs locate observe.json --query "Save draft" --unique --json
 python -S scripts/btk.py compare before.json after.json --json
 python scripts/btk.py observe http://127.0.0.1:8765/page --out before.json --after-click id:next --after-out after.json
 ```
