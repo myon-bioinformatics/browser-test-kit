@@ -1330,15 +1330,29 @@ QUIET_JS = """(() => {
 })()""" % QUIET_MS
 
 
+# Playwright runs the predicate inside the page (setTimeout polling, see frames.ts waitForFunctionExpression),
+# so the observer and the global it leaves behind must be removed after every wait, success or timeout.
+QUIET_CLEANUP_JS = (
+    "(() => { const s = window.__btkQuiet; if (s && s.observer) s.observer.disconnect();"
+    " delete window.__btkQuiet; })()"
+)
+
+
 def _wait_quiet(page, timeout_ms: int) -> bool:
     """True when the page went quiet before the timeout. A timeout is a result, not an error."""
     try:
-        page.wait_for_function(QUIET_JS, polling=QUIET_POLL_MS, timeout=timeout_ms)
-        return True
-    except Exception as exc:
-        if type(exc).__name__ == "TimeoutError":
-            return False
-        raise
+        try:
+            page.wait_for_function(QUIET_JS, polling=QUIET_POLL_MS, timeout=timeout_ms)
+            return True
+        except Exception as exc:
+            if type(exc).__name__ == "TimeoutError":
+                return False
+            raise
+    finally:
+        try:
+            page.evaluate(QUIET_CLEANUP_JS)
+        except Exception:
+            pass  # the page may have navigated away; a new document has no observer to remove
 
 
 def _perform(page, action: str, locator: str, text, timeout_ms: int, outcome: dict | None = None) -> bool:
