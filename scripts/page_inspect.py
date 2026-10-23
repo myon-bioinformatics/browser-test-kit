@@ -2555,7 +2555,10 @@ def parse_after_action(spec: str) -> dict:
     if lowered.startswith("scroll-into:"):
         return {"kind": "scroll_into", "locator": _require_locator(text[12:])}
     if lowered.startswith("scroll:"):
-        step = parse_step(f"scroll:{text[7:]}")
+        body = text[7:]
+        if body.startswith(("id:", "testid:", "role:", "css:")):
+            return {"kind": "scroll_into", "locator": _require_locator(body)}
+        step = parse_step(f"scroll:{body}")
         return {"kind": "scroll", "dx": step["dx"], "dy": step["dy"]}
     raise InspectError(
         "after-action must start with click:, hover:, scroll:, or scroll-into:",
