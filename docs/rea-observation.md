@@ -46,6 +46,10 @@ Service workers are blocked and redirects are aborted. Those are bounds on the s
 
 `locate` still ranks controls by the longest common substring divided by the shorter UTF-16 length, after simple Unicode `lower`. The default threshold is `1` (containment). `--unique` fails when the top score is shared. That ranking is local arithmetic on the snapshot. It does not call the page. Addresses prefer `id:`, then `testid:`, then `role:`, then `css:`.
 
+## Snapshot compare
+
+`compare` reads two `btk-page-observe/1` files and runs no browser. It reuses `evidence_relation`, so a section is `same` only when both sides are complete and their digests match. Shadow-root counts and child-frame and element totals are reported as left, right, and delta. A count is `null` when that side's section was not complete. Environment differences (OS, browser, profile, headless) are reported but do not change the section relations.
+
 ## Deferred on issue 117
 
 Child frames and shadow roots as their own address spaces. Observe counts child frames and open plus closed shadow roots (pierced DOM, `shadow_roots` section, `contents: not_entered`); it does not enter either and does not read shadow attributes. A new snapshot after navigation in one session. macOS, Windows, Linux, and Android Chrome or WebView. Branded channels as a matrix. A Stagehand caller. A headed lane in CI. An agent transport after these envelopes stay stable. Screenshot comparison and full scenario diffs.

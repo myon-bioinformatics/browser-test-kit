@@ -271,8 +271,10 @@ python scripts/page_inspect.py observe http://127.0.0.1:8765/page --json --out o
 python -S scripts/page_inspect.py locate observe.json --query "Save draft" --unique --json
 python scripts/page_inspect.py act http://127.0.0.1:8765/page --action click --locator id:save-draft --json
 node scripts/page_inspect.cjs locate observe.json --query "Save draft" --unique --json
+python -S scripts/page_inspect.py compare before.json after.json --json
 ```
 
+- `compare` reads two observe files offline. Each section is `same`, `different`, or `unknown` (a missing or truncated section is never `same`), with open, closed, and total shadow-root counts and their deltas. It reports when the browser, profile, or OS differ.
 - Targets are `http://127.0.0.1:PORT/...` or `http://[::1]:PORT/...` only. Hostnames, file URLs, and missing ports are rejected.
 - `observe` on Chromium reads CDP and does not call the page. It counts open and closed shadow roots in a pierced DOM (`shadow_roots` section) without entering them. Firefox and WebKit report CDP unavailable instead of inventing a DOM. Storage is keys and SHA-256 fingerprints, never values. A missing section is not a claim that two captures match.
 - `act` is click, fill, or wait_for_timeout. It re-queries the locator and rejects `h:N`. Playwright's selector engine runs only for click and fill.
