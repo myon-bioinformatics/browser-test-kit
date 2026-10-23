@@ -34,7 +34,7 @@ INTERACTIVE_ROLES = {
     "button", "link", "textbox", "searchbox", "checkbox", "radio", "combobox",
     "slider", "spinbutton", "switch", "tab", "menuitem",
 }
-ACT_ACTIONS = {"click", "dblclick", "hover", "focus", "check", "uncheck", "fill", "press", "select", "wait_for_timeout"}
+ACT_ACTIONS = {"click", "dblclick", "hover", "focus", "check", "uncheck", "fill", "press", "select", "wait_for_timeout", "settle"}
 # Each action maps to the Playwright method of the same meaning. press without a locator sends the key to the page.
 ACT_TEXT_ACTIONS = {"fill", "press", "select"}
 MAX_STEPS = 20
@@ -1239,8 +1239,9 @@ def observe_page(*, url: str, browser_name: str, profile: str, headed: bool, cha
         for index, step in enumerate(steps or [], start=2):
             url_before = strip_userinfo(page.url)
             timeout_ms = int(step["text"]) if step["action"] == "wait_for_timeout" else 5000
+            step_outcome: dict = {}
             try:
-                page_js = _perform(page, step["action"], step["locator"], step["text"], timeout_ms)
+                page_js = _perform(page, step["action"], step["locator"], step["text"], timeout_ms, step_outcome)
             except InspectError:
                 raise
             except Exception as exc:
@@ -1261,14 +1262,17 @@ def observe_page(*, url: str, browser_name: str, profile: str, headed: bool, cha
             console.clear()
             state["network_truncated"] = False
             state["console_truncated"] = False
-            results.append(capture({
+            step_record = {
                 "index": index,
                 "action": step["action"],
                 "locator": step["locator"],
                 "url_before": url_before,
                 "url_after": strip_userinfo(page.url),
                 "hint": "network and console start empty after this step; url_before equal to url_after means it did not navigate; text values are not recorded",
-            }, page_js))
+            }
+            if "quiet" in step_outcome:
+                step_record["quiet"] = step_outcome["quiet"]
+            results.append(capture(step_record, page_js))
     except InspectError as exc:
         failure = exc
     except Exception as exc:
@@ -1311,11 +1315,42 @@ def _action_locator(page, locator: str):
     )
 
 
-def _perform(page, action: str, locator: str, text, timeout_ms: int) -> bool:
+# Quiet window: readyState is past "loading" and the document has not mutated for QUIET_MS.
+# Same rule as Stagehand's quietWait (packages/integrations/core/src/facade/runtime.ts): 400 ms, polled every 100 ms.
+# It runs page script (a MutationObserver), so it is only an act or step action, never part of passive observe.
+QUIET_MS = 400
+QUIET_POLL_MS = 100
+QUIET_JS = """(() => {
+  const s = window.__btkQuiet || (window.__btkQuiet = {last: performance.now(), observer: null});
+  if (!s.observer) {
+    s.observer = new MutationObserver(() => { s.last = performance.now(); });
+    s.observer.observe(document, {subtree: true, childList: true, attributes: true, characterData: true});
+  }
+  return document.readyState !== 'loading' && performance.now() - s.last >= %d;
+})()""" % QUIET_MS
+
+
+def _wait_quiet(page, timeout_ms: int) -> bool:
+    """True when the page went quiet before the timeout. A timeout is a result, not an error."""
+    try:
+        page.wait_for_function(QUIET_JS, polling=QUIET_POLL_MS, timeout=timeout_ms)
+        return True
+    except Exception as exc:
+        if type(exc).__name__ == "TimeoutError":
+            return False
+        raise
+
+
+def _perform(page, action: str, locator: str, text, timeout_ms: int, outcome: dict | None = None) -> bool:
     """Run one declared action through the Playwright method of the same name. Returns page_js."""
     if action == "wait_for_timeout":
         page.wait_for_timeout(timeout_ms)
         return False
+    if action == "settle":
+        quiet = _wait_quiet(page, timeout_ms)
+        if outcome is not None:
+            outcome["quiet"] = quiet
+        return True
     if action == "press" and not (locator or "").strip():
         page.keyboard.press(text, timeout=timeout_ms)
         return True
@@ -1352,11 +1387,12 @@ def act_page(*, url: str, browser_name: str, profile: str, headed: bool, channel
     if action in ACT_TEXT_ACTIONS and text is None:
         raise InspectError(f"{action} needs --text", "pass the literal text, key name, or option value")
     keyboard_only = action == "press" and not (locator or "").strip()
-    if action != "wait_for_timeout" and not keyboard_only:
+    if action not in ("wait_for_timeout", "settle") and not keyboard_only:
         _check_action_locator(locator)
     playwright, browser, page = _with_browser(url, browser_name, profile, headed, channel)
     failure = None
     result = None
+    outcome: dict = {}
     try:
         try:
             page.goto(url, wait_until="load", timeout=30000)
@@ -1368,7 +1404,7 @@ def act_page(*, url: str, browser_name: str, profile: str, headed: bool, channel
             ) from exc
         page_js = False
         try:
-            page_js = _perform(page, action, locator, text, timeout_ms)
+            page_js = _perform(page, action, locator, text, timeout_ms, outcome)
         except InspectError:
             raise
         except Exception as exc:
@@ -1403,6 +1439,7 @@ def act_page(*, url: str, browser_name: str, profile: str, headed: bool, channel
             "limits": {
                 "page_js_called": page_js,
                 "bounded_to": [action],
+                **({"quiet": outcome["quiet"]} if "quiet" in outcome else {}),
                 "ordinals": "rejected",
                 "dom": "not_requested",
                 "selector_engine": "playwright" if page_js else "none",
@@ -1515,10 +1552,27 @@ def dumps(payload: dict) -> str:
     return json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
 
 
+# Ported from Stagehand's sanitizeErrorMessage (packages/integrations/core/src/harness/redact.ts).
+# Playwright exception text can carry URLs with keys, bearer tokens, or provider keys.
+REDACTIONS = (
+    (re.compile(r"([?&](?:signingKey|apiKey|api_key|token|key)=)[^&\s\"']+", re.IGNORECASE), r"\1[redacted]"),
+    (re.compile(r"\b(sk-[A-Za-z0-9_-]{6})[A-Za-z0-9_-]+"), r"\1[redacted]"),
+    (re.compile(r"\b(bb_(?:live|test)_[A-Za-z0-9]{4})[A-Za-z0-9_-]+"), r"\1[redacted]"),
+    (re.compile(r"\bAIza[0-9A-Za-z_-]{30,}"), "AIza[redacted]"),
+    (re.compile(r"\b(Bearer\s+)[A-Za-z0-9._~+/=-]{8,}", re.IGNORECASE), r"\1[redacted]"),
+)
+
+
+def redact_text(text: str) -> str:
+    for pattern, replacement in REDACTIONS:
+        text = pattern.sub(replacement, text)
+    return text
+
+
 def error_envelope(operation: str, exc: InspectError) -> dict:
     payload = {
         "schema": SCHEMA_INSPECT, "ok": False, "operation": operation, "stage": exc.stage,
-        "error": exc.error, "hint": exc.hint,
+        "error": redact_text(exc.error), "hint": redact_text(exc.hint),
     }
     if exc.suggestions:
         payload["suggestions"] = exc.suggestions
@@ -1712,7 +1766,7 @@ def _parse_step(raw: str, index: int) -> dict:
     if action == "wait_for_timeout":
         if text is None or not re.fullmatch(r"[0-9]{1,6}", text) or int(text) > 120000:
             raise InspectError(f"step {index}: wait_for_timeout needs milliseconds 0..120000 as TEXT", "write wait_for_timeout - 500")
-    elif not (action == "press" and not locator):
+    elif action != "settle" and not (action == "press" and not locator):
         _check_action_locator(locator)
     return {"action": action, "locator": locator, "text": text}
 
