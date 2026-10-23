@@ -95,3 +95,11 @@ def test_headless_config_suggests_only_shell_and_cli(tmp_path, capsys):
     empty = tmp_path / "empty"
     empty.mkdir()
     assert pip.plan_cli([str(empty)]) == 0 and "no playwright install lines" in capsys.readouterr().out
+
+
+def test_install_deps_is_not_a_browser_install():
+    """`playwright install-deps` installs system libraries; it must not be planned as a browser install."""
+    assert pip.INSTALL.search("npx playwright install-deps --dry-run chromium firefox webkit") is None
+    assert pip.INSTALL.search("npx playwright install-deps chromium firefox webkit") is None
+    match = pip.INSTALL.search("npx playwright install --only-shell chromium")
+    assert match is not None and match.group(1).split() == ["--only-shell", "chromium"]

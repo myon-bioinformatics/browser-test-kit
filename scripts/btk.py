@@ -160,7 +160,7 @@ def fetch_cli(argv: list[str] | None = None) -> int:
 
 # ---- plan ------------------------------------------------------------------------------
 
-INSTALL = re.compile(r"playwright(?:@[\w.]+)?\s+install\b([^\n]*)")
+INSTALL = re.compile(r"playwright(?:@[\w.]+)?\s+install(?![\w-])([^\n]*)")
 CONFIG_NAMES = re.compile(r"^playwright\.config\.(?:ts|js|mjs|cjs)$")
 DEVICES = {"Desktop Chrome": "chromium", "Pixel": "chromium", "Galaxy": "chromium", "Desktop Edge": "chromium",
            "Desktop Firefox": "firefox", "Desktop Safari": "webkit", "iPhone": "webkit", "iPad": "webkit"}
