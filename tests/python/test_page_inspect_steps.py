@@ -1,5 +1,6 @@
 """observe --step: a sequence of declared actions, one snapshot per step, text never recorded."""
 import functools
+import importlib.util
 import json
 import subprocess
 import sys
@@ -11,6 +12,10 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "btk.py"
+_spec = importlib.util.spec_from_file_location("route_trail", ROOT / "scripts" / "route_trail.py")
+route_trail = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(route_trail)
+ROUTES = route_trail.load_registry((ROOT / "fixtures" / "page_inspect_routes.json").read_text(encoding="utf-8"))
 
 FORM = """<!doctype html><meta charset="utf-8"><title>form</title>
 <input id="q" type="text"> <a id="go" href="result.html">Go</a>
@@ -102,3 +107,27 @@ def test_goto_step_navigates_within_loopback(tmp_path):
     navigated = json.loads(Path(summary["files"][1]).read_text(encoding="utf-8"))
     assert navigated["step"]["action"] == "goto"
     assert navigated["url"].endswith("/result.html")
+
+
+@pytest.mark.browser
+def test_emoji_trail_drives_goto_steps(tmp_path):
+    (tmp_path / "form.html").write_text(FORM, encoding="utf-8")
+    (tmp_path / "result.html").write_text(RESULT, encoding="utf-8")
+    out = tmp_path / "steps"
+    out.mkdir()
+    handler = functools.partial(SimpleHTTPRequestHandler, directory=str(tmp_path))
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        base = f"http://127.0.0.1:{server.server_port}"
+        trail = route_trail.resolve("🏠 → 🗺", ROUTES, base=base, hash_routing=False)
+        start, *rest = trail
+        steps = [f"goto - {row['url']}" for row in rest]
+        done = observe([start["url"], "--step", *steps, "--out-dir", str(out), "--json"], tmp_path)
+    finally:
+        server.shutdown()
+    assert done.returncode == 0, done.stderr
+    summary = json.loads(done.stdout)
+    assert [Path(f).name for f in summary["files"]] == ["00-initial.json", "01-goto.json"]
+    final = json.loads(Path(summary["files"][-1]).read_text(encoding="utf-8"))
+    assert final["url"] == trail[-1]["url"] and final["url"].endswith("/result.html")
