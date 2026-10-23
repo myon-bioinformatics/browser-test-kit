@@ -174,6 +174,8 @@ def test_scroll_wheel_triggers_dom_change_in_second_snapshot(tmp_path):
     assert done.returncode == 0, done.stderr
     after = json.loads((tmp_path / "after.json").read_text(encoding="utf-8"))
     assert after["step"]["action"] == "scroll" and after["step"]["target"] == "0,800"
+    scroll_y = after["limits"]["scroll_y"]
+    assert 650 <= scroll_y <= 950, f"expected scrollY near 800, got {scroll_y}"
     ids = [element.get("id") for element in after.get("elements") or []]
     assert "injected" in ids
 

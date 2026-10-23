@@ -1309,6 +1309,11 @@ def _parse_scroll_body(body: str, *, context: str) -> dict:
     return {"kind": "scroll_into", "locator": _parse_action_locator_prefix(text, context=context)}
 
 
+def _mouse_wheel_scroll(page, dx: int, dy: int) -> None:
+    """Apply one wheel delta (dx, dy) in CSS pixels. Does not repeat the full vector."""
+    page.mouse.wheel(dx, dy)
+
+
 def _post_step_settle_plan(action: dict) -> tuple[int, str]:
     kind = action["kind"]
     if kind == "wait_ms":
@@ -1585,9 +1590,7 @@ def run_playwright_step(page, action: dict, *, timeout_ms: int = DEFAULT_STEP_TI
             step_fields = {"action": "hover", "target": action["locator"]}
         elif kind == "scroll":
             dx, dy = action["dx"], action["dy"]
-            repeats = max(1, (abs(dx) + abs(dy)) // 300 + 1)
-            for _ in range(repeats):
-                page.mouse.wheel(dx, dy)
+            _mouse_wheel_scroll(page, dx, dy)
             extra_limits["scroll_may_run_page_scripts"] = True
             extra_limits["scroll_input"] = "mouse.wheel"
             step_fields = {"action": "scroll", "target": f"{action['dx']},{action['dy']}"}
@@ -1654,6 +1657,8 @@ def run_playwright_step(page, action: dict, *, timeout_ms: int = DEFAULT_STEP_TI
     page.wait_for_timeout(settle_ms)
     extra_limits["post_step_settle_ms"] = settle_ms
     extra_limits["wait_policy"] = wait_policy
+    if kind == "scroll":
+        extra_limits["scroll_y"] = page.evaluate("() => window.scrollY")
     if dialogs:
         step_fields["dialogs"] = dialogs
     return step_fields, page_js, extra_limits
