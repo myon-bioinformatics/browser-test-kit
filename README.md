@@ -272,10 +272,10 @@ python -S scripts/page_inspect.py locate observe.json --query "Save draft" --uni
 python scripts/page_inspect.py act http://127.0.0.1:8765/page --action click --locator id:save-draft --json
 node scripts/page_inspect.cjs locate observe.json --query "Save draft" --unique --json
 python -S scripts/page_inspect.py compare before.json after.json --json
-python scripts/page_inspect.py observe http://127.0.0.1:8765/page --out before.json --after-click id:next --after-out after.json
+python scripts/page_inspect.py observe http://127.0.0.1:8765/page --out before.json --after-action click:id:next --after-out after.json
 ```
 
-- `observe --after-click LOCATOR --out A.json --after-out B.json` clicks once in the same browser and writes the second snapshot to its own file. Its `step` records the click and the URL before and after. Network and console start empty after the click, and `limits.click_runs_page_scripts` is `true`, so the second snapshot is not passive.
+- `observe --after-action SPEC --out A.json --after-out B.json` takes a passive first snapshot, runs one step (`click:LOCATOR`, `hover:LOCATOR`, `scroll:DX,DY`, or `scroll-into:LOCATOR`), then writes a second snapshot. `--after-click LOCATOR` is an alias for `click:LOCATOR`. The second file has `step` (action, target, URLs) and limits that describe whether the step could run page scripts or trigger `:hover` CSS. Network and console are cleared after the step so `compare` sees only post-step activity.
 - `compare` reads two observe files offline. Each section is `same`, `different`, or `unknown` (a missing or truncated section is never `same`), with open, closed, and total shadow-root counts and their deltas. It reports when the browser, profile, or OS differ.
 - Targets are `http://127.0.0.1:PORT/...` or `http://[::1]:PORT/...` only. Hostnames, file URLs, and missing ports are rejected.
 - `observe` on Chromium reads CDP and does not call the page. It counts author open and closed shadow roots in a pierced DOM (`shadow_roots` section) without entering them; Chromium user-agent shadow roots are reported separately as `user_agent`. Firefox and WebKit report CDP unavailable instead of inventing a DOM. Storage is keys and SHA-256 fingerprints, never values. A missing section is not a claim that two captures match.

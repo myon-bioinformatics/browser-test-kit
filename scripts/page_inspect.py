@@ -1050,8 +1050,8 @@ def _finish(playwright, browser, failure, result):
 
 def observe_page(*, url: str, browser_name: str, profile: str, headed: bool, channel: str | None,
                  include_hidden: bool, include_storage_keys: bool, include_storage_fingerprints: bool,
-                 role: str, start: int, limit: int, after_click: str | None = None) -> list[dict]:
-    """One observation, or two when after_click is set: the second is taken after one click in the same browser."""
+                 role: str, start: int, limit: int, after_action: dict | None = None) -> list[dict]:
+    """One observation, or two when after_action is set: the second follows one Playwright step in the same browser."""
     url = loopback_target(url)
     playwright, browser, page = _with_browser(url, browser_name, profile, headed, channel)
     failure = None
@@ -1124,7 +1124,7 @@ def observe_page(*, url: str, browser_name: str, profile: str, headed: bool, cha
                 stage="navigate",
             ) from exc
 
-        def capture(step: dict | None, page_js: bool) -> dict:
+        def capture(step: dict | None, page_js: bool, step_limits: dict | None = None) -> dict:
             document = _cdp_send(client, "DOM.getDocument", {"depth": -1, "pierce": False}, sent)
             pierced = _cdp_send(client, "DOM.getDocument", {"depth": -1, "pierce": True}, sent)
             shadow = count_shadow_roots(pierced.get("root") or {})
@@ -1201,9 +1201,8 @@ def observe_page(*, url: str, browser_name: str, profile: str, headed: bool, cha
                 "non_loopback": "blocked",
                 "cdp_methods": sent,
             }
-            if step is not None:
-                limits["click_runs_page_scripts"] = True
-                limits["selector_engine"] = "playwright"
+            if step is not None and step_limits:
+                limits.update(step_limits)
             snapshot = assemble_observe(
                 {"title": title, "elements": elements, "child_frames": child_frames, "total": len(elements), "truncated": dom_truncated},
                 environment=_environment(browser, browser_name, channel, headed, profile, viewport),
@@ -1214,24 +1213,17 @@ def observe_page(*, url: str, browser_name: str, profile: str, headed: bool, cha
             return snapshot
 
         results.append(capture(None, False))
-        if after_click is not None:
-            target, _ = _action_locator(page, after_click)
+        if after_action is not None:
             url_before = strip_userinfo(page.url)
             try:
-                target.click(timeout=5000)
+                step_part, page_js, step_limits = _perform_after_action(page, after_action)
+            except InspectError:
+                raise
             except Exception as exc:
                 raise InspectError(
                     f"{type(exc).__name__}: {exc}",
-                    "the locator was resolved on this call. If it missed, observe again and pass that address",
+                    "the after-action step failed; the second snapshot was not written",
                     stage="inspect",
-                ) from exc
-            try:
-                page.wait_for_load_state("load", timeout=30000)
-            except Exception as exc:
-                raise InspectError(
-                    f"{type(exc).__name__}: {exc}",
-                    "the click did not reach a loaded state; the second snapshot was not written",
-                    stage="navigate",
                 ) from exc
             network.clear()
             console.clear()
@@ -1240,12 +1232,11 @@ def observe_page(*, url: str, browser_name: str, profile: str, headed: bool, cha
             state["console_truncated"] = False
             results.append(capture({
                 "index": 2,
-                "action": "click",
-                "locator": after_click,
+                **step_part,
                 "url_before": url_before,
                 "url_after": strip_userinfo(page.url),
-                "hint": "network and console start empty after the click; url_before equal to url_after means the click did not navigate",
-            }, True))
+                "hint": _after_action_hint(after_action["kind"]),
+            }, page_js, step_limits))
     except InspectError as exc:
         failure = exc
     except Exception as exc:
@@ -1255,6 +1246,105 @@ def observe_page(*, url: str, browser_name: str, profile: str, headed: bool, cha
             stage="inspect",
         )
     return _finish(playwright, browser, failure, results)
+
+
+AFTER_ACTION_PREFIXES = ("click:", "hover:", "scroll:", "scroll-into:")
+
+
+def _ensure_action_locator(locator: str, *, context: str) -> str:
+    text = (locator or "").strip()
+    if text.startswith("h:"):
+        raise InspectError(f"{context} does not accept a snapshot ordinal", "pass id:, testid:, role:, or css:")
+    if not text.startswith(("id:", "testid:", "role:", "css:")):
+        raise InspectError(
+            f"{context} locator must be id:, testid:, role:, or css:",
+            "observe prints those addresses",
+        )
+    return text
+
+
+def parse_after_action(spec: str) -> dict:
+    """Parse --after-action: click:LOCATOR | hover:LOCATOR | scroll:DX,DY | scroll-into:LOCATOR."""
+    text = (spec or "").strip()
+    if not text:
+        raise InspectError("after-action is empty", "use click:, hover:, scroll:, or scroll-into:")
+    lowered = text.lower()
+    if lowered.startswith("click:"):
+        return {"kind": "click", "locator": _ensure_action_locator(text[6:], context="after-action click")}
+    if lowered.startswith("hover:"):
+        return {"kind": "hover", "locator": _ensure_action_locator(text[6:], context="after-action hover")}
+    if lowered.startswith("scroll-into:"):
+        return {"kind": "scroll_into", "locator": _ensure_action_locator(text[12:], context="after-action scroll-into")}
+    if lowered.startswith("scroll:"):
+        coords = text[7:].split(",", 1)
+        if len(coords) != 2:
+            raise InspectError("scroll after-action needs scroll:DX,DY", "use two integers separated by a comma")
+        try:
+            dx = int(coords[0].strip(), 10)
+            dy = int(coords[1].strip(), 10)
+        except ValueError as exc:
+            raise InspectError("scroll after-action needs integer DX and DY", "example: scroll:0,400") from exc
+        return {"kind": "scroll", "dx": dx, "dy": dy}
+    raise InspectError(
+        "after-action must start with click:, hover:, scroll:, or scroll-into:",
+        "example: --after-action hover:id:menu",
+    )
+
+
+def _after_action_hint(kind: str) -> str:
+    hints = {
+        "click": "network and console start empty after the click; url_before equal to url_after means the click did not navigate",
+        "hover": "network and console start empty after the hover; :hover CSS may change the tree without navigation",
+        "scroll": "network and console start empty after the scroll; scroll listeners may change the DOM",
+        "scroll_into": "network and console start empty after scroll-into-view; the locator was brought into view",
+    }
+    return hints.get(kind, "the second snapshot is not passive observation")
+
+
+def _perform_after_action(page, action: dict) -> tuple[dict, bool, dict]:
+    """Run one step before the second snapshot. Returns (step fields, page_js_called, extra limits)."""
+    kind = action["kind"]
+    extra_limits = {"selector_engine": "playwright"}
+    if kind == "click":
+        target, _ = _action_locator(page, action["locator"])
+        target.click(timeout=5000)
+        page.wait_for_load_state("load", timeout=30000)
+        extra_limits["click_runs_page_scripts"] = True
+        return {"action": "click", "target": action["locator"]}, True, extra_limits
+    if kind == "hover":
+        target, _ = _action_locator(page, action["locator"])
+        target.hover(timeout=5000)
+        extra_limits["hover_may_trigger_css"] = True
+        return {"action": "hover", "target": action["locator"]}, True, extra_limits
+    if kind == "scroll":
+        dx, dy = action["dx"], action["dy"]
+        steps = max(1, (abs(dx) + abs(dy)) // 300 + 1)
+        for _ in range(steps):
+            page.mouse.wheel(dx, dy)
+        page.wait_for_timeout(200)
+        extra_limits["scroll_may_run_page_scripts"] = True
+        return {"action": "scroll", "target": f"{action['dx']},{action['dy']}"}, False, extra_limits
+    if kind == "scroll_into":
+        target, _ = _action_locator(page, action["locator"])
+        target.scroll_into_view_if_needed(timeout=5000)
+        page.wait_for_timeout(200)
+        extra_limits["scroll_into_view"] = True
+        extra_limits["scroll_may_run_page_scripts"] = True
+        return {"action": "scroll_into", "target": action["locator"]}, True, extra_limits
+    raise InspectError(f"unknown after-action kind {kind}", "use click, hover, scroll, or scroll_into")
+
+
+def resolve_observe_after_action(args: argparse.Namespace) -> dict | None:
+    if args.after_action and args.after_click:
+        raise InspectError(
+            "pass only one of --after-action and --after-click",
+            "--after-click is an alias for --after-action click:LOCATOR",
+        )
+    if args.after_action:
+        return parse_after_action(args.after_action)
+    if args.after_click:
+        return parse_after_action(f"click:{args.after_click.strip()}")
+    return None
 
 
 def _action_locator(page, locator: str):
@@ -1592,8 +1682,17 @@ def build_parser() -> argparse.ArgumentParser:
     observe.add_argument("--role", default="", help="only this role")
     observe.add_argument("--start", type=_bounded(100000), default=0)
     observe.add_argument("--limit", type=_bounded(SURVEY_LIMIT_MAX), default=SURVEY_LIMIT_DEFAULT)
-    observe.add_argument("--after-click", metavar="LOCATOR", help="click this id:, testid:, role:, or css: address once, then take a second snapshot")
-    observe.add_argument("--after-out", help="write the second snapshot here; requires --after-click and --out")
+    observe.add_argument(
+        "--after-action",
+        metavar="SPEC",
+        help="one step before a second snapshot: click:LOCATOR, hover:LOCATOR, scroll:DX,DY, or scroll-into:LOCATOR",
+    )
+    observe.add_argument(
+        "--after-click",
+        metavar="LOCATOR",
+        help="alias for --after-action click:LOCATOR (id:, testid:, role:, or css: address)",
+    )
+    observe.add_argument("--after-out", help="write the second snapshot here; requires --after-action (or --after-click) and --out")
     act = sub.add_parser("act", parents=[common], help="one declared action that re-queries a locator", allow_abbrev=False)
     act.add_argument("target", help="loopback URL; a snapshot ordinal is not accepted")
     act.add_argument("--action", required=True, choices=tuple(sorted(ACT_ACTIONS)))
@@ -1628,17 +1727,12 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _check_sequence_args(args: argparse.Namespace) -> None:
-    if args.after_click is None or args.after_out is None or not args.out:
+def _check_sequence_args(args: argparse.Namespace, after_action: dict | None) -> None:
+    if after_action is None or args.after_out is None or not args.out:
         raise InspectError(
-            "after-click needs --out for the first snapshot and --after-out for the second",
+            "after-action needs --out for the first snapshot and --after-out for the second",
             "pass both file paths; each file is a btk-page-observe/1 snapshot",
         )
-    locator = args.after_click.strip()
-    if locator.startswith("h:"):
-        raise InspectError("after-click does not accept a snapshot ordinal", "pass id:, testid:, role:, or css:")
-    if not locator.startswith(("id:", "testid:", "role:", "css:")):
-        raise InspectError("after-click locator must be id:, testid:, role:, or css:", "observe prints those addresses")
     if Path(args.out).resolve() == Path(args.after_out).resolve():
         raise InspectError("--out and --after-out must be different files", "give each snapshot its own path")
     for path in (args.out, args.after_out):
@@ -1660,20 +1754,23 @@ def dispatch(args: argparse.Namespace) -> tuple[dict, str, int]:
     if args.command == "observe":
         if args.limit < 1:
             raise InspectError("limit must be at least 1", f"use 1..{SURVEY_LIMIT_MAX}")
-        if args.after_click is not None or args.after_out is not None:
-            _check_sequence_args(args)
+        after_action = resolve_observe_after_action(args)
+        if after_action is not None or args.after_out is not None:
+            _check_sequence_args(args, after_action)
         results = observe_page(
             url=args.target, browser_name=args.browser, profile=args.profile, headed=args.headed,
             channel=args.channel or None, include_hidden=args.include_hidden,
             include_storage_keys=args.include_storage_keys,
             include_storage_fingerprints=args.include_storage_fingerprints,
-            role=args.role, start=args.start, limit=args.limit, after_click=args.after_click,
+            role=args.role, start=args.start, limit=args.limit, after_action=after_action,
         )
         payload = results[0]
         text_out = observe_text(payload)
         if len(results) == 2:
             _write_snapshot(args.after_out, results[1])
-            text_out += f"after-click {args.after_click}: second snapshot written to {args.after_out}\n"
+            step = results[1].get("step") or {}
+            label = f"{step.get('action', 'step')}:{step.get('target', '')}"
+            text_out += f"after-action {label}: second snapshot written to {args.after_out}\n"
         return payload, text_out, 0
     if args.command == "act":
         if args.timeout_ms < 1:
