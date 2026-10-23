@@ -1220,7 +1220,7 @@ def observe_page(*, url: str, browser_name: str, profile: str, headed: bool, cha
         if after_action is not None:
             url_before = strip_userinfo(page.url)
             try:
-                step_part, page_js, step_limits = _perform_after_action(page, after_action)
+                step_part, page_js, step_limits = _perform_after_action(page, after_action, client, sent)
             except InspectError:
                 raise
             except Exception as exc:
@@ -1289,18 +1289,14 @@ def _mouse_wheel_scroll(page, dx: int, dy: int) -> None:
     page.mouse.wheel(dx, dy)
 
 
-def _window_scroll_y(page) -> int:
-    """Read vertical scroll offset without Playwright page.evaluate (observe policy)."""
-    client = page.context.new_cdp_session(page)
-    try:
-        payload = client.send("Runtime.evaluate", {"expression": "window.scrollY", "returnByValue": True})
-        value = (payload.get("result") or {}).get("value")
-        return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0
-    finally:
-        try:
-            client.detach()
-        except Exception:
-            pass
+def _layout_scroll_y(client, sent: list[str]) -> int:
+    """Vertical scroll offset from Page.getLayoutMetrics (no page JavaScript)."""
+    metrics = _cdp_send(client, "Page.getLayoutMetrics", {}, sent)
+    viewport = metrics.get("cssVisualViewport") or {}
+    page_y = viewport.get("pageY", 0)
+    if isinstance(page_y, (int, float)) and not isinstance(page_y, bool):
+        return int(page_y)
+    return 0
 
 
 def _post_step_settle_plan(action: dict) -> tuple[int, str]:
@@ -1347,7 +1343,14 @@ def _after_action_hint(kind: str) -> str:
     return hints.get(kind, "the second snapshot is not passive observation")
 
 
-def run_playwright_step(page, action: dict, *, timeout_ms: int = DEFAULT_STEP_TIMEOUT_MS) -> tuple[dict, bool, dict]:
+def run_playwright_step(
+    page,
+    action: dict,
+    *,
+    timeout_ms: int = DEFAULT_STEP_TIMEOUT_MS,
+    cdp_client=None,
+    cdp_sent: list[str] | None = None,
+) -> tuple[dict, bool, dict]:
     """Shared Playwright step for observe after-action and act."""
     from interaction import press as pointer_press
 
@@ -1409,15 +1412,15 @@ def run_playwright_step(page, action: dict, *, timeout_ms: int = DEFAULT_STEP_TI
     page.wait_for_timeout(settle_ms)
     extra_limits["post_step_settle_ms"] = settle_ms
     extra_limits["wait_policy"] = wait_policy
-    if kind == "scroll":
-        extra_limits["scroll_y"] = _window_scroll_y(page)
+    if kind == "scroll" and cdp_client is not None and cdp_sent is not None:
+        extra_limits["scroll_y"] = _layout_scroll_y(cdp_client, cdp_sent)
     if dialogs:
         step_fields["dialogs"] = dialogs
     return step_fields, page_js, extra_limits
 
 
-def _perform_after_action(page, action: dict) -> tuple[dict, bool, dict]:
-    return run_playwright_step(page, action)
+def _perform_after_action(page, action: dict, client, sent: list[str]) -> tuple[dict, bool, dict]:
+    return run_playwright_step(page, action, cdp_client=client, cdp_sent=sent)
 
 
 def resolve_observe_after_action(args: argparse.Namespace) -> dict | None:
