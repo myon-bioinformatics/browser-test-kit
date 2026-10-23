@@ -19,7 +19,8 @@ def test_browser_install_and_config_parity() -> None:
     }
     assert {name for name, lines in installs.items() if lines} == {"node", "python-browser"}
     for name in ("node", "python-browser"):
-        assert len(installs[name]) == 1
+        # One install line, or the same line twice when a stalled first attempt is retried.
+        assert 1 <= len(installs[name]) <= 2 and len(set(installs[name])) == 1
         words = installs[name][0].strip().split()
         assert engines == {w for w in words if not w.startswith("-")}
         # Headless runs launch only Chromium's headless shell; the full build is never used in CI.
