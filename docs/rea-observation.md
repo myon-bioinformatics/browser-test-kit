@@ -58,4 +58,4 @@ Section digests carry page identity. `dom` digests the document URL, title, and 
 
 ## Deferred on issue 117
 
-Child frames and shadow roots as their own address spaces. Observe counts child frames and open plus closed shadow roots (pierced DOM, `shadow_roots` section, `contents: not_entered`); it does not enter either and does not read shadow attributes. macOS, Windows, Linux, and Android Chrome or WebView. Branded channels as a matrix. A Stagehand caller. A headed lane in CI. An agent transport after these envelopes stay stable. Screenshot comparison and full scenario diffs.
+Child frames and shadow roots as their own address spaces. Observe lists child frames by name, URL, and origin (`frames` section, `items`, no frame ids) and counts open plus closed shadow roots (`shadow_roots` section); it does not enter either and does not read shadow attributes. Giving frames their own addresses is still open. macOS, Windows, Linux, and Android Chrome or WebView. Branded channels as a matrix. A Stagehand caller. A headed lane in CI. An agent transport after these envelopes stay stable. Screenshot comparison and full scenario diffs.

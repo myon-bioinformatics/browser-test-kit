@@ -857,6 +857,26 @@ def _frame_count(node) -> int:
     return 1 + sum(_frame_count(child) for child in node.get("childFrames") or [])
 
 
+def frame_rows(frame_tree: dict, *, limit: int = HARD_CAP) -> tuple[list, bool]:
+    """Child frames in document order: name, URL, and origin only. Frame ids change per load, so they are not listed."""
+    rows: list[dict] = []
+    stack = list(reversed(frame_tree.get("childFrames") or []))
+    while stack:
+        node = stack.pop()
+        if not isinstance(node, dict):
+            continue
+        if len(rows) >= limit:
+            return rows, True
+        frame = node.get("frame") or {}
+        rows.append({
+            "name": clip(str(frame.get("name") or ""), 120),
+            "url": strip_userinfo(str(frame.get("url") or "")),
+            "origin": clip(str(frame.get("securityOrigin") or ""), 200),
+        })
+        stack.extend(reversed(node.get("childFrames") or []))
+    return rows, False
+
+
 def count_shadow_roots(root: dict, *, limit: int = HARD_CAP * 10) -> dict:
     """Count open and closed shadow roots in a pierced DOM tree. Roots are counted, never entered.
 
@@ -1137,6 +1157,7 @@ def observe_page(*, url: str, browser_name: str, profile: str, headed: bool, cha
                     "url": strip_userinfo(item.get("url") or ""),
                 })
             document_url = strip_userinfo(((frames.get("frameTree") or {}).get("frame") or {}).get("url") or "")
+            frame_items, frame_truncated = frame_rows(frames.get("frameTree") or {})
             controls_digest = _content_digest([
                 [e.get("address"), e.get("role"), e.get("name"), e.get("text")] for e in elements
             ])
@@ -1172,8 +1193,8 @@ def observe_page(*, url: str, browser_name: str, profile: str, headed: bool, cha
                     "text": "not_requested", "prior_activity_available": False, "items": console,
                 }),
                 "storage": storage,
-                "frames": _section("cdp:Page.getFrameTree", "complete", {
-                    "child_frames": child_frames, "contents": "not_entered",
+                "frames": _section("cdp:Page.getFrameTree", "truncated" if frame_truncated else "complete", {
+                    "child_frames": child_frames, "contents": "not_entered", "items": frame_items,
                 }),
                 "shadow_roots": _section("cdp:DOM.getDocument pierce", "truncated" if shadow["truncated"] else "complete", {
                     "open": shadow["open"], "closed": shadow["closed"], "count": shadow["count"],
