@@ -118,11 +118,12 @@ def test_act_requeries_and_records_the_click(loopback, capsys):
     ordinal = run(["act", loopback, "--action", "click", "--locator", "h:0", "--json"])
     assert ordinal.returncode == 2
     assert json.loads(ordinal.stdout)["ok"] is False
-    waited = run(["act", loopback, "--browser", "firefox", "--action", "wait_for_timeout", "--timeout-ms", "50", "--json"])
-    assert waited.returncode == 0, waited.stderr
-    body = json.loads(waited.stdout)
-    assert body["limits"]["page_js_called"] is False
-    assert body["sections"]["accessibility"]["coverage"] == "not_requested"
+    if "firefox" in os.environ.get("BTK_BROWSER_ENGINES", "chromium,firefox,webkit"):
+        waited = run(["act", loopback, "--browser", "firefox", "--action", "wait_for_timeout", "--timeout-ms", "50", "--json"])
+        assert waited.returncode == 0, waited.stderr
+        body = json.loads(waited.stdout)
+        assert body["limits"]["page_js_called"] is False
+        assert body["sections"]["accessibility"]["coverage"] == "not_requested"
     notice(capsys, "page-act", "click re-queried id:save-draft")
 
 
