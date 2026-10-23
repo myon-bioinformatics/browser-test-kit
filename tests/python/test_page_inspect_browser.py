@@ -75,7 +75,13 @@ def test_chromium_observe_is_passive_and_fingerprints_storage(loopback, capsys):
     assert found.count("Cancel") == 2
     assert "Secret" not in found and "Child frame" not in found
     assert payload["child_frames"] >= 1
-    assert payload["sections"]["frames"]["coverage"] == "complete"
+    frames = payload["sections"]["frames"]
+    assert frames["coverage"] == "complete"
+    assert frames["contents"] == "not_entered"
+    assert frames["items"]
+    for row in frames["items"]:
+        assert set(row) == {"name", "url", "origin"}
+        assert "Child frame" not in json.dumps(row)
     assert payload["sections"]["network"]["coverage"] == "attach_limited"
     save = next(element for element in payload["elements"] if element["name"] == "Save draft")
     assert save["address"] == "id:save-draft"

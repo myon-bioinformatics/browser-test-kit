@@ -30,5 +30,5 @@ def test_default_platform_follows_sys_platform():
 def test_page_keyboard_press_does_not_take_a_timeout():
     source = (ROOT / "scripts" / "btk.py").read_text(encoding="utf-8")
     assert "page.keyboard.press(text, timeout=" not in source
-    assert "page.keyboard.press(text)" in source
-    assert "target.press(text, timeout=timeout_ms)" in source
+    assert "page.keyboard.press(resolved)" in source
+    assert "target().press(resolved, timeout=timeout_ms)" in source

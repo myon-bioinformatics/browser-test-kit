@@ -163,3 +163,12 @@ def test_act_goto_url_section_hides_values(tmp_path, private_site, entrypoint):
     assert payload["url"] == base + "/result.html"
     assert payload["sections"]["url"]["url"] == base + "/result.html"
     assert "/result.html?q=" + QUERY in received
+
+
+def test_colon_step_publication_hides_urls_without_changing_navigation():
+    url = "http://127.0.0.1:8765/path" + SUFFIX
+    step = btk.parse_step("goto:" + url)
+    assert step["url"] == url
+    public = btk.publish_step(step, {"status": "done"}, url_before=url, url_after=url, index=1)
+    assert_private_absent(json.dumps(public))
+    assert public["url_before"] == public["url_after"] == "http://127.0.0.1:8765/path"

@@ -114,16 +114,12 @@ function explicitPort(target) {
 }
 
 function helpText() {
-  return `btk.cjs — the Node entry point for scripts/btk.py (same commands, same output).
-
-usage: node scripts/btk.cjs <command> [args]
-  observe, act, pages, locate, count, describe, compare, operations   loopback page inspection
-  fetch                                                       fetch one archive member (integrity first)
-  plan                                                        recommend playwright install lines per job
+  return `btk.cjs — observe a loopback page, rank locators, and run declared steps.
 
 Commands delegate to btk.py through vendor/py_launch.cjs (Node 24+).
 offline: node scripts/btk.cjs locate SNAPSHOT --query TEXT --json
 live:    node scripts/btk.cjs observe http://127.0.0.1:PORT/page --json
+steps:   node scripts/btk.cjs observe http://127.0.0.1:PORT/page --viewport 390x844 --step focus:id:search --step type:id:search=env:SEARCH --out obs.json --out-dir DIR
 `;
 }
 
@@ -131,8 +127,8 @@ function delegate(argv) {
   const launch = require(path.join(__dirname, "..", "vendor", "py_launch.cjs"));
   try {
     const result = launch.run(path.join(__dirname, "btk.py"), argv, {
-      timeout: 120000,
-      maxBuffer: 8 * 1024 * 1024,
+      timeout: 180000,
+      maxBuffer: 16 * 1024 * 1024,
     });
     process.stdout.write(result.stdout);
     return 0;

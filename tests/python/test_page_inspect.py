@@ -186,13 +186,9 @@ def test_loopback_policy_and_evidence_do_not_treat_missing_as_same():
     assert btk.evidence_relation(limited, dict(limited)) == "unknown"
     finger = btk.storage_fingerprint("secret-value")
     assert finger["fingerprint_version"] == 2 and "secret-value" not in json.dumps(finger)
-    # observe never calls page script. The only direct page evaluation is the settle cleanup in
-    # _wait_quiet, which act and --step run after the page has been driven, never during observe.
-    import inspect
+    # Passive observation and Chromium settle use CDP without page evaluation.
     source = (ROOT / "scripts" / "btk.py").read_text(encoding="utf-8")
-    assert source.count(".evaluate(") == 1
-    assert ".evaluate(" in inspect.getsource(btk._wait_quiet)
-    assert ".evaluate(" not in inspect.getsource(btk.observe_page)
+    assert ".evaluate(" not in source
 
 
 def test_twins_agree_on_score_loopback_fingerprint_and_evidence():
@@ -254,3 +250,61 @@ def test_request_boundary_rejects_redirects_and_external_resources():
             route.abort.assert_called_once_with("blockedbyclient")
         else:
             route.fulfill.assert_called_once_with(response=route.fetch.return_value)
+
+
+@pytest.mark.browser
+def test_observe_cdp_never_sends_runtime_evaluate_with_after_action(tmp_path, monkeypatch):
+    import functools
+    import threading
+    from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+
+    from playwright.sync_api import BrowserContext
+
+    (tmp_path / "page.html").write_text("<!doctype html><style>body{height:3000px}</style>", encoding="utf-8")
+    handler = functools.partial(SimpleHTTPRequestHandler, directory=str(tmp_path))
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    cdp_methods: list[str] = []
+    original = BrowserContext.new_cdp_session
+
+    def tracking_new_cdp_session(self, page):
+        client = original(self, page)
+        real_send = client.send
+
+        def send(method, params=None, **kwargs):
+            cdp_methods.append(method)
+            if method in ("Runtime.evaluate", "Runtime.callFunctionOn"):
+                raise AssertionError(f"forbidden CDP method: {method}")
+            if kwargs:
+                return real_send(method, params, **kwargs)
+            return real_send(method, params or {})
+
+        client.send = send
+        return client
+
+    monkeypatch.setattr(BrowserContext, "new_cdp_session", tracking_new_cdp_session)
+    try:
+        url = f"http://127.0.0.1:{server.server_port}/page.html"
+        session = page_inspect.observe_page(
+            url=url,
+            browser_name="chromium",
+            profile="desktop",
+            headed=False,
+            channel=None,
+            include_hidden=False,
+            include_storage_keys=False,
+            include_storage_fingerprints=False,
+            role="",
+            start=0,
+            limit=50,
+            steps=[page_inspect.parse_step("scroll:0,800")],
+        )
+    finally:
+        server.shutdown()
+    results = session["observations"]
+    assert len(results) == 2
+    after = results[1]
+    assert after["limits"]["page_js_called"] is False
+    assert 650 <= after["limits"]["scroll_y"] <= 950
+    assert "Runtime.evaluate" not in cdp_methods
+    assert "Page.getLayoutMetrics" in cdp_methods
