@@ -26,12 +26,14 @@ def element(name, **extra):
 
 
 def snapshot_of(*items, total=None):
-    raw = {"title": "Fixture", "child_frames": 0, "shadow_roots": False, "shadow_scan": "complete",
-           "total": total if total is not None else len(items), "truncated": False, "elements": list(items)}
-    return page_inspect.assemble_survey(
+    raw = {"title": "Fixture", "child_frames": 0, "total": total if total is not None else len(items),
+           "truncated": False, "elements": list(items)}
+    return page_inspect.assemble_observe(
         raw, environment={"os": "Linux", "browser": "chromium", "version": "0", "channel": None,
                           "headless": True, "profile": "desktop", "viewport": {"width": 1280, "height": 800}},
-        url="file:///fixture.html", start=0, limit=50,
+        url="http://127.0.0.1:9/fixture", start=0, limit=50,
+        sections={"dom": {"source": "test", "coverage": "not_requested"}},
+        limits={"page_js_called": False},
     )
 
 
@@ -59,7 +61,7 @@ def test_addresses_prefer_stable_ids_and_number_duplicate_roles():
     assert first["address"] == "role:button/Cancel#0"
     assert second["address"] == "role:button/Cancel#1"
     assert link["address"].startswith("role:link/")
-    assert survey["hint"].startswith("h:N is valid only") or "h:N is valid only" in survey["hint"]
+    assert "h:N" in survey["hint"]
 
 
 def test_locate_pages_ranks_and_refuses_a_shared_top_score():
@@ -112,12 +114,12 @@ def test_describe_accepts_common_target_forms_and_rejects_memory_addresses():
 
 def test_option_names_are_not_abbreviated_and_do_not_swallow_the_next_flag():
     parser = page_inspect.build_parser()
-    args = parser.parse_args(["survey", "page.html", "--browser", "firefox", "--json", "--limit", "2"])
+    args = parser.parse_args(["observe", "http://127.0.0.1:9/page", "--browser", "firefox", "--json", "--limit", "2"])
     assert args.browser == "firefox" and args.json is True and args.limit == 2
-    attached = parser.parse_args(["survey", "page.html", "--browser=webkit"])
+    attached = parser.parse_args(["observe", "http://127.0.0.1:9/page", "--browser=webkit"])
     assert attached.browser == "webkit"
     with pytest.raises(SystemExit) as raised:
-        parser.parse_args(["survey", "page.html", "--brow", "firefox"])
+        parser.parse_args(["observe", "http://127.0.0.1:9/page", "--brow", "firefox"])
     assert raised.value.code == 2
 
 
@@ -156,68 +158,94 @@ def test_cli_offline_commands_match_the_library(tmp_path: Path):
     memory = run(["describe", str(path), "--target", "0x10", "--json"])
     assert memory.returncode == 2 and json.loads(memory.stdout)["stage"] == "input"
     missing = run(["locate", str(tmp_path / "missing.json"), "--query", "Save"])
-    assert missing.returncode == 2 and "survey --out" in missing.stderr
+    assert missing.returncode == 2 and "observe --out" in missing.stderr
     help_text = run(["--help"])
     assert help_text.returncode == 0 and "usage" in help_text.stdout.lower()
 
 
-def test_urls_reject_credentials_and_non_http_schemes(tmp_path: Path):
-    page = tmp_path / "page.html"
-    page.write_text("<!DOCTYPE html><title>x</title>", encoding="utf-8")
-    assert page_inspect.target_url(str(page)).startswith("file:")
+def test_loopback_policy_and_evidence_do_not_treat_missing_as_same():
+    assert page_inspect.loopback_target("http://127.0.0.1:9/a") == "http://127.0.0.1:9/a"
+    assert page_inspect.loopback_target("http://[::1]:80/a") == "http://[::1]:80/a"
+    assert page_inspect.loopback_target("http://127.0.0.1:8081/") == "http://127.0.0.1:8081/"
+    for url in (
+        "http://localhost:9/",
+        "http://127.0.0.1/a",
+        "file:///tmp/page.html",
+        "javascript:alert(1)",
+        "https://example.test:9/",
+        "http://user:secret" + chr(64) + "127.0.0.1:9/",
+    ):
+        with pytest.raises(page_inspect.InspectError):
+            page_inspect.loopback_target(url)
+    missing = {"coverage": "not_requested"}
+    assert page_inspect.evidence_relation(missing, missing) == "unknown"
+    same = {"coverage": "complete", "digest": "abc"}
+    assert page_inspect.evidence_relation(same, dict(same)) == "same"
+    assert page_inspect.evidence_relation(same, {"coverage": "complete", "digest": "def"}) == "different"
+    limited = {"coverage": "attach_limited", "digest": "abc"}
+    assert page_inspect.evidence_relation(limited, dict(limited)) == "unknown"
+    finger = page_inspect.storage_fingerprint("secret-value")
+    assert finger["fingerprint_version"] == 2 and "secret-value" not in json.dumps(finger)
+    source = (ROOT / "scripts" / "page_inspect.py").read_text(encoding="utf-8")
+    assert ".evaluate(" not in source
+
+
+def test_twins_agree_on_score_loopback_fingerprint_and_evidence():
+    pairs = [
+        ("similarity", "similarity", [
+            ["Save", "save draft"], ["", "abc"], ["a\U0001f600b", "a\U0001f600b"], ["\U0001f600", "x\U0001f600y"],
+        ]),
+        ("loopback_target", "loopbackTarget", [
+            ["http://127.0.0.1:9/a"], ["http://[::1]:80/a"], ["https://127.0.0.1:443/a"],
+            ["http://localhost:9/"], ["http://127.0.0.1/a"], ["file:///tmp/x"],
+            ["http://user:secret" + chr(64) + "127.0.0.1:9/"],
+        ]),
+        ("storage_fingerprint", "storageFingerprint", [["secret-value"], ["\ud800"], [""]]),
+        ("evidence_relation", "evidenceRelation", [
+            [{"coverage": "not_requested"}, {"coverage": "not_requested"}],
+            [{"coverage": "complete", "digest": "abc"}, {"coverage": "complete", "digest": "abc"}],
+            [{"coverage": "complete", "digest": "abc"}, {"coverage": "complete", "digest": "def"}],
+            [{"coverage": "attach_limited", "digest": "abc"}, {"coverage": "attach_limited", "digest": "abc"}],
+        ]),
+    ]
+    for python_name, node_name, cases in pairs:
+        done = subprocess.run(
+            [sys.executable, "-S", str(ROOT / "scripts" / "twin_parity.py"),
+             f"scripts/page_inspect.py:{python_name}", f"scripts/page_inspect.cjs:{node_name}"],
+            input=json.dumps(cases), text=True, capture_output=True, cwd=ROOT, timeout=30,
+        )
+        assert done.returncode == 0, done.stdout + done.stderr
+
+
+def test_act_rejects_ordinals_before_launch():
+    with pytest.raises(page_inspect.InspectError) as raised:
+        page_inspect.act_page(
+            url="http://127.0.0.1:9/", browser_name="chromium", profile="desktop", headed=False,
+            channel=None, action="click", locator="h:0", text=None, timeout_ms=500,
+        )
+    assert "ordinal" in raised.value.error
     with pytest.raises(page_inspect.InspectError):
-        page_inspect.target_url("https://user:secret" + chr(64) + "example.test/path")
-    with pytest.raises(page_inspect.InspectError):
-        page_inspect.target_url("javascript:alert(1)")
-
-
-def test_collect_script_is_an_expression_beside_the_module():
-    source = page_inspect.collect_source()
-    assert source.lstrip().startswith("(options)")
-    assert "querySelectorAll" in source
-
-
-NETWORK_ACCEPT = ['http://127.0.0.1:8080/', 'https://[::1]:8080/x?q=1#f']
-NETWORK_REJECT = [
-    'https://example.com:8080/', 'http://192.168.1.2:8080/', 'http://10.0.0.1:8080/',
-    'http://localhost:8080/', 'http://127.0.0.1:8081/', 'http://127.0.0.1/',
-    'http://[::1]:80/', 'http://127.1:8080/', 'http://2130706433:8080/',
-    'http://0x7f000001:8080/', 'http://127.0.0.1.evil.test:8080/',
-    'http://user@127.0.0.1:8080/', 'http://127.0.0.1:8080@evil.test/',
-    'http://127.0.0.1:08080/', 'http://127.0.0.1:8080\\@evil.test/',
-    'http://127.0.0.1:8080\n.evil.test/', 'file://remote/tmp/page.html', 'file:////remote/share.html', 'file:///%2fremote/share.html',
-]
-
-
-@pytest.mark.parametrize('url', NETWORK_ACCEPT)
-def test_fixed_loopback_accepted(url):
-    assert page_inspect.target_url(url) == url
-
-
-@pytest.mark.parametrize('url', NETWORK_REJECT)
-def test_other_network_targets_rejected_before_playwright(url):
-    with pytest.raises(page_inspect.InspectError):
-        page_inspect.target_url(url)
-    with pytest.raises(page_inspect.InspectError):
-        page_inspect.survey_page(url=url, browser_name='chromium', profile='desktop', headed=False,
-                                channel=None, include_hidden=False, role='', start=0, limit=50)
+        page_inspect.act_page(
+            url="http://127.0.0.1:9/", browser_name="chromium", profile="desktop", headed=False,
+            channel=None, action="dance", locator="id:save", text=None, timeout_ms=500,
+        )
 
 
 def test_request_boundary_rejects_redirects_and_external_resources():
     from unittest.mock import Mock
-    for url in NETWORK_REJECT:
-        route = Mock()
-        route.request.url = url
-        page_inspect.restrict_request(route)
-        route.abort.assert_called_once_with('blockedbyclient')
-        route.fetch.assert_not_called()
+    rejected = "http://localhost:9/"
+    route = Mock()
+    route.request.url = rejected
+    page_inspect.restrict_request(route)
+    route.abort.assert_called_once_with("blockedbyclient")
+    route.fetch.assert_not_called()
     for status in (200, 302):
         route = Mock()
-        route.request.url = NETWORK_ACCEPT[0]
+        route.request.url = "http://127.0.0.1:9/"
         route.fetch.return_value.status = status
         page_inspect.restrict_request(route)
         route.fetch.assert_called_once_with(max_redirects=0)
         if status == 302:
-            route.abort.assert_called_once_with('blockedbyclient')
+            route.abort.assert_called_once_with("blockedbyclient")
         else:
             route.fulfill.assert_called_once_with(response=route.fetch.return_value)

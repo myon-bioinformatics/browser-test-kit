@@ -23,12 +23,16 @@
   <div id="shadow-host"></div>
   <iframe title="child" srcdoc="&lt;button type=&quot;button&quot;&gt;Child frame&lt;/button&gt;"></iframe>
   <script>
+    localStorage.setItem("draft-token", "secret-value");
     const host = document.getElementById("shadow-host");
     const root = host.attachShadow({mode: "open"});
     const button = document.createElement("button");
     button.type = "button";
     button.textContent = "Inside shadow";
     root.appendChild(button);
+    document.getElementById("save-draft").addEventListener("click", function () {
+      this.textContent = "Saved";
+    });
   </script>
 </body>
 </html>

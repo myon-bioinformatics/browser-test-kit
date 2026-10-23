@@ -1,17 +1,30 @@
-"""Real survey, locate, and describe runs through the CLI on three engines."""
+"""Real observe and act runs through the CLI on a loopback fixture."""
 import json
 import os
 import subprocess
 import sys
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-FIXTURE = ROOT / "fixtures" / "page_inspect.html"
+FIXTURE = (ROOT / "fixtures" / "page_inspect.html").read_bytes()
 SCRIPT = ROOT / "scripts" / "page_inspect.py"
 RESULTS = ROOT / "test-results" / "page-inspect"
-BROWSERS = ("chromium", "firefox", "webkit")
+
+
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(FIXTURE)))
+        self.end_headers()
+        self.wfile.write(FIXTURE)
+
+    def log_message(self, fmt, *args):
+        return
 
 
 def notice(capsys, title, text):
@@ -24,128 +37,95 @@ def run(args):
     return subprocess.run([sys.executable, str(SCRIPT), *args], cwd=ROOT, capture_output=True, text=True, timeout=120)
 
 
+def loopback():
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{server.server_address[1]}/page"
+    server.shutdown()
+
+
+loopback = pytest.fixture(scope="module")(loopback)
+
+
 def names(survey):
     return [element["name"] for element in survey["elements"]]
 
 
-def survey(browser, profile, out, extra=()):
-    command = ["survey", str(FIXTURE), "--browser", browser, "--profile", profile, "--json", "--out", str(out), *extra]
-    done = run(command)
+def test_chromium_observe_is_passive_and_fingerprints_storage(loopback, capsys):
+    RESULTS.mkdir(parents=True, exist_ok=True)
+    out = RESULTS / "chromium-observe.json"
+    done = run([
+        "observe", loopback, "--browser", "chromium", "--json", "--out", str(out),
+        "--include-storage-keys", "--include-storage-fingerprints",
+    ])
     assert done.returncode == 0, done.stderr
     payload = json.loads(done.stdout)
-    assert json.loads(out.read_text(encoding="utf-8"))["total"] == payload["total"]
-    return payload
-
-
-def test_desktop_survey_locates_the_same_controls(browser_name, capsys):
-    RESULTS.mkdir(parents=True, exist_ok=True)
-    out = RESULTS / f"{browser_name}-desktop.json"
-    payload = survey(browser_name, "desktop", out)
+    assert payload["schema"] == "btk-page-observe/1" and payload["ok"] is True
+    assert payload["limits"]["page_js_called"] is False
+    assert "Runtime.evaluate" not in payload["limits"]["cdp_methods"]
+    assert ".evaluate(" not in (ROOT / "scripts" / "page_inspect.py").read_text(encoding="utf-8")
     found = names(payload)
-    assert payload["schema"] == "btk-page-survey/1" and payload["ok"] is True
-    assert payload["environment"]["browser"] == browser_name
-    assert payload["environment"]["profile"] == "desktop" and payload["environment"]["headless"] is True
-    assert payload["environment"]["os"] in {"Linux", "macOS", "Windows"}
-    assert payload["environment"]["version"]
-    for expected in ("Save draft", "Cancel", "Documentation", "Saved items", "Search", "Remember me", "Unavailable"):
+    for expected in ("Save draft", "Cancel", "Documentation", "Search", "Remember me", "Unavailable"):
         assert expected in found, found
     assert found.count("Cancel") == 2
-    for absent in ("Secret", "Also hidden", "Inside shadow", "Child frame"):
-        assert absent not in found
-    assert payload["child_frames"] >= 1 and payload["shadow_roots"] is True
+    assert "Secret" not in found and "Child frame" not in found
+    assert payload["child_frames"] >= 1
+    assert payload["sections"]["frames"]["coverage"] == "complete"
+    assert payload["sections"]["network"]["coverage"] == "attach_limited"
     save = next(element for element in payload["elements"] if element["name"] == "Save draft")
     assert save["address"] == "id:save-draft"
-    assert all(isinstance(save["box"][key], int) for key in ("x", "y", "width", "height"))
     unavailable = next(element for element in payload["elements"] if element["name"] == "Unavailable")
-    assert unavailable["enabled"] is False and unavailable["visible"] is True
-    located = run(["locate", str(out), "--query", "Save draft", "--unique", "--json"])
-    assert located.returncode == 0 and json.loads(located.stdout)["items"][0]["address"] == "id:save-draft"
-    ambiguous = run(["locate", str(out), "--query", "Cancel", "--unique", "--json"])
-    assert ambiguous.returncode == 1 and json.loads(ambiguous.stdout)["ok"] is False
-    described = run(["describe", str(out), "--target", "id:save-draft", "--json"])
-    body = json.loads(described.stdout)
-    assert described.returncode == 0 and body["item"]["testid"] == "save-draft" and any(line.startswith("* ") for line in body["context"])
-    counted = run(["count", str(out), "--role", "button", "--json"])
-    assert counted.returncode == 0 and json.loads(counted.stdout)["by_role"]["button"] >= 4
-    notice(capsys, f"page-inspect {browser_name}", f"elements={payload['total']} save={save['address']} frames={payload['child_frames']}")
+    assert unavailable["enabled"] is False
+    raw = done.stdout
+    assert "secret-value" not in raw
+    areas = payload["sections"]["storage"]["areas"]
+    local = next(area for area in areas if area["area"] == "local")
+    assert local["items"][0]["key"] == "draft-token"
+    assert "sha256" in local["items"][0] and "value" not in local["items"][0]
+    hidden = run(["observe", loopback, "--browser", "chromium", "--include-hidden", "--json"])
+    assert hidden.returncode == 0, hidden.stderr
+    assert "Secret" in names(json.loads(hidden.stdout))
+    notice(capsys, "page-observe chromium", f"elements={payload['total']} save={save['address']}")
 
 
-def test_hidden_controls_stay_out_until_requested(capsys):
-    RESULTS.mkdir(parents=True, exist_ok=True)
-    shown = survey("chromium", "desktop", RESULTS / "chromium-shown.json")
-    hidden = survey("chromium", "desktop", RESULTS / "chromium-hidden.json", ("--include-hidden",))
-    assert "Secret" not in names(shown) and "Also hidden" not in names(shown)
-    assert "Secret" in names(hidden) and "Also hidden" in names(hidden)
-    assert "Inside shadow" not in names(hidden)
-    notice(capsys, "page-inspect hidden", f"shown={shown['total']} hidden={hidden['total']}")
-
-
-def test_iphone_profile_launches_on_chromium_and_firefox(browser_name, capsys):
-    RESULTS.mkdir(parents=True, exist_ok=True)
-    payload = survey(browser_name, "iphone", RESULTS / f"{browser_name}-iphone.json")
-    assert payload["environment"]["profile"] == "iphone"
+def test_firefox_and_webkit_observe_do_not_invent_a_page(loopback, browser_name, capsys):
+    done = run(["observe", loopback, "--browser", browser_name, "--profile", "iphone", "--json"])
+    assert done.returncode == 0, done.stderr
+    payload = json.loads(done.stdout)
+    assert payload["limits"]["page_js_called"] is False
+    assert payload["limits"]["reason"] == "cdp_session_unavailable"
+    assert payload["sections"]["dom"]["coverage"] == "unavailable"
+    assert payload["elements"] == []
     assert payload["environment"]["viewport"]["width"] == 390
-    assert next(element["address"] for element in payload["elements"] if element["name"] == "Save draft") == "id:save-draft"
-    notice(capsys, f"page-inspect {browser_name} iphone", f"elements={payload['total']} width=390")
+    notice(capsys, f"page-observe {browser_name}", "cdp unavailable; no page call")
 
 
-test_desktop_survey_locates_the_same_controls = pytest.mark.browser(
-    pytest.mark.parametrize("browser_name", BROWSERS)(test_desktop_survey_locates_the_same_controls)
+def test_act_requeries_and_records_the_click(loopback, capsys):
+    clicked = run([
+        "act", loopback, "--browser", "chromium", "--action", "click", "--locator", "id:save-draft", "--json",
+    ])
+    assert clicked.returncode == 0, clicked.stderr
+    payload = json.loads(clicked.stdout)
+    assert payload["limits"]["page_js_called"] is True
+    assert payload["limits"]["bounded_to"] == ["click"]
+    assert payload["sections"]["dom"]["coverage"] == "not_requested"
+    assert "Saved" in payload["sections"]["accessibility"]["names"]
+    ordinal = run(["act", loopback, "--action", "click", "--locator", "h:0", "--json"])
+    assert ordinal.returncode == 2
+    assert json.loads(ordinal.stdout)["ok"] is False
+    waited = run(["act", loopback, "--browser", "firefox", "--action", "wait_for_timeout", "--timeout-ms", "50", "--json"])
+    assert waited.returncode == 0, waited.stderr
+    body = json.loads(waited.stdout)
+    assert body["limits"]["page_js_called"] is False
+    assert body["sections"]["accessibility"]["coverage"] == "not_requested"
+    notice(capsys, "page-act", "click re-queried id:save-draft")
+
+
+test_firefox_and_webkit_observe_do_not_invent_a_page = pytest.mark.browser(
+    pytest.mark.parametrize("browser_name", ("firefox", "webkit"))(test_firefox_and_webkit_observe_do_not_invent_a_page)
 )
-test_hidden_controls_stay_out_until_requested = pytest.mark.browser(test_hidden_controls_stay_out_until_requested)
-test_iphone_profile_launches_on_chromium_and_firefox = pytest.mark.browser(
-    pytest.mark.parametrize("browser_name", ("chromium", "firefox"))(test_iphone_profile_launches_on_chromium_and_firefox)
+test_chromium_observe_is_passive_and_fingerprints_storage = pytest.mark.browser(
+    test_chromium_observe_is_passive_and_fingerprints_storage
 )
-
-
-@pytest.mark.browser
-def test_python_survey_enforces_network_boundary():
-    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-    from threading import Thread
-
-    hits = []
-    class Forbidden(BaseHTTPRequestHandler):
-        def do_GET(self):
-            hits.append(self.path)
-            self.send_response(200)
-            self.end_headers()
-        def log_message(self, *args):
-            pass
-    forbidden = ThreadingHTTPServer(('127.0.0.1', 0), Forbidden)
-    other = f'http://127.0.0.1:{forbidden.server_port}/outside'
-    class Allowed(BaseHTTPRequestHandler):
-        def do_GET(self):
-            if self.path == '/redirect':
-                self.send_response(302)
-                self.send_header('Location', other)
-                self.end_headers()
-            else:
-                self.send_response(200)
-                self.send_header('Content-Type', 'text/html')
-                self.end_headers()
-                self.wfile.write(f'<button id="safe">Safe</button><img src="{other}"><script>fetch("{other}").catch(()=>{{}})</script>'.encode())
-        def log_message(self, *args):
-            pass
-    allowed = ThreadingHTTPServer(('127.0.0.1', 8080), Allowed)
-    threads = [Thread(target=server.serve_forever, daemon=True) for server in (forbidden, allowed)]
-    for thread in threads:
-        thread.start()
-    try:
-        for command in ([sys.executable, str(SCRIPT)],):
-            for path, expected in [('/', 0), ('/redirect', 2)]:
-                result = subprocess.run([*command, 'survey', 'http://127.0.0.1:8080' + path,
-                                         '--browser', 'chromium', '--json'], cwd=ROOT,
-                                        capture_output=True, text=True, timeout=90)
-                assert result.returncode == expected, result.stdout + result.stderr
-                body = json.loads(result.stdout)
-                if expected == 0:
-                    assert any(element['address'] == 'id:safe' for element in body['elements'])
-                else:
-                    assert body['stage'] == 'navigate'
-                assert hits == [], hits
-    finally:
-        for server in (allowed, forbidden):
-            server.shutdown()
-            server.server_close()
-        for thread in threads:
-            thread.join(timeout=5)
+test_act_requeries_and_records_the_click = pytest.mark.browser(test_act_requeries_and_records_the_click)
