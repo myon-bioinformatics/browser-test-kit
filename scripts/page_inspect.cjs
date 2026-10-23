@@ -119,7 +119,7 @@ function helpText() {
 Commands delegate to page_inspect.py through vendor/py_launch.cjs (Node 24+).
 offline: node scripts/page_inspect.cjs locate SNAPSHOT --query TEXT --json
 live:    node scripts/page_inspect.cjs observe http://127.0.0.1:PORT/page --json
-steps:   node scripts/page_inspect.cjs observe http://127.0.0.1:PORT/page --viewport 390x844 --step focus:id:search --step type:id:search=env:SEARCH --out obs.json
+steps:   node scripts/page_inspect.cjs observe http://127.0.0.1:PORT/page --viewport 390x844 --step focus:id:search --step type:id:search=env:SEARCH --out obs.json --out-dir DIR
 `;
 }
 

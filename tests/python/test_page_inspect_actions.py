@@ -6,6 +6,7 @@ import platform
 import subprocess
 import sys
 import threading
+import time
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -232,6 +233,77 @@ def test_redaction_covers_accessibility_text_and_encoded_urls():
     assert "[redacted]" in clipped
 
 
+def test_known_secrets_are_removed_in_full_before_stagehand_key_patterns():
+    secret = "sk-abcdefSECRETVALUE"
+    with page_inspect.bound_secrets([secret]):
+        cleaned = page_inspect.redact_text(f"typed {secret} stays gone")
+    assert secret not in cleaned
+    assert cleaned == "typed [redacted] stays gone"
+    leaked = page_inspect.redact_text(
+        "boom ?api_key=supersecret&ok=1 sk-abcdefMOREVALUE Bearer abcdefghijkl "
+        "bb_live_abcdREST AIza" + ("A" * 30)
+    )
+    assert "supersecret" not in leaked
+    assert "api_key=[redacted]" in leaked
+    assert "sk-abcdef[redacted]" in leaked
+    assert "Bearer [redacted]" in leaked
+    assert "bb_live_abcd[redacted]" in leaked
+    assert "AIza[redacted]" in leaked
+    assert "MOREVALUE" not in leaked
+    envelope = page_inspect.error_envelope(
+        "observe",
+        page_inspect.InspectError("failed sk-abcdefLEFTOVERKEY", "hint Bearer abcdefghijkl"),
+    )
+    raw = json.dumps(envelope)
+    assert "LEFTOVERKEY" not in raw
+    assert "abcdefghijkl" not in raw
+
+
+def test_frame_rows_keep_name_url_origin_in_document_order_without_ids():
+    tree = {"childFrames": [
+        {"frame": {"id": "1", "name": "outer", "url": "http://user:pw@127.0.0.1:9/outer", "securityOrigin": "http://127.0.0.1:9"},
+         "childFrames": [
+             {"frame": {"id": "2", "name": "inner", "url": "http://127.0.0.1:9/inner", "securityOrigin": "http://127.0.0.1:9"}},
+         ]},
+        {"frame": {"id": "3", "name": "sibling", "url": "http://127.0.0.1:9/sibling", "securityOrigin": "http://127.0.0.1:9"}},
+    ]}
+    rows, truncated = page_inspect.frame_rows(tree)
+    assert truncated is False
+    assert rows == [
+        {"name": "outer", "url": "http://127.0.0.1:9/outer", "origin": "http://127.0.0.1:9"},
+        {"name": "inner", "url": "http://127.0.0.1:9/inner", "origin": "http://127.0.0.1:9"},
+        {"name": "sibling", "url": "http://127.0.0.1:9/sibling", "origin": "http://127.0.0.1:9"},
+    ]
+    assert "id" not in json.dumps(rows)
+    assert "user:pw" not in json.dumps(rows)
+
+
+def test_settle_is_chromium_only_and_step_files_are_observe_slices():
+    support, reason = page_inspect.action_support("settle", has_touch=False)
+    assert support == {"chromium": "supported", "firefox": "unsupported", "webkit": "unsupported"}
+    assert "CDP" in reason and "page script" in reason
+    assert page_inspect.parse_step("settle")["action"] == "settle"
+    with pytest.raises(page_inspect.InspectError):
+        page_inspect.parse_step("settle:id:x")
+    published = page_inspect.publish_step(
+        page_inspect.parse_step("settle"),
+        {"status": "done", "page_js_called": False, "support": support, "input": "wait", "quiet": False},
+        url_before="http://127.0.0.1:9/", url_after="http://127.0.0.1:9/", index=1,
+    )
+    assert published["quiet"] is False and published["status"] == "done"
+    names = [
+        page_inspect.observation_file_name(0, {"schema": "btk-page-observe/1"}),
+        page_inspect.observation_file_name(1, {"schema": "btk-page-observe/1", "step": {"action": "settle"}}),
+        page_inspect.observation_file_name(2, {"schema": "btk-page-observe/1", "step": {"action": "click"}}),
+    ]
+    assert names == ["00-initial.json", "01-settle.json", "02-click.json"]
+    source = Path(page_inspect.__file__).read_text(encoding="utf-8")
+    assert ".evaluate(" not in source
+    assert "btk-page-observe-steps/1" not in source
+    assert "page.keyboard.press(resolved)" in source
+    assert "keyboard.press(resolved, timeout" not in source
+
+
 def test_bad_steps_fail_before_a_browser_launch(tmp_path):
     env = os.environ.copy()
     env.pop("BTK_PAGE_SECRET_MISSING", None)
@@ -250,6 +322,10 @@ def test_bad_steps_fail_before_a_browser_launch(tmp_path):
     assert ordinal.returncode == 2 and "ordinal" in json.loads(ordinal.stdout)["error"]
     both = run(["--step", "click:id:save", "--after-click", "id:save", "--after-out", str(tmp_path / "b.json"), "--out", str(tmp_path / "a.json")])
     assert both.returncode == 2 and "--step" in json.loads(both.stdout)["error"]
+    out_dir = tmp_path / "slices"
+    out_dir.mkdir()
+    bare = run(["--out-dir", str(out_dir)])
+    assert bare.returncode == 2 and "out-dir" in json.loads(bare.stdout)["error"]
 
 
 def _serve(directory: Path):
@@ -586,3 +662,110 @@ def test_other_browsers_run_click_and_mark_swipe_unsupported(tmp_path, browser_n
     assert snapshot["elements"] == []
     assert snapshot["environment"]["real_device"] is False
     assert "Saved" not in done.stdout
+
+
+FRAMES = """<!doctype html><meta charset=utf-8><title>frames</title>
+<iframe name="outer" src="outer.html"></iframe>
+"""
+OUTER = """<!doctype html><meta charset=utf-8><title>outer</title>
+<iframe name="inner" src="inner.html"></iframe>
+"""
+INNER = """<!doctype html><meta charset=utf-8><title>inner</title><p>nested-body</p>"""
+QUIET = """<!doctype html><meta charset=utf-8><title>quiet</title><button id=stay type=button>still</button>"""
+BUSY = """<!doctype html><meta charset=utf-8><title>busy</title><div id=log></div>
+<script>setInterval(() => { const node = document.createElement("span"); node.textContent = "x"; document.getElementById("log").appendChild(node); }, 40);</script>
+"""
+
+
+@pytest.mark.browser
+def test_chromium_lists_nested_frames_and_writes_step_slices(tmp_path):
+    (tmp_path / "index.html").write_text(FRAMES, encoding="utf-8")
+    (tmp_path / "outer.html").write_text(OUTER, encoding="utf-8")
+    (tmp_path / "inner.html").write_text(INNER, encoding="utf-8")
+    out_dir = tmp_path / "slices"
+    out_dir.mkdir()
+    out = tmp_path / "run.json"
+    server = _serve(tmp_path)
+    url = f"http://127.0.0.1:{server.server_address[1]}/index.html"
+    try:
+        done = _run([
+            "observe", url, "--step", "wait:timeout:1", "--out", str(out), "--out-dir", str(out_dir), "--json",
+        ])
+    finally:
+        server.shutdown()
+    assert done.returncode == 0, done.stderr
+    payload = json.loads(done.stdout)
+    assert payload["schema"] == "btk-page-observe-run/1"
+    assert "btk-page-observe-steps/1" not in done.stdout
+    initial = payload["observations"][0]
+    rows = initial["sections"]["frames"]["items"]
+    assert [row["name"] for row in rows] == ["outer", "inner"]
+    assert rows[0]["url"].endswith("/outer.html")
+    assert rows[1]["url"].endswith("/inner.html")
+    assert initial["sections"]["frames"]["contents"] == "not_entered"
+    assert "nested-body" not in json.dumps(initial["elements"])
+    assert all(set(row) == {"name", "url", "origin"} for row in rows)
+    files = payload["files"]
+    assert [Path(path).name for path in files] == ["00-initial.json", "01-wait.json"]
+    for path, observation in zip(files, payload["observations"]):
+        assert json.loads(Path(path).read_text(encoding="utf-8")) == observation
+    disk = json.loads(out.read_text(encoding="utf-8"))
+    assert disk["schema"] == "btk-page-observe-run/1"
+    assert disk["files"] == files
+
+
+@pytest.mark.browser
+def test_chromium_settle_is_quiet_without_page_script_and_busy_pages_time_out(tmp_path):
+    (tmp_path / "quiet.html").write_text(QUIET, encoding="utf-8")
+    (tmp_path / "busy.html").write_text(BUSY, encoding="utf-8")
+    server = _serve(tmp_path)
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+    try:
+        started = time.monotonic()
+        quiet = _run([
+            "observe", f"{base}/quiet.html", "--timeout-ms", "8000", "--step", "settle", "--json",
+        ])
+        elapsed = time.monotonic() - started
+        busy = _run([
+            "observe", f"{base}/busy.html", "--timeout-ms", "900", "--step", "settle", "--json",
+        ])
+    finally:
+        server.shutdown()
+    assert quiet.returncode == 0, quiet.stderr
+    quiet_payload = json.loads(quiet.stdout)
+    step = quiet_payload["steps"][0]
+    assert step["status"] == "done" and step["quiet"] is True
+    assert step["page_js_called"] is False
+    assert step["support"]["firefox"] == "unsupported"
+    assert step["support"]["webkit"] == "unsupported"
+    methods = quiet_payload["observations"][1]["limits"]["cdp_methods"]
+    assert "Runtime.evaluate" not in methods
+    assert "Page.setLifecycleEventsEnabled" in methods
+    assert "DOM.getDocument" in methods
+    assert quiet_payload["observations"][1]["limits"]["quiet"] is True
+    assert elapsed < 6, elapsed
+    assert busy.returncode == 0, busy.stderr
+    busy_payload = json.loads(busy.stdout)
+    busy_step = busy_payload["steps"][0]
+    assert busy_step["status"] == "done" and busy_step["quiet"] is False
+    assert busy_payload["ok"] is True
+    assert ".evaluate(" not in (ROOT / "scripts" / "page_inspect.py").read_text(encoding="utf-8")
+
+
+@pytest.mark.browser
+@pytest.mark.parametrize("browser_name", ("firefox", "webkit"))
+def test_other_engines_report_settle_unsupported(tmp_path, browser_name):
+    (tmp_path / "quiet.html").write_text(QUIET, encoding="utf-8")
+    server = _serve(tmp_path)
+    url = f"http://127.0.0.1:{server.server_address[1]}/quiet.html"
+    try:
+        done = _run(["observe", url, "--browser", browser_name, "--step", "settle", "--json"])
+    finally:
+        server.shutdown()
+    assert done.returncode == 0, done.stderr
+    payload = json.loads(done.stdout)
+    step = payload["steps"][0]
+    assert step["status"] == "unsupported"
+    assert step["page_js_called"] is False
+    assert "CDP" in step["reason"] and "page script" in step["reason"]
+    assert "quiet" not in step

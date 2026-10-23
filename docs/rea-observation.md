@@ -74,6 +74,20 @@ Not ported: Stagehand's model tools, its `Runtime.callFunctionOn` scroll, and it
 
 `long-press:LOCATOR` holds for 700 milliseconds. `long-press:LOCATOR=MS` is from 500 to 3000. `swipe:LOCATOR` moves the finger `160,0`. `swipe:LOCATOR=DX,DY` is that finger movement. `touch-scroll:LOCATOR` scrolls the content by `0,400`, the same sign as `mouse.wheel`; the finger moves the opposite way. A stroke that does not fit in the viewport is repeated from the element. Later strokes do not scroll that element back into view, so a document scroll is not undone. `limits.scroll_y` after `touch-scroll` is the same `Page.getLayoutMetrics` value as after the wheel.
 
+## Child frames, step files, and settle
+
+`frames.items` lists child frames in document order. Each row is `name`, `url`, and `origin` from `Page.getFrameTree`. Frame ids are omitted because they change per load. `contents` stays `not_entered`: the child document is not read. Nested frames are listed after their parent, still without entering them. The same list was added on `feat/page-inspect-shadow-roots` and copied here.
+
+`observe --step --out` remains one `btk-page-observe-run/1` document: `observations` are `btk-page-observe/1`, `comparisons` are `btk-page-compare/1`, and `steps` are the action records. `--out-dir` also writes those observation objects as `00-initial.json` and `NN-action.json`. The files are slices of `observations`, not a second schema. `btk-page-observe-steps/1` is not used: that envelope dropped the comparisons and the step records that this run already keeps. `compare` can read any two slice files because each one is a normal observe snapshot.
+
+`settle` is Stagehand's quiet wait (`packages/integrations/core/src/facade/runtime.ts`, MIT, no model call): readyState past `loading`, then 400 ms with no DOM mutation, checked about every 100 ms. The timeout ends the wait with `quiet: false` and status `done`. Chromium watches `Page.lifecycleEvent` plus `DOM.attributeModified`, `DOM.characterDataModified`, `DOM.childNodeInserted`, `DOM.childNodeRemoved`, and `DOM.documentUpdated` on the CDP session. Playwright's `wait_for_load_state("domcontentloaded")` supplies the load state it already tracked. No `page.evaluate` and no `Runtime.evaluate`. Firefox and WebKit are `unsupported` because they have no CDP DOM mutation stream; a page script is not substituted, and the no-evaluate guard on `scripts/page_inspect.py` stays intact. A Chromium step still carries the per-engine `support` map.
+
+`scripts/fetch_member.py` and `parts.lock.json` (`btk-parts-lock/1`) are the integrity-checked single-member extract from `feat/page-inspect-shadow-roots`. Playwright in that lock is the lower bound `>=1.63.0`, matching `pyproject.toml`. The Node part stays an integrity-checked tarball with minimum 24.0.0 and no maximum.
+
+## Secret redaction
+
+Typed `env:NAME` and `file:PATH` values are still removed in full, including percent-encoded forms, before anything else. Exception text and JSON output then pass through Stagehand's `sanitizeErrorMessage` (`packages/integrations/core/src/harness/redact.ts`, MIT, Copyright 2024 Browserbase Inc.): query parameters named `signingKey`, `apiKey`, `api_key`, `token`, or `key`; OpenAI-style `sk-` keys; Browserbase `bb_live_` / `bb_test_` keys; Google `AIza` keys; and `Bearer` tokens. The patterns keep the short prefix Stagehand keeps and replace the rest with `[redacted]`.
+
 ## Deferred on issue 117
 
 Child frames and shadow roots as their own address spaces. Observe counts child frames and author open plus closed shadow roots (pierced DOM, `shadow_roots` section, `contents: not_entered`, `user_agent` for Chromium built-in roots); it does not enter either and does not read shadow attributes. macOS, Windows, Linux, and Android Chrome or WebView as a recorded matrix. Branded channels as a matrix. A Stagehand caller. A headed lane in CI. An agent transport after these envelopes stay stable. Screenshot comparison and full scenario diffs.

@@ -50,7 +50,7 @@ STEP_ACTIONS = {
     "click", "dblclick", "rightclick", "hover", "drag", "scroll", "scroll-into-view",
     "type", "fill", "clear", "press", "shortcut", "focus", "blur",
     "check", "uncheck", "select", "set-files", "submit",
-    "goto", "back", "forward", "reload", "wait", "resize",
+    "goto", "back", "forward", "reload", "wait", "resize", "settle",
     "tap", "long-press", "swipe", "touch-scroll",
 }
 ACT_ACTIONS = set(STEP_ACTIONS) | {"wait_for_timeout"}
@@ -67,6 +67,15 @@ ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 VIEWPORT_RE = re.compile(r"^([1-9][0-9]{0,4})x([1-9][0-9]{0,4})$")
 MAX_STEPS = 64
 MAX_VALUE_CHARS = 65536
+# Stagehand quietWait (packages/integrations/core/src/facade/runtime.ts): past "loading",
+# then 400 ms with no DOM mutation, polled every 100 ms. A timeout is quiet:false.
+QUIET_MS = 400
+QUIET_POLL_S = 0.1
+SETTLE_UNSUPPORTED = (
+    "settle waits until readyState is past loading and the main document has not mutated for 400 ms, "
+    "using Chromium CDP Page lifecycle events and DOM mutation events. "
+    "This engine has no CDP DOM mutation stream, and a page script was not substituted"
+)
 NAVIGATION_TIMEOUT_MS = 30000
 POPUP_EVENT_TIMEOUT_MS = 1000
 SCROLL_SETTLE_MS = 200
@@ -260,13 +269,27 @@ def _secret_needles() -> list[str]:
     return needles
 
 
+# Stagehand sanitizeErrorMessage (browserbase/stagehand
+# packages/integrations/core/src/harness/redact.ts, MIT). Exact env:/file: values
+# are replaced first, so a known secret is removed in full rather than leaving a key prefix.
+KEY_REDACTIONS = (
+    (re.compile(r"([?&](?:signingKey|apiKey|api_key|token|key)=)[^&\s\"']+", re.IGNORECASE), r"\1[redacted]"),
+    (re.compile(r"\b(sk-[A-Za-z0-9_-]{6})[A-Za-z0-9_-]+"), r"\1[redacted]"),
+    (re.compile(r"\b(bb_(?:live|test)_[A-Za-z0-9]{4})[A-Za-z0-9_-]+"), r"\1[redacted]"),
+    (re.compile(r"\bAIza[0-9A-Za-z_-]{30,}"), "AIza[redacted]"),
+    (re.compile(r"\b(Bearer\s+)[A-Za-z0-9._~+/=-]{8,}", re.IGNORECASE), r"\1[redacted]"),
+)
+
+
 def redact_text(value: str) -> str:
-    """Replace typed values and their percent-encoded forms. Empty values are skipped."""
+    """Replace typed values, their percent-encoded forms, and key-like strings."""
     if not isinstance(value, str) or not value:
         return value
     for needle in _secret_needles():
         if needle in value:
             value = value.replace(needle, "[redacted]")
+    for pattern, replacement in KEY_REDACTIONS:
+        value = pattern.sub(replacement, value)
     return value
 
 
@@ -854,6 +877,12 @@ def action_support(action: str, *, has_touch: bool) -> tuple[dict, str | None]:
         }, TOUCH_ENGINE_LIMIT
     if action == "tap" and not has_touch:
         return {name: "unsupported" for name in browsers}, TAP_NEEDS_TOUCH
+    if action == "settle":
+        return {
+            "chromium": "supported",
+            "firefox": "unsupported",
+            "webkit": "unsupported",
+        }, SETTLE_UNSUPPORTED
     return {name: "supported" for name in browsers}, None
 
 
@@ -1018,7 +1047,7 @@ def parse_step(text: str) -> dict:
         )
     step = _blank_step(action)
     rest = "" if rest is None else rest
-    if action in {"back", "forward", "reload"}:
+    if action in {"back", "forward", "reload", "settle"}:
         if rest:
             raise InspectError(f"{action} does not take an argument", f"pass --step {action}")
         return step
@@ -1150,7 +1179,7 @@ def act_arguments_to_step(action: str, locator: str, text: str | None, text_env:
     if len(supplied) > 1:
         raise InspectError("pass only one of --text, --text-env, and --text-file", "secrets belong in the environment or a file, and are redacted in the output")
     value = supplied[0] if supplied else None
-    if action in {"back", "forward", "reload"}:
+    if action in {"back", "forward", "reload", "settle"}:
         return parse_step(action)
     if action == "goto":
         if value is None:
@@ -1243,6 +1272,8 @@ def publish_step(step: dict, outcome: dict, *, url_before: str, url_after: str, 
         record["unsupported_reason"] = outcome["unsupported_reason"]
     if outcome.get("scroll_y") is not None:
         record["scroll_y"] = outcome["scroll_y"]
+    if "quiet" in outcome:
+        record["quiet"] = bool(outcome["quiet"])
     if step["action"] == "click" and outcome["status"] == "done":
         record["hint"] = "network and console on the following snapshot start after the previous snapshot; url_before equal to url_after means this step did not navigate"
     return record
@@ -1260,6 +1291,90 @@ def _secret_values(step: dict) -> list[str]:
         if name:
             values.append(name)
     return values
+
+
+def _wait_quiet(page, client, sent: list, timeout_ms: int) -> bool:
+    """True when Chromium went quiet before the timeout. A timeout is a result, not an error.
+
+    readyState past loading comes from Page lifecycle events and Playwright's already-tracked
+    domcontentloaded state. DOM mutation events stand in for Stagehand's MutationObserver.
+    No page script is installed.
+    """
+    from playwright.sync_api import TimeoutError as PlaywrightTimeout
+
+    deadline = time.monotonic() + max(0, timeout_ms) / 1000
+    quiet_s = QUIET_MS / 1000
+    state = {"last": time.monotonic(), "ready": False}
+
+    def on_mutation(*_args):
+        state["last"] = time.monotonic()
+
+    def on_document(*_args):
+        state["ready"] = False
+        state["last"] = time.monotonic()
+
+    def on_lifecycle(*args):
+        params = args[0] if args else None
+        name = str(params.get("name") or "") if isinstance(params, dict) else ""
+        if name in {"DOMContentLoaded", "load", "networkAlmostIdle", "networkIdle"}:
+            state["ready"] = True
+
+    client.on("DOM.attributeModified", on_mutation)
+    client.on("DOM.characterDataModified", on_mutation)
+    client.on("DOM.childNodeInserted", on_mutation)
+    client.on("DOM.childNodeRemoved", on_mutation)
+    client.on("DOM.documentUpdated", on_document)
+    client.on("Page.lifecycleEvent", on_lifecycle)
+    _cdp_send(client, "Page.enable", {}, sent)
+    _cdp_send(client, "Page.setLifecycleEventsEnabled", {"enabled": True}, sent)
+    _cdp_send(client, "DOM.enable", {}, sent)
+    _cdp_send(client, "DOM.getDocument", {"depth": -1, "pierce": False}, sent)
+    state["last"] = time.monotonic()
+    while True:
+        now = time.monotonic()
+        if now >= deadline:
+            return False
+        if not state["ready"]:
+            remaining_ms = max(1, int((deadline - now) * 1000))
+            try:
+                page.wait_for_load_state("domcontentloaded", timeout=min(50, remaining_ms))
+            except PlaywrightTimeout:
+                pass
+            else:
+                state["ready"] = True
+        now = time.monotonic()
+        if now >= deadline:
+            return False
+        if state["ready"] and (now - state["last"]) >= quiet_s and (state["last"] + quiet_s) <= deadline:
+            return True
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        page.wait_for_timeout(max(1, int(min(QUIET_POLL_S, remaining) * 1000)))
+
+
+def _settle_quiet(page, *, cdp_client, cdp_sent: list | None, timeout_ms: int) -> bool:
+    """Chromium-only quiet wait. The caller has already rejected other engines."""
+    owns = cdp_client is None
+    sent = cdp_sent if cdp_sent is not None else []
+    client = cdp_client
+    if owns:
+        try:
+            client = page.context.new_cdp_session(page)
+        except Exception as exc:
+            raise InspectError(
+                "settle needs a Chromium CDP session",
+                SETTLE_UNSUPPORTED,
+                stage="inspect",
+            ) from exc
+    try:
+        return _wait_quiet(page, client, sent, timeout_ms)
+    finally:
+        if owns:
+            try:
+                client.detach()
+            except Exception:
+                pass
 
 
 def perform_action(page, step: dict, *, timeout_ms: int, has_touch: bool, browser_name: str,
@@ -1370,6 +1485,11 @@ def perform_action(page, step: dict, *, timeout_ms: int, has_touch: bool, browse
             return _done(support, "viewport", False)
         if action == "wait":
             return _perform_wait(page, step, timeout_ms=timeout_ms, support=support)
+        if action == "settle":
+            quiet = _settle_quiet(
+                page, cdp_client=cdp_client, cdp_sent=cdp_sent, timeout_ms=timeout_ms,
+            )
+            return _done(support, "wait", False, quiet=quiet)
         if action == "tap":
             _call_and_allow_popup(page, lambda: target().tap(timeout=timeout_ms))
             return _done(support, "touch", True)
@@ -1728,6 +1848,30 @@ def _walk_dom(node, found: list) -> bool:
 
 def _frame_count(node) -> int:
     return 1 + sum(_frame_count(child) for child in node.get("childFrames") or [])
+
+
+def frame_rows(frame_tree: dict, *, limit: int = HARD_CAP) -> tuple[list, bool]:
+    """Child frames in document order: name, URL, and origin only.
+
+    Frame ids change per load, so they are not listed. Child documents are not entered.
+    Ported from the frame list on feat/page-inspect-shadow-roots.
+    """
+    rows: list[dict] = []
+    stack = list(reversed(frame_tree.get("childFrames") or []))
+    while stack:
+        node = stack.pop()
+        if not isinstance(node, dict):
+            continue
+        if len(rows) >= limit:
+            return rows, True
+        frame = node.get("frame") or {}
+        rows.append({
+            "name": clip(str(frame.get("name") or ""), 120),
+            "url": strip_userinfo(str(frame.get("url") or "")),
+            "origin": clip(str(frame.get("securityOrigin") or ""), 200),
+        })
+        stack.extend(reversed(node.get("childFrames") or []))
+    return rows, False
 
 
 def count_shadow_roots(root: dict, *, limit: int = HARD_CAP * 10) -> dict:
@@ -2264,6 +2408,8 @@ def observe_page(*, url: str, browser_name: str, profile: str, headed: bool, cha
                     limits["selector_engine"] = "playwright"
                 if step.get("scroll_y") is not None:
                     limits["scroll_y"] = step["scroll_y"]
+                if "quiet" in step:
+                    limits["quiet"] = bool(step["quiet"])
             return limits
 
         def _take_intervals():
@@ -2322,6 +2468,7 @@ def observe_page(*, url: str, browser_name: str, profile: str, headed: bool, cha
                     "url": strip_userinfo(item.get("url") or ""),
                 })
             document_url = strip_userinfo(((frames.get("frameTree") or {}).get("frame") or {}).get("url") or "")
+            frame_items, frame_truncated = frame_rows(frames.get("frameTree") or {})
             controls_digest = _content_digest([
                 [element.get("role"), element.get("name"), element.get("text")] for element in elements
             ])
@@ -2358,8 +2505,8 @@ def observe_page(*, url: str, browser_name: str, profile: str, headed: bool, cha
                     "text": "not_requested", "prior_activity_available": False, "items": console_items,
                 }),
                 "storage": storage,
-                "frames": _section("cdp:Page.getFrameTree", "complete", {
-                    "child_frames": child_frames, "contents": "not_entered",
+                "frames": _section("cdp:Page.getFrameTree", "truncated" if frame_truncated else "complete", {
+                    "child_frames": child_frames, "contents": "not_entered", "items": frame_items,
                 }),
                 "shadow_roots": _section("cdp:DOM.getDocument pierce", "truncated" if shadow["truncated"] else "complete", {
                     "open": shadow["open"], "closed": shadow["closed"], "count": shadow["count"],
@@ -2554,6 +2701,8 @@ def act_page(*, url: str, browser_name: str, profile: str, headed: bool, channel
             "step": published,
             "hint": "url was captured. dom was not requested, so this result cannot say the markup was unchanged. typed values are redacted",
         }
+        if "quiet" in outcome:
+            result["limits"]["quiet"] = bool(outcome["quiet"])
         if outcome.get("reason"):
             result["reason"] = outcome["reason"]
         result = _note_emulation(redact_obj(result))
@@ -2662,7 +2811,7 @@ def dumps(payload: dict) -> str:
 def error_envelope(operation: str, exc: InspectError) -> dict:
     payload = {
         "schema": SCHEMA_INSPECT, "ok": False, "operation": operation, "stage": exc.stage,
-        "error": exc.error, "hint": exc.hint,
+        "error": redact_text(exc.error), "hint": redact_text(exc.hint),
     }
     if exc.suggestions:
         payload["suggestions"] = exc.suggestions
@@ -2708,6 +2857,8 @@ def run_text(payload: dict) -> str:
         lines.append(f"{step.get('index')} {step.get('action')} {locator}{redacted} {step.get('status')}{reason}".rstrip())
     if payload.get("error"):
         lines.append(f"error: {payload['error']}")
+    if payload.get("files"):
+        lines.append(f"files={len(payload['files'])}")
     lines.append(f"hint: {payload.get('hint')}")
     return "\n".join(lines) + "\n"
 
@@ -2810,6 +2961,10 @@ def build_parser() -> argparse.ArgumentParser:
     observe.add_argument("--timeout-ms", type=_bounded(120000), default=5000)
     observe.add_argument("--step", action="append", default=None,
                          help="repeatable action such as click:id:save or type:id:search=env:SEARCH. Values are redacted")
+    observe.add_argument(
+        "--out-dir",
+        help="with --step, also write each observation as its own btk-page-observe/1 file in this existing directory",
+    )
     observe.add_argument(
         "--after-action",
         metavar="SPEC",
@@ -2942,6 +3097,16 @@ def dispatch(args: argparse.Namespace) -> tuple[dict, str, int]:
                 "--step and --after-action both record observe snapshots",
                 "pass --step for a sequence, or --after-action with --after-out for one step",
             )
+        if args.out_dir and (not args.step or after_action is not None or args.after_out is not None):
+            raise InspectError(
+                "--out-dir is the per-step slice of an observe --step run",
+                "pass --step. A single snapshot still uses --out. --after-action keeps --out and --after-out",
+            )
+        if args.out_dir and not Path(args.out_dir).is_dir():
+            raise InspectError(
+                f"directory does not exist: {args.out_dir}",
+                "create the directory before --out-dir",
+            )
         if after_action is not None or args.after_out is not None:
             _check_sequence_args(args, after_action)
             steps = [after_action_to_step(after_action)]
@@ -2961,6 +3126,13 @@ def dispatch(args: argparse.Namespace) -> tuple[dict, str, int]:
         )
         if want_run:
             payload = session["run"]
+            if args.out_dir:
+                payload = dict(payload)
+                payload["files"] = write_observation_slices(args.out_dir, payload.get("observations") or [])
+                payload["hint"] = (payload.get("hint") or "") + (
+                    " files are the same btk-page-observe/1 objects as observations, one per snapshot. "
+                    "The run envelope stays btk-page-observe-run/1; there is no second schema."
+                )
             return payload, run_text(payload), 0 if payload.get("ok") else 2
         observations = session["observations"]
         payload = observations[0]
@@ -3004,7 +3176,31 @@ def dispatch(args: argparse.Namespace) -> tuple[dict, str, int]:
     return payload, describe_text(payload), 0 if payload["ok"] else 1
 
 
+def observation_file_name(index: int, observation: dict) -> str:
+    """00-initial.json, then NN-action.json. The index keeps repeated actions distinct."""
+    if index == 0:
+        return "00-initial.json"
+    step = observation.get("step") if isinstance(observation, dict) else None
+    action = step.get("action") if isinstance(step, dict) else None
+    slug = re.sub(r"[^a-z0-9-]", "-", str(action or "step"))
+    return f"{index:02d}-{slug}.json"
+
+
+def write_observation_slices(directory: str, observations: list) -> list[str]:
+    """Write each btk-page-observe/1 object already stored on the run. No second schema."""
+    files = []
+    for index, observation in enumerate(observations):
+        if not isinstance(observation, dict) or observation.get("schema") != SCHEMA_OBSERVE:
+            continue
+        path = str(Path(directory) / observation_file_name(index, observation))
+        _write_snapshot(path, observation)
+        files.append(path)
+    return files
+
+
 def emit(payload: dict, text: str, code: int, args: argparse.Namespace) -> int:
+    payload = redact_obj(payload)
+    text = redact_text(text)
     raw = dumps(payload)
     if args.out:
         path = Path(args.out)
