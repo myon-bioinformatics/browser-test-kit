@@ -25,3 +25,10 @@ def test_chords_resolve_each_part_and_leave_other_keys_alone():
 def test_default_platform_follows_sys_platform():
     expected = "Meta" if sys.platform == "darwin" else "Control"
     assert page_inspect.resolve_smart_key("ControlOrMeta") == expected
+
+
+def test_page_keyboard_press_does_not_take_a_timeout():
+    source = (ROOT / "scripts" / "page_inspect.py").read_text(encoding="utf-8")
+    assert "page.keyboard.press(text, timeout=" not in source
+    assert "page.keyboard.press(text)" in source
+    assert "target.press(text, timeout=timeout_ms)" in source

@@ -1368,7 +1368,7 @@ def _perform(page, action: str, locator: str, text, timeout_ms: int, outcome: di
     if action == "press" and isinstance(text, str):
         text = resolve_smart_key(text)
     if action == "press" and not (locator or "").strip():
-        page.keyboard.press(text, timeout=timeout_ms)
+        page.keyboard.press(text)
         return True
     target, page_js = _action_locator(page, locator)
     if action == "click":
