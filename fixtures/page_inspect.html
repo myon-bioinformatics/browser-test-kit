@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Page inspect fixture</title>
+<style>
+  body { font: 16px sans-serif; margin: 16px; max-width: 36rem; }
+  button, a, label, input { display: block; margin: 8px 0; }
+</style>
+</head>
+<body id="btk-page-inspect">
+  <button id="save-draft" data-testid="save-draft">Save draft</button>
+  <button type="button">Cancel</button>
+  <button type="button">Cancel</button>
+  <a href="#docs">Documentation</a>
+  <a href="#saved">Saved items</a>
+  <label for="q">Search</label>
+  <input id="q" type="search">
+  <label><input id="remember" type="checkbox"> Remember me</label>
+  <button id="unavailable" type="button" disabled>Unavailable</button>
+  <button id="secret" type="button" hidden>Secret</button>
+  <button id="also-hidden" type="button" style="display:none">Also hidden</button>
+  <div id="shadow-host"></div>
+  <iframe title="child" srcdoc="&lt;button type=&quot;button&quot;&gt;Child frame&lt;/button&gt;"></iframe>
+  <script>
+    const host = document.getElementById("shadow-host");
+    const root = host.attachShadow({mode: "open"});
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = "Inside shadow";
+    root.appendChild(button);
+  </script>
+</body>
+</html>
