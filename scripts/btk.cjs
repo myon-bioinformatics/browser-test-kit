@@ -117,7 +117,7 @@ function helpText() {
   return `btk.cjs — the Node entry point for scripts/btk.py (same commands, same output).
 
 usage: node scripts/btk.cjs <command> [args]
-  observe, act, locate, count, describe, compare, operations   loopback page inspection
+  observe, act, pages, locate, count, describe, compare, operations   loopback page inspection
   fetch                                                       fetch one archive member (integrity first)
   plan                                                        recommend playwright install lines per job
 

@@ -951,6 +951,8 @@ def operations() -> dict:
          "limit_default": SURVEY_LIMIT_DEFAULT, "limit_max": SURVEY_LIMIT_MAX},
         {"name": "act", "needs": "playwright", "summary": "One declared action that re-queries a locator",
          "limit_default": None, "limit_max": None},
+        {"name": "pages", "needs": "playwright", "summary": "Discover same-origin pages from a loopback start and give each an emoji",
+         "limit_default": None, "limit_max": None},
         {"name": "count", "needs": "snapshot", "summary": "Count matches and roles without element bodies",
          "limit_default": None, "limit_max": None},
         {"name": "locate", "needs": "snapshot", "summary": "Rank controls by longest-common-substring similarity and page them",
@@ -1690,7 +1692,7 @@ def _perform(page, action: str, locator: str, text, timeout_ms: int, outcome: di
 
 
 def act_page(*, url: str, browser_name: str, profile: str, headed: bool, channel: str | None,
-             action: str, locator: str, text: str, timeout_ms: int) -> dict:
+             action: str, locator: str, text: str, timeout_ms: int, routes: dict | None = None) -> dict:
     url = loopback_target(url)
     if action not in ACT_ACTIONS:
         raise InspectError(
@@ -1700,7 +1702,7 @@ def act_page(*, url: str, browser_name: str, profile: str, headed: bool, channel
     if action in ACT_TEXT_ACTIONS and text is None:
         raise InspectError(f"{action} needs --text", "pass the literal text, key name, or option value")
     if action == "goto":
-        loopback_target(text)  # checked before any browser launch
+        text = goto_target(text, origin_of(url), routes)  # resolved before any browser launch
     keyboard_only = action == "press" and not (locator or "").strip()
     if action not in ("wait_for_timeout", "settle", "goto") and not keyboard_only:
         _check_action_locator(locator)
@@ -2012,6 +2014,8 @@ def build_parser() -> argparse.ArgumentParser:
     observe.add_argument("--step", action="append", default=[], metavar="'ACTION LOCATOR [TEXT]'",
                          help="one action, then a snapshot; repeat for a sequence. LOCATOR - means none. Use with --out-dir")
     observe.add_argument("--out-dir", help="write 00-initial.json and one NN-action.json per --step here")
+    observe.add_argument("--routes", metavar="FILE", help="JSON {route: emoji} from btk.py pages; lets goto and --trail take emoji")
+    observe.add_argument("--trail", metavar="'EMOJI → EMOJI'", help="visit these pages in order, one snapshot each; the first emoji is the start page; needs --routes and --out-dir")
     act = sub.add_parser("act", parents=[common], help="one declared action that re-queries a locator", allow_abbrev=False)
     act.add_argument("target", help="loopback URL; a snapshot ordinal is not accepted")
     act.add_argument("--action", required=True, choices=tuple(sorted(ACT_ACTIONS)))
@@ -2022,6 +2026,15 @@ def build_parser() -> argparse.ArgumentParser:
     act.add_argument("--profile", choices=tuple(PROFILES), default="desktop")
     act.add_argument("--channel", help="branded browser channel, for example chrome")
     act.add_argument("--headed", action="store_true")
+    act.add_argument("--routes", metavar="FILE", help="JSON {route: emoji} from btk.py pages; lets goto take an emoji")
+    pages_parser = sub.add_parser("pages", parents=[common], help="discover same-origin pages and give each an emoji", allow_abbrev=False)
+    pages_parser.add_argument("target", help="loopback start URL")
+    pages_parser.add_argument("--browser", choices=("chromium", "firefox", "webkit"), default="chromium")
+    pages_parser.add_argument("--profile", choices=tuple(PROFILES), default="desktop")
+    pages_parser.add_argument("--channel", help="branded browser channel, for example chrome")
+    pages_parser.add_argument("--headed", action="store_true")
+    pages_parser.add_argument("--max-pages", type=_bounded(len(ROUTE_POOL)), default=20)
+    pages_parser.add_argument("--routes-out", metavar="FILE", help="write the {route: emoji} JSON here")
     locate_parser = sub.add_parser("locate", parents=[common], help="rank controls in a snapshot", allow_abbrev=False)
     locate_parser.add_argument("snapshot")
     locate_parser.add_argument("--query", default="")
@@ -2075,7 +2088,144 @@ def _check_sequence_args(args: argparse.Namespace) -> None:
             raise InspectError(f"directory does not exist: {Path(path).parent}", "create the directory before --out or --after-out")
 
 
-def _parse_step(raw: str, index: int) -> dict:
+# Emoji routes. A routes file maps each route to one emoji (the format of
+# fixtures/route_trail_registry.json). Trails use route_trail.py's grammar.
+ROUTE_GO, ROUTE_ROUND = "→", "↔"
+ROUTE_POOL = ("🏠", "🗺", "🌍", "🕒", "🔎", "📄", "📁", "💬", "🔔", "⭐",
+              "🧭", "🧪", "📊", "🛒", "👤", "🔑", "📝", "🎯", "🚪", "🧩",
+              "💡", "🔗", "🎨", "🧾", "🗓", "🔐", "📣", "📷", "🎵", "🏆")
+MAX_ROUTES_FILE_BYTES = 64 * 1024
+
+
+def emoji_key(text: str) -> str:
+    """Compare emoji without spaces or variation selectors (U+FE0E, U+FE0F)."""
+    return re.sub(r"[\s\ufe0e\ufe0f]", "", text)
+
+
+def load_routes(path: str) -> dict:
+    """Read {route: emoji} and return {emoji key: route}. One emoji per route, no collisions."""
+    try:
+        raw = Path(path).read_bytes()
+    except OSError as exc:
+        raise InspectError(f"cannot read routes file: {exc}", "pass the JSON file that btk.py pages wrote") from exc
+    if len(raw) > MAX_ROUTES_FILE_BYTES:
+        raise InspectError("routes file is too large", f"keep at most {len(ROUTE_POOL)} routes")
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except ValueError as exc:
+        raise InspectError("routes file is not JSON", 'write a JSON object such as {"/": "🏠"}') from exc
+    if not isinstance(data, dict) or not 1 <= len(data) <= len(ROUTE_POOL):
+        raise InspectError("routes file must map 1 to %d routes to emoji" % len(ROUTE_POOL), 'write a JSON object such as {"/": "🏠"}')
+    routes: dict = {}
+    for route, emoji in data.items():
+        if not isinstance(route, str) or not route.startswith("/") or len(route) > 512 or any(c.isspace() or c == "#" for c in route):
+            raise InspectError(f"bad route {route!r}", "routes start with / and contain no spaces or #")
+        key = emoji_key(emoji) if isinstance(emoji, str) else ""
+        if not key:
+            raise InspectError(f"route {route} needs one emoji as its value", 'write {"/": "🏠"}')
+        if key in routes:
+            raise InspectError(f"emoji {emoji} is used by two routes", "give each route its own emoji")
+        routes[key] = route
+    return routes
+
+
+def parse_trail(trail: str) -> list:
+    """'A → B ↔ C' -> ['A', 'B', 'C', 'B'] as emoji keys, in visiting order (same grammar as route_trail.py)."""
+    text = re.sub(r"\s", "", trail).replace("<->", ROUTE_ROUND).replace("->", ROUTE_GO)
+    tokens = re.split(f"([{ROUTE_GO}{ROUTE_ROUND}])", text)
+    if not tokens[0] or any(not part for part in tokens[2::2]):
+        raise InspectError("trail must alternate pages and arrows", "write e.g. '🏠 → 🗺 ↔ 🌍'")
+    steps = [emoji_key(tokens[0])]
+    for arrow, page in zip(tokens[1::2], tokens[2::2]):
+        previous = steps[-1]
+        steps.append(emoji_key(page))
+        if arrow == ROUTE_ROUND:
+            steps.append(previous)
+    if len(steps) > MAX_STEPS:
+        raise InspectError(f"trail has more than {MAX_STEPS} steps", "split it into more than one observe")
+    return steps
+
+
+def origin_of(target: str) -> str:
+    parts = urllib.parse.urlsplit(loopback_target(target))
+    return f"{parts.scheme}://{parts.netloc}"
+
+
+def route_url(emoji: str, origin: str, routes: dict | None) -> str:
+    if routes is None:
+        raise InspectError(f"{emoji} is not a URL", "pass a loopback URL, or --routes FILE to use an emoji")
+    route = routes.get(emoji_key(emoji))
+    if route is None:
+        raise InspectError(f"no route for emoji {emoji}", "run btk.py pages to list the pages and their emoji")
+    return loopback_target(origin + route)
+
+
+def goto_target(text: str, origin: str, routes: dict | None) -> str:
+    """A goto target is a loopback URL, or a page emoji from --routes."""
+    if text.startswith(("http://", "https://")):
+        return loopback_target(text)
+    return route_url(text, origin, routes)
+
+
+def trail_urls(trail: str, origin: str, routes: dict) -> list:
+    return [route_url(key, origin, routes) for key in parse_trail(trail)]
+
+
+def discover_pages(*, url: str, browser_name: str, profile: str, headed: bool, channel: str | None, max_pages: int) -> dict:
+    """Breadth-first walk of same-origin links from a loopback start page; emoji are assigned afterwards."""
+    start = loopback_target(url)
+    origin = origin_of(start)
+    start_route = urllib.parse.urlsplit(start).path or "/"
+    playwright, browser, page = _with_browser(start, browser_name, profile, headed, channel)
+    failure = None
+    result = None
+    try:
+        queue = [start_route]
+        seen = {start_route}
+        found: list = []
+        skipped = 0
+        index = 0
+        while index < len(queue) and len(found) < max_pages:
+            route = queue[index]
+            index += 1
+            try:
+                page.goto(origin + route, wait_until="load", timeout=30000)
+            except Exception as exc:
+                raise InspectError(
+                    f"{type(exc).__name__}: {exc}",
+                    "check that the loopback server is up",
+                    stage="navigate",
+                ) from exc
+            found.append(route)
+            for anchor in page.locator("a[href]").all():
+                # Attribute reads only: pages never runs page script, so observe's one-evaluate rule holds.
+                link = urllib.parse.urlsplit(urllib.parse.urljoin(page.url, anchor.get_attribute("href") or ""))
+                if f"{link.scheme}://{link.netloc}" != origin:
+                    skipped += 1
+                    continue
+                path = link.path or "/"
+                if path not in seen:
+                    seen.add(path)
+                    queue.append(path)
+        routes = {route: ROUTE_POOL[number] for number, route in enumerate(found)}
+        result = {
+            "schema": "btk-page-routes/1",
+            "ok": True,
+            "origin": origin,
+            "routes": routes,
+            "pages": [{"route": route, "emoji": routes[route]} for route in found],
+            "truncated": index < len(queue),
+            "skipped_external_links": skipped,
+            "hint": "pass the routes file to observe --trail or act --action goto; link text is not recorded; query strings and fragments are ignored",
+        }
+    except InspectError as exc:
+        failure = exc
+    except Exception as exc:
+        failure = InspectError(f"{type(exc).__name__}: {exc}", "run pages again", stage="inspect")
+    return _finish(playwright, browser, failure, result)
+
+
+def _parse_step(raw: str, index: int, origin: str | None = None, routes: dict | None = None) -> dict:
     parts = raw.strip().split(None, 2)
     if not parts:
         raise InspectError(f"step {index} is empty", "use ACTION LOCATOR [TEXT]; LOCATOR - means none")
@@ -2087,7 +2237,7 @@ def _parse_step(raw: str, index: int) -> dict:
     if action in ACT_TEXT_ACTIONS and text is None:
         raise InspectError(f"step {index}: {action} needs TEXT", "write ACTION LOCATOR TEXT; text is not recorded in the output")
     if action == "goto":
-        loopback_target(text)  # checked before any browser launch
+        text = goto_target(text, origin or "", routes)  # resolved before any browser launch
     if action == "wait_for_timeout":
         if text is None or not re.fullmatch(r"[0-9]{1,6}", text) or int(text) > 120000:
             raise InspectError(f"step {index}: wait_for_timeout needs milliseconds 0..120000 as TEXT", "write wait_for_timeout - 500")
@@ -2122,20 +2272,32 @@ def dispatch(args: argparse.Namespace) -> tuple[dict, str, int]:
         if args.limit < 1:
             raise InspectError("limit must be at least 1", f"use 1..{SURVEY_LIMIT_MAX}")
         steps = None
+        start_url = args.target
         if args.after_click is not None or args.after_out is not None:
             _check_sequence_args(args)
             steps = [{"action": "click", "locator": args.after_click.strip(), "text": None}]
         if args.step:
             _check_step_args(args)
-            steps = [_parse_step(raw, index) for index, raw in enumerate(args.step, start=1)]
+            routes = load_routes(args.routes) if args.routes else None
+            steps = [_parse_step(raw, index, origin_of(args.target), routes) for index, raw in enumerate(args.step, start=1)]
+        if args.trail is not None:
+            if args.step or args.after_click is not None or args.after_out is not None:
+                raise InspectError("--trail cannot be combined with --step or --after-click", "use --trail alone, or --step for explicit actions")
+            if not args.routes:
+                raise InspectError("--trail needs --routes", "pass the JSON file that btk.py pages wrote")
+            if not args.out_dir or not Path(args.out_dir).is_dir():
+                raise InspectError("--trail writes one file per page, so it needs an existing --out-dir", "create the directory and pass --out-dir")
+            urls = trail_urls(args.trail, origin_of(args.target), load_routes(args.routes))
+            start_url = urls[0]
+            steps = [{"action": "goto", "locator": "", "text": url} for url in urls[1:]]
         results = observe_page(
-            url=args.target, browser_name=args.browser, profile=args.profile, headed=args.headed,
+            url=start_url, browser_name=args.browser, profile=args.profile, headed=args.headed,
             channel=args.channel or None, include_hidden=args.include_hidden,
             include_storage_keys=args.include_storage_keys,
             include_storage_fingerprints=args.include_storage_fingerprints,
             role=args.role, start=args.start, limit=args.limit, steps=steps,
         )
-        if args.step:
+        if args.step or args.trail is not None:
             names = ["00-initial.json"] + [
                 f"{index:02d}-{step['action']}.json" for index, step in enumerate(steps, start=1)
             ]
@@ -2165,8 +2327,24 @@ def dispatch(args: argparse.Namespace) -> tuple[dict, str, int]:
             url=args.target, browser_name=args.browser, profile=args.profile, headed=args.headed,
             channel=args.channel or None, action=args.action, locator=args.locator,
             text=args.text, timeout_ms=args.timeout_ms,
+            routes=load_routes(args.routes) if args.routes else None,
         )
         text_out = f"action={payload['action']} url={payload['url']}\nhint: {payload['hint']}\n"
+        return payload, text_out, 0
+    if args.command == "pages":
+        if args.max_pages < 1:
+            raise InspectError("max-pages must be at least 1", "use 1..%d" % len(ROUTE_POOL))
+        if args.routes_out and not Path(args.routes_out).parent.is_dir():
+            raise InspectError(f"directory does not exist: {Path(args.routes_out).parent}", "create the directory before --routes-out")
+        payload = discover_pages(url=args.target, browser_name=args.browser, profile=args.profile, headed=args.headed,
+                                 channel=args.channel or None, max_pages=args.max_pages)
+        if args.routes_out:
+            try:
+                Path(args.routes_out).write_text(json.dumps(payload["routes"], ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            except OSError as exc:
+                raise InspectError(f"cannot write {args.routes_out}: {exc}", "choose a writable file path") from exc
+            payload["routes_file"] = args.routes_out
+        text_out = "".join(f"{page['emoji']} {page['route']}\n" for page in payload["pages"])
         return payload, text_out, 0
     if args.command == "compare":
         payload = compare_snapshots(read_snapshot(args.left), read_snapshot(args.right))
@@ -2231,7 +2409,7 @@ def page_main(argv: list[str] | None = None) -> int:
 
 FETCH_COMMANDS = ("fetch",)
 PLAN_COMMANDS = ("plan",)
-PAGE_COMMANDS = ("observe", "act", "locate", "count", "describe", "compare", "operations")
+PAGE_COMMANDS = ("observe", "act", "pages", "locate", "count", "describe", "compare", "operations")
 COMMANDS = FETCH_COMMANDS + PLAN_COMMANDS + PAGE_COMMANDS
 
 
