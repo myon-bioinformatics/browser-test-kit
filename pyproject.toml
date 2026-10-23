@@ -17,7 +17,7 @@ dev = [
     "pip>=26.2",
 ]
 browser = [
-    "playwright==1.64.1",
+    "playwright>=1.64.1",
 ]
 
 # The installed stdlib API remains 3.9+, but project/uv environments are 3.11+.
