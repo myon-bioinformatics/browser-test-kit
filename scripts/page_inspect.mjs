@@ -494,7 +494,7 @@ const NETWORK_TARGET = new RegExp(String.raw`^https?://(?:127\.0\.0\.1|\[::1\]):
 
 export function targetUrl(target) {
   const hint = "use an existing local HTML file or http(s)://127.0.0.1:8080 / http(s)://[::1]:8080; hostnames and other ports are not allowed";
-  if ((/[\x00-\x20\x7f]/.test(target) && target.includes("://")) || target.includes("\\")) {
+  if (target.startsWith("//") || target.startsWith("\\\\") || (target.includes("://") && (/[\x00-\x20\x7f]/.test(target) || target.includes("\\")))) {
     throw new InspectError("URL is outside the survey boundary", hint);
   }
   if (target.includes("://")) {

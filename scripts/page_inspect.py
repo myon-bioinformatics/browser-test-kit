@@ -22,6 +22,7 @@ import platform
 import re
 import sys
 import urllib.parse
+import urllib.request
 from pathlib import Path
 
 SCHEMA_INSPECT = "btk-page-inspect/1"
@@ -618,22 +619,17 @@ SURVEY_PORT = 8080
 NETWORK_TARGET = re.compile(rf"https?://(?:127\.0\.0\.1|\[::1\]):{SURVEY_PORT}(?=[/?#]|$)", re.IGNORECASE)
 
 
-SURVEY_PORT = 8080
-NETWORK_TARGET = re.compile(rf"https?://(?:127\.0\.0\.1|\[::1\]):{SURVEY_PORT}(?=[/?#]|$)", re.IGNORECASE)
-
-
 def target_url(target: str) -> str:
     hint = "use an existing local HTML file or http(s)://127.0.0.1:8080 / http(s)://[::1]:8080; hostnames and other ports are not allowed"
-    if any(ord(c) <= 32 or ord(c) == 127 for c in target) or "\\" in target:
-        # Spaces remain valid in plain local filenames, never in a URL.
-        if "://" in target or "\\" in target:
-            raise InspectError("URL is outside the survey boundary", hint)
+    if target.startswith(("//", "\\\\")) or ("://" in target and
+            (any(ord(c) <= 32 or ord(c) == 127 for c in target) or "\\" in target)):
+        raise InspectError("URL is outside the survey boundary", hint)
     if "://" in target:
         if NETWORK_TARGET.match(target):
             return target
         try:
             parts = urllib.parse.urlsplit(target)
-            if parts.scheme == "file" and not parts.netloc and Path(urllib.parse.unquote(parts.path)).is_file():
+            if parts.scheme == "file" and not parts.netloc and Path(urllib.request.url2pathname(parts.path)).is_file():
                 return target
         except ValueError:
             pass
