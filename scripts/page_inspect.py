@@ -37,6 +37,7 @@ INTERACTIVE_ROLES = {
 ACT_ACTIONS = {"click", "dblclick", "hover", "focus", "check", "uncheck", "fill", "press", "select", "wait_for_timeout"}
 # Each action maps to the Playwright method of the same meaning. press without a locator sends the key to the page.
 ACT_TEXT_ACTIONS = {"fill", "press", "select"}
+MAX_STEPS = 20
 HARD_CAP = 500
 SURVEY_LIMIT_DEFAULT = 50
 SURVEY_LIMIT_MAX = 200
@@ -1064,8 +1065,8 @@ def _finish(playwright, browser, failure, result):
 
 def observe_page(*, url: str, browser_name: str, profile: str, headed: bool, channel: str | None,
                  include_hidden: bool, include_storage_keys: bool, include_storage_fingerprints: bool,
-                 role: str, start: int, limit: int, after_click: str | None = None) -> list[dict]:
-    """One observation, or two when after_click is set: the second is taken after one click in the same browser."""
+                 role: str, start: int, limit: int, steps: list | None = None) -> list[dict]:
+    """The first observation, then one observation after each step in the same browser, in order."""
     url = loopback_target(url)
     playwright, browser, page = _with_browser(url, browser_name, profile, headed, channel)
     failure = None
@@ -1221,8 +1222,10 @@ def observe_page(*, url: str, browser_name: str, profile: str, headed: bool, cha
                 "cdp_methods": sent,
             }
             if step is not None:
-                limits["click_runs_page_scripts"] = True
-                limits["selector_engine"] = "playwright"
+                limits["step_runs_page_scripts"] = page_js
+                limits["selector_engine"] = "playwright" if page_js else "none"
+                if step["action"] == "click":
+                    limits["click_runs_page_scripts"] = True
             result = assemble_observe(
                 {"title": title, "elements": elements, "child_frames": child_frames, "total": len(elements), "truncated": dom_truncated},
                 environment=_environment(browser, browser_name, channel, headed, profile, viewport),
@@ -1233,15 +1236,17 @@ def observe_page(*, url: str, browser_name: str, profile: str, headed: bool, cha
             return result
 
         results.append(capture(None, False))
-        if after_click is not None:
-            target, _ = _action_locator(page, after_click)
+        for index, step in enumerate(steps or [], start=2):
             url_before = strip_userinfo(page.url)
+            timeout_ms = int(step["text"]) if step["action"] == "wait_for_timeout" else 5000
             try:
-                target.click(timeout=5000)
+                page_js = _perform(page, step["action"], step["locator"], step["text"], timeout_ms)
+            except InspectError:
+                raise
             except Exception as exc:
                 raise InspectError(
                     f"{type(exc).__name__}: {exc}",
-                    "the locator was resolved on this call. If it missed, observe again and pass that address",
+                    "the locator was resolved on this step. If it missed, observe again and pass that address",
                     stage="inspect",
                 ) from exc
             try:
@@ -1249,7 +1254,7 @@ def observe_page(*, url: str, browser_name: str, profile: str, headed: bool, cha
             except Exception as exc:
                 raise InspectError(
                     f"{type(exc).__name__}: {exc}",
-                    "the click did not reach a loaded state; the second snapshot was not written",
+                    "the step did not reach a loaded state; its snapshot was not written",
                     stage="navigate",
                 ) from exc
             network.clear()
@@ -1257,13 +1262,13 @@ def observe_page(*, url: str, browser_name: str, profile: str, headed: bool, cha
             state["network_truncated"] = False
             state["console_truncated"] = False
             results.append(capture({
-                "index": 2,
-                "action": "click",
-                "locator": after_click,
+                "index": index,
+                "action": step["action"],
+                "locator": step["locator"],
                 "url_before": url_before,
                 "url_after": strip_userinfo(page.url),
-                "hint": "network and console start empty after the click; url_before equal to url_after means the click did not navigate",
-            }, True))
+                "hint": "network and console start empty after this step; url_before equal to url_after means it did not navigate; text values are not recorded",
+            }, page_js))
     except InspectError as exc:
         failure = exc
     except Exception as exc:
@@ -1306,6 +1311,36 @@ def _action_locator(page, locator: str):
     )
 
 
+def _perform(page, action: str, locator: str, text, timeout_ms: int) -> bool:
+    """Run one declared action through the Playwright method of the same name. Returns page_js."""
+    if action == "wait_for_timeout":
+        page.wait_for_timeout(timeout_ms)
+        return False
+    if action == "press" and not (locator or "").strip():
+        page.keyboard.press(text, timeout=timeout_ms)
+        return True
+    target, page_js = _action_locator(page, locator)
+    if action == "click":
+        target.click(timeout=timeout_ms)
+    elif action == "fill":
+        target.fill(text, timeout=timeout_ms)
+    elif action == "press":
+        target.press(text, timeout=timeout_ms)
+    elif action == "select":
+        target.select_option(text, timeout=timeout_ms)
+    elif action == "dblclick":
+        target.dblclick(timeout=timeout_ms)
+    elif action == "hover":
+        target.hover(timeout=timeout_ms)
+    elif action == "focus":
+        target.focus(timeout=timeout_ms)
+    elif action == "check":
+        target.check(timeout=timeout_ms)
+    elif action == "uncheck":
+        target.uncheck(timeout=timeout_ms)
+    return page_js
+
+
 def act_page(*, url: str, browser_name: str, profile: str, headed: bool, channel: str | None,
              action: str, locator: str, text: str, timeout_ms: int) -> dict:
     url = loopback_target(url)
@@ -1333,31 +1368,7 @@ def act_page(*, url: str, browser_name: str, profile: str, headed: bool, channel
             ) from exc
         page_js = False
         try:
-            if action == "wait_for_timeout":
-                page.wait_for_timeout(timeout_ms)
-            elif keyboard_only:
-                page_js = True
-                page.keyboard.press(text, timeout=timeout_ms)
-            else:
-                target, page_js = _action_locator(page, locator)
-                if action == "click":
-                    target.click(timeout=timeout_ms)
-                elif action == "fill":
-                    target.fill(text, timeout=timeout_ms)
-                elif action == "press":
-                    target.press(text, timeout=timeout_ms)
-                elif action == "select":
-                    target.select_option(text, timeout=timeout_ms)
-                elif action == "dblclick":
-                    target.dblclick(timeout=timeout_ms)
-                elif action == "hover":
-                    target.hover(timeout=timeout_ms)
-                elif action == "focus":
-                    target.focus(timeout=timeout_ms)
-                elif action == "check":
-                    target.check(timeout=timeout_ms)
-                elif action == "uncheck":
-                    target.uncheck(timeout=timeout_ms)
+            page_js = _perform(page, action, locator, text, timeout_ms)
         except InspectError:
             raise
         except Exception as exc:
@@ -1621,6 +1632,9 @@ def build_parser() -> argparse.ArgumentParser:
     observe.add_argument("--limit", type=_bounded(SURVEY_LIMIT_MAX), default=SURVEY_LIMIT_DEFAULT)
     observe.add_argument("--after-click", metavar="LOCATOR", help="click this id:, testid:, role:, or css: address once, then take a second snapshot")
     observe.add_argument("--after-out", help="write the second snapshot here; requires --after-click and --out")
+    observe.add_argument("--step", action="append", default=[], metavar="'ACTION LOCATOR [TEXT]'",
+                         help="one action, then a snapshot; repeat for a sequence. LOCATOR - means none. Use with --out-dir")
+    observe.add_argument("--out-dir", help="write 00-initial.json and one NN-action.json per --step here")
     act = sub.add_parser("act", parents=[common], help="one declared action that re-queries a locator", allow_abbrev=False)
     act.add_argument("target", help="loopback URL; a snapshot ordinal is not accepted")
     act.add_argument("--action", required=True, choices=tuple(sorted(ACT_ACTIONS)))
@@ -1684,6 +1698,36 @@ def _check_sequence_args(args: argparse.Namespace) -> None:
             raise InspectError(f"directory does not exist: {Path(path).parent}", "create the directory before --out or --after-out")
 
 
+def _parse_step(raw: str, index: int) -> dict:
+    parts = raw.strip().split(None, 2)
+    if not parts:
+        raise InspectError(f"step {index} is empty", "use ACTION LOCATOR [TEXT]; LOCATOR - means none")
+    action = parts[0]
+    if action not in ACT_ACTIONS:
+        raise InspectError(f"step {index}: unknown action {action}", "use one of " + ", ".join(sorted(ACT_ACTIONS)))
+    locator = "" if len(parts) < 2 or parts[1] == "-" else parts[1]
+    text = parts[2] if len(parts) == 3 else None
+    if action in ACT_TEXT_ACTIONS and text is None:
+        raise InspectError(f"step {index}: {action} needs TEXT", "write ACTION LOCATOR TEXT; text is not recorded in the output")
+    if action == "wait_for_timeout":
+        if text is None or not re.fullmatch(r"[0-9]{1,6}", text) or int(text) > 120000:
+            raise InspectError(f"step {index}: wait_for_timeout needs milliseconds 0..120000 as TEXT", "write wait_for_timeout - 500")
+    elif not (action == "press" and not locator):
+        _check_action_locator(locator)
+    return {"action": action, "locator": locator, "text": text}
+
+
+def _check_step_args(args: argparse.Namespace) -> None:
+    if args.after_click is not None or args.after_out is not None:
+        raise InspectError("--step and --after-click cannot be combined", "use --step for every action")
+    if args.out or not args.out_dir:
+        raise InspectError("--step writes one file per snapshot, so it needs --out-dir and not --out", "pass --out-dir")
+    if not Path(args.out_dir).is_dir():
+        raise InspectError(f"directory does not exist: {args.out_dir}", "create the directory before --out-dir")
+    if len(args.step) > MAX_STEPS:
+        raise InspectError(f"at most {MAX_STEPS} steps", "split the sequence into more than one observe")
+
+
 def _write_snapshot(path: str, payload: dict) -> None:
     try:
         Path(path).write_text(dumps(payload), encoding="utf-8", newline="\n")
@@ -1698,15 +1742,37 @@ def dispatch(args: argparse.Namespace) -> tuple[dict, str, int]:
     if args.command == "observe":
         if args.limit < 1:
             raise InspectError("limit must be at least 1", f"use 1..{SURVEY_LIMIT_MAX}")
+        steps = None
         if args.after_click is not None or args.after_out is not None:
             _check_sequence_args(args)
+            steps = [{"action": "click", "locator": args.after_click.strip(), "text": None}]
+        if args.step:
+            _check_step_args(args)
+            steps = [_parse_step(raw, index) for index, raw in enumerate(args.step, start=1)]
         results = observe_page(
             url=args.target, browser_name=args.browser, profile=args.profile, headed=args.headed,
             channel=args.channel or None, include_hidden=args.include_hidden,
             include_storage_keys=args.include_storage_keys,
             include_storage_fingerprints=args.include_storage_fingerprints,
-            role=args.role, start=args.start, limit=args.limit, after_click=args.after_click,
+            role=args.role, start=args.start, limit=args.limit, steps=steps,
         )
+        if args.step:
+            names = ["00-initial.json"] + [
+                f"{index:02d}-{step['action']}.json" for index, step in enumerate(steps, start=1)
+            ]
+            files = []
+            for name, snapshot in zip(names, results):
+                target = str(Path(args.out_dir) / name)
+                _write_snapshot(target, snapshot)
+                files.append(target)
+            payload = {
+                "schema": "btk-page-observe-steps/1",
+                "ok": True,
+                "files": files,
+                "steps": [{"index": i, "action": step["action"], "locator": step["locator"]} for i, step in enumerate(steps, start=1)],
+                "hint": "each file is a btk-page-observe/1 snapshot; compare any two. step text is not recorded",
+            }
+            return payload, "".join(f"wrote {name}\n" for name in files), 0
         payload = results[0]
         text_out = observe_text(payload)
         if len(results) == 2:

@@ -275,6 +275,7 @@ python -S scripts/page_inspect.py compare before.json after.json --json
 python scripts/page_inspect.py observe http://127.0.0.1:8765/page --out before.json --after-click id:next --after-out after.json
 ```
 
+- `observe URL --out-dir DIR --step 'fill id:q secret' --step 'click id:go'` runs the steps in order in one browser and writes `00-initial.json` and one `NN-action.json` per step. Each file is a `btk-page-observe/1` snapshot, so `compare` works on any pair. Step text is never written to the output. `--step` takes at most 20 steps and cannot be combined with `--after-click`.
 - `observe --after-click LOCATOR --out A.json --after-out B.json` clicks once in the same browser and writes the second snapshot to its own file. Its `step` records the click and the URL before and after. Network and console start empty after the click, and `limits.click_runs_page_scripts` is `true`, so the second snapshot is not passive.
 - `compare` reads two observe files offline. Each section is `same`, `different`, or `unknown` (a missing or truncated section is never `same`), with open, closed, and total shadow-root counts and their deltas. It reports when the browser, profile, or OS differ.
 - Targets are `http://127.0.0.1:PORT/...` or `http://[::1]:PORT/...` only. Hostnames, file URLs, and missing ports are rejected.
