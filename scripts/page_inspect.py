@@ -1,14 +1,22 @@
 """Observe a loopback page, rank locators, and run a fixed action vocabulary.
 
 Offline commands run under ``python -S``. ``observe`` and ``act`` import
-Playwright. Observe reads CDP on Chromium and does not call the page. Act
-re-queries a locator; that is the command that lets Playwright resolve
-selectors in the page. Scores use the longest common substring over the
-shorter UTF-16 length so the Node twin agrees.
+Playwright. Observe reads CDP on Chromium and does not call the page. Steps
+and ``act`` re-query a locator; that is what lets Playwright resolve selectors.
+Scores use the longest common substring over the shorter UTF-16 length so the
+Node twin agrees.
 
     python scripts/page_inspect.py observe http://127.0.0.1:8765/page --json --out observe.json
     python -S scripts/page_inspect.py locate observe.json --query "Save draft" --unique --json
     python scripts/page_inspect.py act http://127.0.0.1:8765/page --action click --locator id:save-draft --json
+    python scripts/page_inspect.py observe http://127.0.0.1:8765/page --viewport 390x844 \\
+        --step focus:id:search --step type:id:search=env:SEARCH --step press:Enter \\
+        --step wait:id:results --step click:id:result-1 --out obs.json
+
+Typed values are omitted from the output. ``env:NAME`` and ``file:PATH`` read a
+value without placing it in the command string that is echoed. ``Primary`` in a
+shortcut is Playwright's ``ControlOrMeta`` (Control on Windows and Linux, Meta
+on macOS). iPhone and Pixel profiles are device-descriptor emulation.
 
 Exit codes: 0 success; 1 no match or a non-unique top score; 2 usage, a bad
 snapshot, or a launch, navigate, inspect, or cleanup failure.
@@ -16,23 +24,82 @@ snapshot, or a launch, navigate, inspect, or cleanup failure.
 from __future__ import annotations
 
 import argparse
+import contextvars
 import hashlib
 import json
 import math
+import os
 import platform
 import re
 import sys
+import time
 import urllib.parse
 from pathlib import Path
 
 SCHEMA_INSPECT = "btk-page-inspect/1"
 SCHEMA_OBSERVE = "btk-page-observe/1"
+SCHEMA_COMPARE = "btk-page-compare/1"
+SCHEMA_RUN = "btk-page-observe-run/1"
+COMPARE_ENVIRONMENT_KEYS = ("os", "browser", "profile", "headless", "viewport", "emulation", "has_touch", "real_device")
 COMPLETE_COVERAGE = {"complete", "complete_within_window"}
 INTERACTIVE_ROLES = {
     "button", "link", "textbox", "searchbox", "checkbox", "radio", "combobox",
     "slider", "spinbutton", "switch", "tab", "menuitem",
 }
-ACT_ACTIONS = {"click", "fill", "wait_for_timeout"}
+STEP_ACTIONS = {
+    "click", "dblclick", "rightclick", "hover", "drag", "scroll", "scroll-into-view",
+    "type", "fill", "clear", "press", "shortcut", "focus", "blur",
+    "check", "uncheck", "select", "set-files", "submit",
+    "goto", "back", "forward", "reload", "wait", "resize", "settle",
+    "tap", "long-press", "swipe", "touch-scroll",
+}
+ACT_ACTIONS = set(STEP_ACTIONS) | {"wait_for_timeout"}
+VALUE_ACTIONS = {"type", "fill", "select"}
+LOCATOR_ACTIONS = {
+    "click", "dblclick", "rightclick", "hover", "scroll-into-view", "clear",
+    "focus", "blur", "check", "uncheck", "submit", "tap", "long-press", "swipe", "touch-scroll",
+}
+TAP_NEEDS_TOUCH = "tap needs a hasTouch context; a mouse click was not substituted"
+KEY_MODIFIERS = {"Primary", "Control", "Ctrl", "Meta", "Command", "Alt", "Shift", "ControlOrMeta"}
+PAGE_LOAD_STATES = {"load", "domcontentloaded", "networkidle", "commit"}
+LOCATOR_STATES = {"attached", "detached", "visible", "hidden"}
+ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+VIEWPORT_RE = re.compile(r"^([1-9][0-9]{0,4})x([1-9][0-9]{0,4})$")
+MAX_STEPS = 64
+MAX_VALUE_CHARS = 65536
+# Stagehand quietWait (packages/integrations/core/src/facade/runtime.ts): past "loading",
+# then 400 ms with no DOM mutation, polled every 100 ms. A timeout is quiet:false.
+QUIET_MS = 400
+QUIET_POLL_S = 0.1
+SETTLE_UNSUPPORTED = (
+    "settle waits until readyState is past loading and the main document has not mutated for 400 ms, "
+    "using Chromium CDP Page lifecycle events and DOM mutation events. "
+    "This engine has no CDP DOM mutation stream, and a page script was not substituted"
+)
+NAVIGATION_TIMEOUT_MS = 30000
+POPUP_EVENT_TIMEOUT_MS = 1000
+SCROLL_SETTLE_MS = 200
+LONG_PRESS_DEFAULT_MS = 700
+LONG_PRESS_MIN_MS = 500
+LONG_PRESS_MAX_MS = 3000
+SWIPE_DEFAULT_DX = 160
+SWIPE_DEFAULT_DY = 0
+TOUCH_SCROLL_DEFAULT_DX = 0
+TOUCH_SCROLL_DEFAULT_DY = 400
+GESTURE_POINT_PX = 20
+GESTURE_MIN_STEPS = 2
+GESTURE_MAX_STEPS = 30
+TOUCH_MOVE_PAUSE_S = 0.016
+TOUCH_DWELL_S = 0.12
+TOUCH_STROKE_MARGIN = 8
+TOUCH_SCROLL_PASSES = 8
+TOUCH_GESTURES = {"long-press", "swipe", "touch-scroll"}
+TOUCH_ENGINE_LIMIT = (
+    "Firefox Page.dispatchTapEvent and WebKit Input.dispatchTapEvent are a point tap with no hold, move, or touch scroll, "
+    "and those engines have no CDP Input session. A mouse event was not substituted. "
+    "Chromium uses Input.synthesizeTapGesture for long-press and Input.dispatchTouchEvent for swipe and touch-scroll when hasTouch is set."
+)
+_secrets: contextvars.ContextVar[tuple[str, ...]] = contextvars.ContextVar("page_inspect_secrets", default=())
 HARD_CAP = 500
 SURVEY_LIMIT_DEFAULT = 50
 SURVEY_LIMIT_MAX = 200
@@ -190,8 +257,72 @@ def loopback_target(target: str) -> str:
     return target
 
 
+def _secret_needles() -> list[str]:
+    needles = []
+    for secret in _secrets.get():
+        if not isinstance(secret, str) or secret == "":
+            continue
+        for form in (secret, urllib.parse.quote(secret, safe=""), urllib.parse.quote_plus(secret)):
+            if form and form not in needles:
+                needles.append(form)
+    needles.sort(key=len, reverse=True)
+    return needles
+
+
+# Stagehand sanitizeErrorMessage (browserbase/stagehand
+# packages/integrations/core/src/harness/redact.ts, MIT). Exact env:/file: values
+# are replaced first, so a known secret is removed in full rather than leaving a key prefix.
+KEY_REDACTIONS = (
+    (re.compile(r"([?&](?:signingKey|apiKey|api_key|token|key)=)[^&\s\"']+", re.IGNORECASE), r"\1[redacted]"),
+    (re.compile(r"\b(sk-[A-Za-z0-9_-]{6})[A-Za-z0-9_-]+"), r"\1[redacted]"),
+    (re.compile(r"\b(bb_(?:live|test)_[A-Za-z0-9]{4})[A-Za-z0-9_-]+"), r"\1[redacted]"),
+    (re.compile(r"\bAIza[0-9A-Za-z_-]{30,}"), "AIza[redacted]"),
+    (re.compile(r"\b(Bearer\s+)[A-Za-z0-9._~+/=-]{8,}", re.IGNORECASE), r"\1[redacted]"),
+)
+
+
+def redact_text(value: str) -> str:
+    """Replace typed values, their percent-encoded forms, and key-like strings."""
+    if not isinstance(value, str) or not value:
+        return value
+    for needle in _secret_needles():
+        if needle in value:
+            value = value.replace(needle, "[redacted]")
+    for pattern, replacement in KEY_REDACTIONS:
+        value = pattern.sub(replacement, value)
+    return value
+
+
+def redact_obj(value):
+    """Walk a JSON-like tree and redact string values. Object keys stay stable."""
+    if isinstance(value, str):
+        return redact_text(value)
+    if isinstance(value, list):
+        return [redact_obj(item) for item in value]
+    if isinstance(value, dict):
+        return {key: redact_obj(item) for key, item in value.items()}
+    return value
+
+
+class bound_secrets:
+    """Hold typed values for redaction and drop them when the session ends."""
+
+    def __init__(self, values: list[str]):
+        self._values = tuple(item for item in values if isinstance(item, str))
+        self._token = None
+
+    def __enter__(self):
+        self._token = _secrets.set(self._values)
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if self._token is not None:
+            _secrets.reset(self._token)
+        return False
+
+
 def clip(value: str, limit: int = 120) -> str:
-    return re.sub(r"\s+", " ", value or "").strip()[:limit]
+    return re.sub(r"\s+", " ", redact_text(value or "")).strip()[:limit]
 
 
 def os_name() -> str:
@@ -656,11 +787,11 @@ def describe_element(elements: list, target: str, *, context: int = CONTEXT_DEFA
 
 def operations() -> dict:
     items = [
-        {"name": "observe", "needs": "playwright", "summary": "Passive CDP snapshot of one loopback page",
+        {"name": "observe", "needs": "playwright", "summary": "Passive CDP snapshot, or that snapshot before and after each --step",
          "limit_default": SURVEY_LIMIT_DEFAULT, "limit_max": SURVEY_LIMIT_MAX},
-        {"name": "scenario", "needs": "playwright", "summary": "Bounded OS/browser configuration and fault probe",
+        {"name": "scenario", "needs": "playwright", "summary": "Bounded OS/browser environment and fault probes",
          "limit_default": None, "limit_max": None},
-        {"name": "act", "needs": "playwright", "summary": "One declared action that re-queries a locator",
+        {"name": "act", "needs": "playwright", "summary": "One declared Playwright action that re-queries a locator",
          "limit_default": None, "limit_max": None},
         {"name": "count", "needs": "snapshot", "summary": "Count matches and roles without element bodies",
          "limit_default": None, "limit_max": None},
@@ -668,16 +799,867 @@ def operations() -> dict:
          "limit_default": PAGE_LIMIT_DEFAULT, "limit_max": PAGE_LIMIT_MAX},
         {"name": "describe", "needs": "snapshot", "summary": "Return one control, its locators, and a few neighbor lines",
          "limit_default": CONTEXT_DEFAULT, "limit_max": CONTEXT_MAX},
+        {"name": "compare", "needs": "snapshot", "summary": "Compare two observe snapshots by section relation and counts",
+         "limit_default": None, "limit_max": None},
         {"name": "operations", "needs": "none", "summary": "List these commands",
          "limit_default": None, "limit_max": None},
     ]
     return {
         "schema": SCHEMA_INSPECT, "ok": True, "operation": "operations", "items": items,
-        "hint": "observe, locate, and act are separate. count before locate; act re-queries an address and rejects h:N",
+        "actions": [_action_catalog(name) for name in sorted(STEP_ACTIONS)],
+        "hint": "observe, locate, and act are separate. count before locate. steps re-query an address and reject h:N. Primary is Playwright ControlOrMeta",
     }
 
 
-def context_options(devices: dict, browser_name: str, profile: str, headed: bool) -> dict:
+def emulation_label(profile: str) -> dict:
+    """Phone profiles are Playwright device descriptors, never a physical device."""
+    device = PROFILES[profile]
+    if device:
+        return {"emulation": True, "emulated_device": device, "real_device": False}
+    return {"emulation": False, "emulated_device": None, "real_device": False}
+
+
+def parse_viewport(text: str) -> dict:
+    match = VIEWPORT_RE.fullmatch((text or "").strip())
+    if not match:
+        raise InspectError("viewport must look like 390x844", "pass width x height, each from 1 to 99999")
+    width, height = int(match.group(1)), int(match.group(2))
+    if width > 8192 or height > 8192:
+        raise InspectError("viewport is larger than 8192 on one side", "pass a smaller width x height")
+    return {"width": width, "height": height}
+
+
+def viewport_source_for(profile: str, headed: bool, viewport_flag: dict | None) -> str:
+    if viewport_flag is not None:
+        return "flag"
+    if PROFILES[profile]:
+        return "device_descriptor"
+    if headed:
+        return "headed_window"
+    return "desktop_default"
+
+
+def resolve_key(key: str) -> str:
+    """Map Primary to Playwright's ControlOrMeta. The OS choice stays in Playwright."""
+    parts = []
+    for part in key.split("+"):
+        if part == "Primary":
+            parts.append("ControlOrMeta")
+        elif part == "Ctrl":
+            parts.append("Control")
+        elif part == "Command":
+            parts.append("Meta")
+        else:
+            parts.append(part)
+    return "+".join(parts)
+
+
+def _action_catalog(action: str) -> dict:
+    support, reason = action_support(action, has_touch=True)
+    item = {"name": action, "support": support, "note": reason}
+    if action == "tap" or action in TOUCH_GESTURES:
+        item["without_has_touch"] = action_support(action, has_touch=False)[0]
+    if action == "tap":
+        item["note"] = "tap is supported on Chromium, Firefox, and WebKit only when the context hasTouch is true"
+    return item
+
+
+def action_support(action: str, *, has_touch: bool) -> tuple[dict, str | None]:
+    browsers = ("chromium", "firefox", "webkit")
+    if action in TOUCH_GESTURES:
+        if not has_touch:
+            return (
+                {name: "unsupported" for name in browsers},
+                f"{action} needs a hasTouch context; a mouse event was not substituted",
+            )
+        return {
+            "chromium": "supported",
+            "firefox": "unsupported",
+            "webkit": "unsupported",
+        }, TOUCH_ENGINE_LIMIT
+    if action == "tap" and not has_touch:
+        return {name: "unsupported" for name in browsers}, TAP_NEEDS_TOUCH
+    if action == "settle":
+        return {
+            "chromium": "supported",
+            "firefox": "unsupported",
+            "webkit": "unsupported",
+        }, SETTLE_UNSUPPORTED
+    return {name: "supported" for name in browsers}, None
+
+
+def _check_key(key: str) -> None:
+    parts = (key or "").split("+")
+    if not key or len(parts) > 4 or any(not part for part in parts):
+        raise InspectError("key must look like Enter or Primary+k", "use Playwright key names, plus Primary for the platform modifier")
+    *mods, main = parts
+    for mod in mods:
+        if mod not in KEY_MODIFIERS:
+            raise InspectError(f"unknown modifier {mod}", "use Primary, Control, Alt, Shift, or Meta")
+    if main in KEY_MODIFIERS or not re.fullmatch(r"[A-Za-z0-9]+", main):
+        raise InspectError("key combination needs a non-modifier key", "for example Primary+k or Enter")
+
+
+def _read_text_file(path: Path) -> str:
+    if not path.is_file():
+        raise InspectError("value file is not a file", "pass file:PATH to a UTF-8 text file. Do not put a secret in the command arguments")
+    try:
+        data = path.read_bytes()
+    except OSError as exc:
+        raise InspectError("value file could not be read", "choose a readable UTF-8 text file") from exc
+    if len(data) > MAX_VALUE_CHARS:
+        raise InspectError("value file is too long", f"the limit is {MAX_VALUE_CHARS} bytes")
+    try:
+        return data.decode("utf-8")
+    except UnicodeError as exc:
+        raise InspectError("value file is not UTF-8 text", "type and fill read text. set-files passes a path to Playwright") from exc
+
+
+def load_action_value(raw: str) -> dict:
+    """Read a typed value from the environment or a file. The value is not returned in JSON."""
+    if raw.startswith("env:"):
+        name = raw[4:]
+        if not ENV_NAME.fullmatch(name):
+            raise InspectError("environment variable name is not valid", "use env:NAME with a shell-style name")
+        if name not in os.environ:
+            raise InspectError(
+                f"environment variable {name} is not set",
+                "export the value in the environment. Do not put a secret in the command arguments",
+            )
+        value = os.environ[name]
+        if len(value) > MAX_VALUE_CHARS:
+            raise InspectError("environment value is too long", f"the limit is {MAX_VALUE_CHARS} characters")
+        return {"source": "env", "name": name, "value": value}
+    if raw.startswith("file:"):
+        return {"source": "file", "name": None, "value": _read_text_file(Path(raw[5:]))}
+    if len(raw) > MAX_VALUE_CHARS:
+        raise InspectError("value is too long", f"the limit is {MAX_VALUE_CHARS} characters. Prefer env:NAME or file:PATH")
+    return {"source": "cli", "name": None, "value": raw}
+
+
+def load_file_path(raw: str) -> dict:
+    """Pass a filesystem path to Playwright. File contents are not copied into the result."""
+    if raw.startswith("env:"):
+        raise InspectError("set-files takes a path", "pass the path, or file:PATH. Contents are not written to the output")
+    source = "file" if raw.startswith("file:") else "cli"
+    path_text = raw[5:] if raw.startswith("file:") else raw
+    path = Path(path_text)
+    if not path.is_file():
+        raise InspectError("set-files path is not a file", "pass the file path. Contents are not copied into the output")
+    return {"source": source, "path": str(path)}
+
+
+def _parse_signed_pair(text: str, action: str) -> tuple[int, int]:
+    coords = (text or "").split(",", 1)
+    if len(coords) != 2:
+        raise InspectError(f"{action} needs DX,DY", "use two integers separated by a comma")
+    try:
+        dx = int(coords[0].strip(), 10)
+        dy = int(coords[1].strip(), 10)
+    except ValueError as exc:
+        raise InspectError(f"{action} needs integer DX and DY", f"example: {action}:id:card=0,400") from exc
+    if abs(dx) > 20000 or abs(dy) > 20000:
+        raise InspectError(f"{action} delta is too large", "keep DX and DY within 20000")
+    if dx == 0 and dy == 0:
+        raise InspectError(f"{action} delta is zero", "pass a non-zero DX,DY. A mouse event was not substituted")
+    return dx, dy
+
+
+def _parse_long_press_ms(spec: str | None) -> int:
+    if spec is None or spec == "":
+        return LONG_PRESS_DEFAULT_MS
+    if not re.fullmatch(r"[1-9][0-9]*", spec.strip()):
+        raise InspectError(
+            "long-press duration must be a whole number of milliseconds",
+            "example: long-press:id:card=700",
+        )
+    duration = int(spec.strip())
+    if duration < LONG_PRESS_MIN_MS or duration > LONG_PRESS_MAX_MS:
+        raise InspectError(
+            "long-press duration must be from 500 to 3000 milliseconds",
+            "a shorter press is a tap. Pass long-press:LOCATOR=700",
+        )
+    return duration
+
+
+def _split_locator_value(rest: str) -> tuple[str, str | None]:
+    if rest.startswith("css:"):
+        index = rest.rfind("=")
+    else:
+        index = rest.find("=")
+    if index < 0:
+        return rest, None
+    return rest[:index], rest[index + 1:]
+
+
+def _require_locator(text: str) -> str:
+    locator = (text or "").strip()
+    if not locator:
+        raise InspectError("this step needs a locator", "pass id:, testid:, role:, or css:")
+    if locator.startswith("h:"):
+        raise InspectError("a step does not accept a snapshot ordinal", "pass id:, testid:, role:, or css: so the control is queried again")
+    if locator.startswith("id:"):
+        if not SAFE.fullmatch(locator[3:]):
+            raise InspectError("id locator has unsafe characters", "use the id: value from observe")
+        return locator
+    if locator.startswith("testid:"):
+        if not SAFE.fullmatch(locator[7:]):
+            raise InspectError("testid locator has unsafe characters", "use the testid: value from observe")
+        return locator
+    if locator.startswith("css:"):
+        if not locator[4:] or "javascript:" in locator.lower():
+            raise InspectError("css locator cannot carry a script URL", "pass a CSS selector")
+        return locator
+    if locator.startswith("role:"):
+        _split_role_address(locator[5:])
+        return locator
+    raise InspectError("locator must be id:, testid:, role:, or css:", "observe prints those addresses; h:N is not accepted")
+
+
+def _blank_step(action: str) -> dict:
+    return {
+        "action": action,
+        "locator": None,
+        "to": None,
+        "key": None,
+        "url": None,
+        "viewport": None,
+        "wait": None,
+        "secret": None,
+        "dx": None,
+        "dy": None,
+        "value_source": None,
+        "value_name": None,
+        "select_mode": None,
+        "file_path": None,
+    }
+
+
+def parse_step(text: str) -> dict:
+    """Parse one ``--step`` token into an action that re-queries locators on each call."""
+    raw = (text or "").strip()
+    match = re.fullmatch(r"([a-z][a-z0-9-]*)(?::([\s\S]*))?", raw)
+    if not match:
+        raise InspectError("step must start with an action name", "for example click:id:save or type:id:search=env:SEARCH")
+    action, rest = match.group(1), match.group(2)
+    if action not in STEP_ACTIONS:
+        raise InspectError(
+            f"unknown step action {action}",
+            "use the stage 1-2 vocabulary: keyboard, mouse, form, page, and touch actions",
+        )
+    step = _blank_step(action)
+    rest = "" if rest is None else rest
+    if action in {"back", "forward", "reload", "settle"}:
+        if rest:
+            raise InspectError(f"{action} does not take an argument", f"pass --step {action}")
+        return step
+    if action == "goto":
+        step["url"] = loopback_target(rest)
+        return step
+    if action == "resize":
+        step["viewport"] = parse_viewport(rest)
+        return step
+    if action == "scroll":
+        coords = rest.split(",", 1)
+        if len(coords) != 2:
+            raise InspectError("scroll needs scroll:DX,DY", "use two integers separated by a comma")
+        try:
+            dx = int(coords[0].strip(), 10)
+            dy = int(coords[1].strip(), 10)
+        except ValueError as exc:
+            raise InspectError("scroll needs integer DX and DY", "example: scroll:0,400") from exc
+        if abs(dx) > 20000 or abs(dy) > 20000:
+            raise InspectError("scroll delta is too large", "keep DX and DY within 20000")
+        step["dx"] = dx
+        step["dy"] = dy
+        return step
+    if action == "long-press":
+        locator, spec = _split_locator_value(rest)
+        step["locator"] = _require_locator(locator)
+        step["duration_ms"] = _parse_long_press_ms(spec)
+        return step
+    if action in TOUCH_GESTURES:
+        locator, spec = _split_locator_value(rest)
+        step["locator"] = _require_locator(locator)
+        if spec is None:
+            if action == "swipe":
+                step["dx"], step["dy"] = SWIPE_DEFAULT_DX, SWIPE_DEFAULT_DY
+            else:
+                step["dx"], step["dy"] = TOUCH_SCROLL_DEFAULT_DX, TOUCH_SCROLL_DEFAULT_DY
+        else:
+            step["dx"], step["dy"] = _parse_signed_pair(spec, action)
+        return step
+    if action == "wait":
+        step["wait"] = _parse_wait(rest)
+        if step["wait"]["kind"] == "locator":
+            step["locator"] = step["wait"]["locator"]
+        return step
+    if action in {"press", "shortcut"}:
+        if rest.startswith(("id:", "testid:", "role:", "css:")):
+            locator, key = _split_locator_value(rest)
+            step["locator"] = _require_locator(locator)
+            if not key:
+                raise InspectError(f"{action} needs a key", "for example press:id:search=Enter or shortcut:Primary+k")
+        else:
+            key = rest
+        _check_key(key)
+        step["key"] = key
+        return step
+    if action == "drag":
+        locator, target = _split_locator_value(rest)
+        step["locator"] = _require_locator(locator)
+        if not target:
+            raise InspectError("drag needs a target locator", "for example drag:id:source=id:drop")
+        step["to"] = _require_locator(target)
+        return step
+    if action == "set-files":
+        locator, spec = _split_locator_value(rest)
+        step["locator"] = _require_locator(locator)
+        if spec is None:
+            raise InspectError("set-files needs a path", "pass set-files:id:upload=file:PATH. Contents are not copied into the output")
+        loaded = load_file_path(spec)
+        step["file_path"] = loaded["path"]
+        step["value_source"] = loaded["source"]
+        step["secret"] = loaded["path"]
+        return step
+    if action in VALUE_ACTIONS:
+        locator, spec = _split_locator_value(rest)
+        step["locator"] = _require_locator(locator)
+        if spec is None:
+            raise InspectError(f"{action} needs a value", "pass =text, =env:NAME, or =file:PATH. The value is redacted in the output")
+        mode = "label"
+        if action == "select":
+            if spec.startswith("label:"):
+                mode, spec = "label", spec[6:]
+            elif spec.startswith("value:"):
+                mode, spec = "value", spec[6:]
+        loaded = load_action_value(spec)
+        step["select_mode"] = mode if action == "select" else None
+        step["secret"] = loaded["value"]
+        step["value_source"] = loaded["source"]
+        step["value_name"] = loaded.get("name")
+        return step
+    step["locator"] = _require_locator(rest)
+    return step
+
+
+def _parse_wait(rest: str) -> dict:
+    if rest.startswith("timeout:"):
+        number = rest[8:]
+        if not re.fullmatch(r"[1-9][0-9]*", number):
+            raise InspectError("wait timeout must be a positive whole number of milliseconds", "for example wait:timeout:50")
+        value = int(number)
+        if value > 120000:
+            raise InspectError("wait timeout must be at most 120000", "pass a shorter wait:timeout")
+        return {"kind": "timeout", "timeout_ms": value}
+    if rest in PAGE_LOAD_STATES:
+        return {"kind": "load", "state": rest}
+    if rest.startswith(("id:", "testid:", "role:", "css:")):
+        locator, state = _split_locator_value(rest)
+        state = state or "visible"
+        if state not in LOCATOR_STATES:
+            raise InspectError("wait state must be attached, detached, visible, or hidden", "for example wait:id:results or wait:id:results=hidden")
+        return {"kind": "locator", "locator": _require_locator(locator), "state": state}
+    raise InspectError(
+        "wait needs a locator, a load state, or timeout:N",
+        "for example wait:id:results, wait:load, or wait:timeout:50",
+    )
+
+
+def act_arguments_to_step(action: str, locator: str, text: str | None, text_env: str | None,
+                          text_file: str | None, to: str | None, timeout_ms: int) -> dict:
+    """Build the same step record the observe ``--step`` grammar uses."""
+    if action == "wait_for_timeout":
+        return parse_step(f"wait:timeout:{timeout_ms}")
+    supplied = []
+    if text is not None:
+        supplied.append(text)
+    if text_env:
+        supplied.append(f"env:{text_env}")
+    if text_file:
+        supplied.append(f"file:{text_file}")
+    if len(supplied) > 1:
+        raise InspectError("pass only one of --text, --text-env, and --text-file", "secrets belong in the environment or a file, and are redacted in the output")
+    value = supplied[0] if supplied else None
+    if action in {"back", "forward", "reload", "settle"}:
+        return parse_step(action)
+    if action == "goto":
+        if value is None:
+            raise InspectError("goto needs a loopback URL", "pass --text with the http://127.0.0.1:PORT/path destination")
+        return parse_step(f"goto:{value}")
+    if action == "resize":
+        if value is None:
+            raise InspectError("resize needs WIDTHxHEIGHT", "pass --text 390x844. A viewport is not a physical device")
+        return parse_step(f"resize:{value}")
+    if action == "drag":
+        if not to:
+            raise InspectError("drag needs --to", "pass the destination id:, testid:, role:, or css: locator")
+        return parse_step(f"drag:{locator}={to}")
+    if action in {"press", "shortcut"}:
+        if value is None:
+            raise InspectError(f"{action} needs a key", "pass --text Enter or --text Primary+k")
+        if locator:
+            return parse_step(f"{action}:{locator}={value}")
+        return parse_step(f"{action}:{value}")
+    if action == "wait":
+        if locator:
+            suffix = f"={value}" if value else ""
+            return parse_step(f"wait:{locator}{suffix}")
+        if value is None:
+            raise InspectError("wait needs a locator, a load state, or a timeout", "pass --locator id:results, or use wait_for_timeout")
+        return parse_step(f"wait:{value}")
+    if action in VALUE_ACTIONS or action == "set-files":
+        if value is None:
+            raise InspectError(f"{action} needs a value", "pass --text, --text-env, or --text-file. The value is redacted in the output")
+        return parse_step(f"{action}:{locator}={value}")
+    if action in TOUCH_GESTURES:
+        if not locator:
+            raise InspectError(f"{action} needs a locator", "pass id:, testid:, role:, or css:")
+        if value is None:
+            return parse_step(f"{action}:{locator}")
+        return parse_step(f"{action}:{locator}={value}")
+    if action not in STEP_ACTIONS:
+        raise InspectError(f"unknown action {action}", "use the stage 1-2 vocabulary")
+    if not locator:
+        raise InspectError(f"{action} needs a locator", "pass id:, testid:, role:, or css:")
+    return parse_step(f"{action}:{locator}")
+
+
+def publish_step(step: dict, outcome: dict, *, url_before: str, url_after: str, index: int) -> dict:
+    """Step record safe to embed in JSON. Typed values are not included."""
+    record = {
+        "index": index,
+        "action": step["action"],
+        "status": outcome["status"],
+        "locator": step.get("locator") or "",
+        "url_before": url_before,
+        "url_after": url_after,
+        "page_js_called": bool(outcome.get("page_js_called")),
+        "support": outcome.get("support") or {},
+        "input": outcome.get("input") or "none",
+    }
+    if step.get("locator"):
+        record["target"] = step["locator"]
+    elif step["action"] == "scroll" and step.get("dx") is not None:
+        record["target"] = f"{step['dx']},{step['dy']}"
+    if step.get("to"):
+        record["to"] = step["to"]
+    if step.get("key"):
+        record["key_requested"] = step["key"]
+        record["key"] = outcome.get("key_resolved") or resolve_key(step["key"])
+        if "Primary" in step["key"].split("+"):
+            record["primary"] = "ControlOrMeta"
+            record["primary_owner"] = "playwright"
+    if step.get("value_source"):
+        record["value_recorded"] = False
+        record["value_source"] = step["value_source"]
+        if step.get("value_name"):
+            record["value_name"] = step["value_name"]
+        if step.get("secret") is not None:
+            record["value_fingerprint"] = storage_fingerprint(step["secret"])["sha256"]
+    if step.get("select_mode"):
+        record["select_by"] = step["select_mode"]
+    if step.get("wait"):
+        record["wait"] = {key: value for key, value in step["wait"].items() if key != "locator"}
+    if step.get("viewport"):
+        record["viewport"] = step["viewport"]
+    if step.get("duration_ms") is not None:
+        record["duration_ms"] = step["duration_ms"]
+    if step["action"] in TOUCH_GESTURES and step.get("dx") is not None:
+        record["dx"] = step["dx"]
+        record["dy"] = step["dy"]
+    if outcome.get("reason"):
+        record["reason"] = outcome["reason"]
+    if outcome.get("unsupported_reason"):
+        record["unsupported_reason"] = outcome["unsupported_reason"]
+    if outcome.get("scroll_y") is not None:
+        record["scroll_y"] = outcome["scroll_y"]
+    if "quiet" in outcome:
+        record["quiet"] = bool(outcome["quiet"])
+    if step["action"] == "click" and outcome["status"] == "done":
+        record["hint"] = "network and console on the following snapshot start after the previous snapshot; url_before equal to url_after means this step did not navigate"
+    return record
+
+
+def _secret_values(step: dict) -> list[str]:
+    values = []
+    secret = step.get("secret")
+    if isinstance(secret, str) and secret:
+        values.append(secret)
+    path = step.get("file_path")
+    if isinstance(path, str) and path:
+        values.append(path)
+        name = Path(path).name
+        if name:
+            values.append(name)
+    return values
+
+
+def _wait_quiet(page, client, sent: list, timeout_ms: int) -> bool:
+    """True when Chromium went quiet before the timeout. A timeout is a result, not an error.
+
+    readyState past loading comes from Page lifecycle events and Playwright's already-tracked
+    domcontentloaded state. DOM mutation events stand in for Stagehand's MutationObserver.
+    No page script is installed.
+    """
+    from playwright.sync_api import TimeoutError as PlaywrightTimeout
+
+    deadline = time.monotonic() + max(0, timeout_ms) / 1000
+    quiet_s = QUIET_MS / 1000
+    state = {"last": time.monotonic(), "ready": False}
+
+    def on_mutation(*_args):
+        state["last"] = time.monotonic()
+
+    def on_document(*_args):
+        state["ready"] = False
+        state["last"] = time.monotonic()
+
+    def on_lifecycle(*args):
+        params = args[0] if args else None
+        name = str(params.get("name") or "") if isinstance(params, dict) else ""
+        if name in {"DOMContentLoaded", "load", "networkAlmostIdle", "networkIdle"}:
+            state["ready"] = True
+
+    client.on("DOM.attributeModified", on_mutation)
+    client.on("DOM.characterDataModified", on_mutation)
+    client.on("DOM.childNodeInserted", on_mutation)
+    client.on("DOM.childNodeRemoved", on_mutation)
+    client.on("DOM.documentUpdated", on_document)
+    client.on("Page.lifecycleEvent", on_lifecycle)
+    _cdp_send(client, "Page.enable", {}, sent)
+    _cdp_send(client, "Page.setLifecycleEventsEnabled", {"enabled": True}, sent)
+    _cdp_send(client, "DOM.enable", {}, sent)
+    _cdp_send(client, "DOM.getDocument", {"depth": -1, "pierce": False}, sent)
+    state["last"] = time.monotonic()
+    while True:
+        now = time.monotonic()
+        if now >= deadline:
+            return False
+        if not state["ready"]:
+            remaining_ms = max(1, int((deadline - now) * 1000))
+            try:
+                page.wait_for_load_state("domcontentloaded", timeout=min(50, remaining_ms))
+            except PlaywrightTimeout:
+                pass
+            else:
+                state["ready"] = True
+        now = time.monotonic()
+        if now >= deadline:
+            return False
+        if state["ready"] and (now - state["last"]) >= quiet_s and (state["last"] + quiet_s) <= deadline:
+            return True
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        page.wait_for_timeout(max(1, int(min(QUIET_POLL_S, remaining) * 1000)))
+
+
+def _settle_quiet(page, *, cdp_client, cdp_sent: list | None, timeout_ms: int) -> bool:
+    """Chromium-only quiet wait. The caller has already rejected other engines."""
+    owns = cdp_client is None
+    sent = cdp_sent if cdp_sent is not None else []
+    client = cdp_client
+    if owns:
+        try:
+            client = page.context.new_cdp_session(page)
+        except Exception as exc:
+            raise InspectError(
+                "settle needs a Chromium CDP session",
+                SETTLE_UNSUPPORTED,
+                stage="inspect",
+            ) from exc
+    try:
+        return _wait_quiet(page, client, sent, timeout_ms)
+    finally:
+        if owns:
+            try:
+                client.detach()
+            except Exception:
+                pass
+
+
+def perform_action(page, step: dict, *, timeout_ms: int, has_touch: bool, browser_name: str,
+                   cdp_client=None, cdp_sent: list | None = None) -> dict:
+    """Run one step with Playwright's own methods. Unsupported actions are not imitated."""
+    action = step["action"]
+    support, reason = action_support(action, has_touch=has_touch)
+    if support.get(browser_name) == "unsupported":
+        return {
+            "status": "unsupported",
+            "support": support,
+            "page_js_called": False,
+            "input": "touch" if action in {"tap", "long-press", "swipe", "touch-scroll"} else "none",
+            "reason": reason,
+        }
+
+    def target(locator=None):
+        found, _calls_page = _action_locator(page, locator or step["locator"])
+        return found
+
+    try:
+        if action == "click":
+            _call_and_allow_popup(page, lambda: target().click(timeout=timeout_ms))
+            return _done(support, "mouse", True)
+        if action == "dblclick":
+            _call_and_allow_popup(page, lambda: target().dblclick(timeout=timeout_ms))
+            return _done(support, "mouse", True)
+        if action == "rightclick":
+            _call_and_allow_popup(page, lambda: target().click(button="right", timeout=timeout_ms))
+            return _done(support, "mouse", True)
+        if action == "hover":
+            target().hover(timeout=timeout_ms)
+            return _done(support, "mouse", True)
+        if action == "drag":
+            target().drag_to(target(step["to"]), timeout=timeout_ms)
+            return _done(support, "mouse", True)
+        if action == "scroll":
+            page.mouse.wheel(step["dx"], step["dy"])
+            page.wait_for_timeout(SCROLL_SETTLE_MS)
+            extra = {}
+            offsets = _read_visual_offsets(page, cdp_client, cdp_sent)
+            if offsets is not None and offsets.get("pageY") is not None:
+                extra["scroll_y"] = offsets["pageY"]
+            return _done(support, "scroll", False, **extra)
+        if action in {"scroll-into-view", "scroll_into"}:
+            target().scroll_into_view_if_needed(timeout=timeout_ms)
+            page.wait_for_timeout(SCROLL_SETTLE_MS)
+            return _done(support, "scroll", True)
+        if action == "type":
+            target().press_sequentially(step["secret"], timeout=timeout_ms)
+            return _done(support, "keyboard", True)
+        if action == "fill":
+            target().fill(step["secret"], timeout=timeout_ms)
+            return _done(support, "keyboard", True)
+        if action == "clear":
+            target().clear(timeout=timeout_ms)
+            return _done(support, "keyboard", True)
+        if action in {"press", "shortcut"}:
+            resolved = resolve_key(step["key"])
+            if step.get("locator"):
+                _call_and_allow_popup(page, lambda: target().press(resolved, timeout=timeout_ms))
+                page_js = True
+            else:
+                _call_and_allow_popup(page, lambda: page.keyboard.press(resolved))
+                page_js = False
+            return _done(support, "keyboard", page_js, key_resolved=resolved)
+        if action == "focus":
+            target().focus(timeout=timeout_ms)
+            return _done(support, "keyboard", True)
+        if action == "blur":
+            target().blur(timeout=timeout_ms)
+            return _done(support, "keyboard", True)
+        if action == "check":
+            target().check(timeout=timeout_ms)
+            return _done(support, "form", True)
+        if action == "uncheck":
+            target().uncheck(timeout=timeout_ms)
+            return _done(support, "form", True)
+        if action == "select":
+            if step["select_mode"] == "value":
+                target().select_option(value=step["secret"], timeout=timeout_ms)
+            else:
+                target().select_option(label=step["secret"], timeout=timeout_ms)
+            return _done(support, "form", True)
+        if action == "set-files":
+            target().set_input_files(step["file_path"], timeout=timeout_ms)
+            return _done(support, "form", True)
+        if action == "submit":
+            _call_and_allow_popup(
+                page,
+                lambda: target().locator("input[type='submit'], button[type='submit'], button:not([type])").first.click(timeout=timeout_ms),
+            )
+            return _done(support, "form", True)
+        if action == "goto":
+            page.goto(step["url"], wait_until="load", timeout=NAVIGATION_TIMEOUT_MS)
+            return _done(support, "navigation", False)
+        if action == "back":
+            _history(page, "back")
+            return _done(support, "navigation", False)
+        if action == "forward":
+            _history(page, "forward")
+            return _done(support, "navigation", False)
+        if action == "reload":
+            page.reload(wait_until="load", timeout=NAVIGATION_TIMEOUT_MS)
+            return _done(support, "navigation", False)
+        if action == "resize":
+            page.set_viewport_size(step["viewport"])
+            return _done(support, "viewport", False)
+        if action == "wait":
+            return _perform_wait(page, step, timeout_ms=timeout_ms, support=support)
+        if action == "settle":
+            quiet = _settle_quiet(
+                page, cdp_client=cdp_client, cdp_sent=cdp_sent, timeout_ms=timeout_ms,
+            )
+            return _done(support, "wait", False, quiet=quiet)
+        if action == "tap":
+            _call_and_allow_popup(page, lambda: target().tap(timeout=timeout_ms))
+            return _done(support, "touch", True)
+        if action in TOUCH_GESTURES:
+            scroll_y = _perform_chromium_touch(page, step, timeout_ms=timeout_ms)
+            extra = {"unsupported_reason": TOUCH_ENGINE_LIMIT}
+            if scroll_y is not None:
+                extra["scroll_y"] = scroll_y
+            return _done(support, "touch", True, **extra)
+    except InspectError:
+        raise
+    except Exception as exc:
+        raise InspectError(
+            redact_text(f"{type(exc).__name__}: {exc}"),
+            "the locator was resolved on this call. If it missed, observe again and pass that address",
+            stage="inspect",
+        ) from exc
+    raise InspectError(f"unknown action {action}", "use the stage 1-2 vocabulary", stage="inspect")
+
+
+def _call_and_allow_popup(page, fn) -> None:
+    """Run fn, then wait until a popup event arrives or the grace passes.
+
+    Playwright's click returns before a target=_blank page exists. expect_popup
+    is the standard wait. No popup is a completed action, not a failure.
+    """
+    from playwright.sync_api import TimeoutError as PlaywrightTimeout
+
+    try:
+        with page.expect_popup(timeout=POPUP_EVENT_TIMEOUT_MS):
+            fn()
+    except PlaywrightTimeout as exc:
+        if 'event "popup"' not in str(exc):
+            raise
+
+
+def _done(support: dict, kind: str, page_js: bool, **extra) -> dict:
+    payload = {"status": "done", "support": support, "page_js_called": page_js, "input": kind, "reason": None}
+    payload.update(extra)
+    return payload
+
+
+def _history(page, direction: str) -> None:
+    before = page.url
+    if direction == "back":
+        response = page.go_back(wait_until="load", timeout=NAVIGATION_TIMEOUT_MS)
+        hint = "the page has no earlier history entry"
+    else:
+        response = page.go_forward(wait_until="load", timeout=NAVIGATION_TIMEOUT_MS)
+        hint = "the page has no later history entry"
+    if response is None and page.url == before:
+        raise InspectError(f"cannot go {direction}", hint, stage="navigate")
+
+
+def _perform_wait(page, step: dict, *, timeout_ms: int, support: dict) -> dict:
+    wait = step["wait"]
+    if wait["kind"] == "timeout":
+        page.wait_for_timeout(wait["timeout_ms"])
+        return _done(support, "wait", False)
+    if wait["kind"] == "load":
+        page.wait_for_load_state(wait["state"], timeout=timeout_ms)
+        return _done(support, "wait", False)
+    found, _calls_page = _action_locator(page, wait["locator"])
+    found.wait_for(state=wait["state"], timeout=timeout_ms)
+    return _done(support, "wait", True)
+
+
+def _watch_pages(page, dialog_policy: str, dialog_items: list, popup_pages: list) -> None:
+    """Record dialogs and popups. Accept only when the caller declared that policy."""
+
+    def on_dialog(dialog):
+        try:
+            message = dialog.message if isinstance(dialog.message, str) else ""
+            dialog_items.append({
+                "type": dialog.type,
+                "message": clip(message, 500),
+                "has_default_value": bool(dialog.default_value),
+                "action": dialog_policy,
+            })
+        finally:
+            if dialog_policy == "accept":
+                if dialog.type == "prompt":
+                    dialog.accept("")
+                else:
+                    dialog.accept()
+            else:
+                dialog.dismiss()
+
+    def on_page(new_page):
+        # Attached after the main page exists, so every later page is a new tab.
+        # opener() is null for rel=noopener; those tabs are still recorded.
+        popup_pages.append(new_page)
+        new_page.on("dialog", on_dialog)
+
+    page.on("dialog", on_dialog)
+    page.context.on("page", on_page)
+
+
+def _popup_rows(pages: list) -> list:
+    rows = []
+    for popup in pages:
+        load = "complete"
+        closed = True
+        url = ""
+        try:
+            closed = popup.is_closed()
+            if not closed:
+                try:
+                    popup.wait_for_load_state("load", timeout=5000)
+                except Exception:
+                    load = "not_settled"
+                closed = popup.is_closed()
+            url = "" if closed else (popup.url or "")
+        except Exception:
+            load = "not_settled"
+        rows.append({
+            "url": strip_userinfo(url),
+            "closed": closed,
+            "load": load,
+            "contents": "not_entered",
+        })
+    return rows
+
+
+def _dialog_section(items: list, policy: str) -> dict:
+    return _section("playwright:dialog", "complete", {
+        "policy": policy,
+        "accept_requires_declared_policy": True,
+        "items": items,
+    })
+
+
+def _popup_section(pages: list) -> dict:
+    rows = _popup_rows(pages)
+    return _section("playwright:context.page", "complete", {
+        "opened": len(rows),
+        "contents": "not_entered",
+        "items": rows,
+    })
+
+
+def build_run(observations: list, steps: list, *, dialog_policy: str, error: InspectError | None = None) -> dict:
+    """One observe snapshot before the steps and one after each step, compared with the existing relation."""
+    comparisons = []
+    for left, right in zip(observations, observations[1:]):
+        if isinstance(left, dict) and isinstance(right, dict) and left.get("schema") == SCHEMA_OBSERVE and right.get("schema") == SCHEMA_OBSERVE:
+            comparisons.append(compare_snapshots(left, right))
+    payload = {
+        "schema": SCHEMA_RUN,
+        "ok": error is None,
+        "dialog_policy": dialog_policy,
+        "steps": steps,
+        "observations": observations,
+        "comparisons": comparisons,
+        "hint": (
+            "observations are btk-page-observe/1 snapshots taken before the steps and after each step. "
+            "comparisons reuse btk-page-compare/1 between each pair. Typed values are redacted. "
+            "An unsupported step was not performed and was not imitated"
+        ),
+    }
+    if error is not None:
+        payload["stage"] = error.stage
+        payload["error"] = redact_text(error.error)
+        payload["ok"] = False
+    return payload
+
+
+def context_options(devices: dict, browser_name: str, profile: str, headed: bool, viewport: dict | None = None, touch: bool = False) -> dict:
     """Playwright Python context kwargs. Firefox rejects is_mobile on phone descriptors."""
     device = PROFILES[profile]
     if device:
@@ -689,10 +1671,16 @@ def context_options(devices: dict, browser_name: str, profile: str, headed: bool
     args.pop("default_browser_type", None)
     if browser_name == "firefox":
         args.pop("is_mobile", None)
+    if viewport is not None:
+        args.pop("no_viewport", None)
+        args["viewport"] = {"width": viewport["width"], "height": viewport["height"]}
+    if touch:
+        args["has_touch"] = True
     return args
 
 
 def strip_userinfo(url: str) -> str:
+    url = redact_text(url)
     parts = urllib.parse.urlsplit(url)
     if parts.scheme not in {"http", "https"}:
         return url
@@ -783,7 +1771,9 @@ def _playwright():
     return sync_playwright
 
 
-def _environment(browser, browser_name, channel, headed, profile, viewport) -> dict:
+def _environment(browser, browser_name, channel, headed, profile, viewport, *, has_touch=False, viewport_source="desktop_default") -> dict:
+    viewport = viewport or {}
+    label = emulation_label(profile)
     return {
         "os": os_name(),
         "browser": browser_name,
@@ -792,6 +1782,11 @@ def _environment(browser, browser_name, channel, headed, profile, viewport) -> d
         "headless": not headed,
         "profile": profile,
         "viewport": {"width": viewport.get("width"), "height": viewport.get("height")},
+        "viewport_source": viewport_source,
+        "has_touch": bool(has_touch),
+        "emulation": label["emulation"],
+        "emulated_device": label["emulated_device"],
+        "real_device": False,
     }
 
 
@@ -806,12 +1801,20 @@ def _unavailable_sections(reason: str) -> dict:
         "console": _section(None, "unavailable", body),
         "storage": _section(None, "not_requested"),
         "frames": _section(None, "unavailable", body),
+        "shadow_roots": _section(None, "unavailable", body),
+        "dialogs": _section(None, "unavailable", body),
+        "popups": _section(None, "unavailable", body),
     }
+
+
+def _content_digest(items: list) -> str:
+    canonical = json.dumps(items, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _ax_text(field) -> str:
     if isinstance(field, dict) and field.get("value") is not None:
-        return str(field.get("value"))
+        return redact_text(str(field.get("value")))
     return ""
 
 
@@ -847,6 +1850,65 @@ def _walk_dom(node, found: list) -> bool:
 
 def _frame_count(node) -> int:
     return 1 + sum(_frame_count(child) for child in node.get("childFrames") or [])
+
+
+def frame_rows(frame_tree: dict, *, limit: int = HARD_CAP) -> tuple[list, bool]:
+    """Child frames in document order: name, URL, and origin only.
+
+    Frame ids change per load, so they are not listed. Child documents are not entered.
+    Ported from the frame list on feat/page-inspect-shadow-roots.
+    """
+    rows: list[dict] = []
+    stack = list(reversed(frame_tree.get("childFrames") or []))
+    while stack:
+        node = stack.pop()
+        if not isinstance(node, dict):
+            continue
+        if len(rows) >= limit:
+            return rows, True
+        frame = node.get("frame") or {}
+        rows.append({
+            "name": clip(str(frame.get("name") or ""), 120),
+            "url": strip_userinfo(str(frame.get("url") or "")),
+            "origin": clip(str(frame.get("securityOrigin") or ""), 200),
+        })
+        stack.extend(reversed(node.get("childFrames") or []))
+    return rows, False
+
+
+def count_shadow_roots(root: dict, *, limit: int = HARD_CAP * 10) -> dict:
+    """Count author open and closed shadow roots in a pierced DOM tree. Roots are counted, never entered.
+
+    Chromium also reports user-agent shadow roots (input, select, video controls, etc.); those are
+    counted separately and excluded from open/closed/count. Walks children and shadowRoots of the main
+    document only; child frame documents are not descended.
+    """
+    opened = closed = user_agent = visited = 0
+    truncated = False
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        visited += 1
+        if visited > limit:
+            truncated = True
+            break
+        for shadow in node.get("shadowRoots") or []:
+            kind = shadow.get("shadowRootType")
+            if kind == "closed":
+                closed += 1
+            elif kind == "open":
+                opened += 1
+            elif kind == "user-agent":
+                user_agent += 1
+            stack.append(shadow)
+        stack.extend(node.get("children") or [])
+    return {
+        "open": opened,
+        "closed": closed,
+        "count": opened + closed,
+        "user_agent": user_agent,
+        "truncated": truncated,
+    }
 
 
 def _controls_from_cdp(dom_nodes, ax_nodes, *, include_hidden: bool, role: str) -> tuple[list, dict]:
@@ -948,6 +2010,214 @@ def _storage_section(client, origin: str, *, keys: bool, fingerprints: bool, sen
     return _section("cdp:DOMStorage+Network.getCookies", "complete", {"areas": areas, "values": "redacted"})
 
 
+def _offsets_from_metrics(metrics) -> dict | None:
+    visual = metrics.get("cssVisualViewport") if isinstance(metrics, dict) else None
+    if not isinstance(visual, dict):
+        return None
+    offsets = {}
+    for key in ("pageX", "pageY"):
+        value = visual.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            offsets[key] = int(round(value))
+    return offsets or None
+
+
+def _read_visual_offsets(page, client, sent: list | None) -> dict | None:
+    """Read cssVisualViewport from the observe session when that session exists."""
+    if client is not None and sent is not None:
+        try:
+            metrics = _cdp_send(client, "Page.getLayoutMetrics", {}, sent)
+        except InspectError:
+            raise
+        except Exception:
+            return None
+        return _offsets_from_metrics(metrics)
+    return _css_visual_offsets(page)
+
+
+def _css_visual_offsets(page) -> dict | None:
+    """CSS visual viewport offsets from Page.getLayoutMetrics. No page JavaScript."""
+    client = None
+    try:
+        client = page.context.new_cdp_session(page)
+        metrics = client.send("Page.getLayoutMetrics")
+    except Exception:
+        return None
+    finally:
+        if client is not None:
+            try:
+                client.detach()
+            except Exception:
+                pass
+    return _offsets_from_metrics(metrics)
+
+
+def _layout_offsets(client) -> dict | None:
+    try:
+        return _offsets_from_metrics(client.send("Page.getLayoutMetrics"))
+    except Exception:
+        return None
+
+
+def _dispatch_touch(client, kind: str, x: float | None = None, y: float | None = None) -> None:
+    if kind == "touchEnd":
+        points: list[dict] = []
+    else:
+        points = [{"x": int(round(x)), "y": int(round(y)), "id": 1}]
+    client.send("Input.dispatchTouchEvent", {"type": kind, "touchPoints": points, "modifiers": 0})
+
+
+def _interpolate_points(x0: float, y0: float, x1: float, y1: float) -> list[tuple[float, float]]:
+    """Stagehand drag path: t = i / steps from the start point to the end point."""
+    distance = math.hypot(x1 - x0, y1 - y0)
+    steps = max(GESTURE_MIN_STEPS, min(GESTURE_MAX_STEPS, math.ceil(distance / GESTURE_POINT_PX)))
+    points = []
+    for index in range(1, steps + 1):
+        t = index / steps
+        points.append((x0 + (x1 - x0) * t, y0 + (y1 - y0) * t))
+    return points
+
+
+def _touch_drag(client, x0: float, y0: float, x1: float, y1: float) -> None:
+    """Finger path via Input.dispatchTouchEvent.
+
+    Sleep instead of page.wait_for_timeout. A Playwright wait while the finger
+    is down was measured to drop the rest of the gesture on headless Chromium.
+    The dwell before touchEnd stops the fling that would scroll past the drag.
+    """
+    started = False
+    try:
+        _dispatch_touch(client, "touchStart", x0, y0)
+        started = True
+        time.sleep(TOUCH_MOVE_PAUSE_S)
+        for x, y in _interpolate_points(x0, y0, x1, y1):
+            _dispatch_touch(client, "touchMove", x, y)
+            time.sleep(TOUCH_MOVE_PAUSE_S)
+        _dispatch_touch(client, "touchMove", x1, y1)
+        time.sleep(TOUCH_DWELL_S)
+    finally:
+        if started:
+            try:
+                _dispatch_touch(client, "touchEnd")
+            except Exception:
+                pass
+
+
+def _fit_stroke(origin_x: float, origin_y: float, finger_dx: float, finger_dy: float, viewport: dict) -> tuple[float, float, float, float]:
+    """Place the finger path inside the viewport, shifting the start so the stroke is not clipped."""
+    margin = TOUCH_STROKE_MARGIN
+    max_x = max(margin + 1, viewport["width"] - margin)
+    max_y = max(margin + 1, viewport["height"] - margin)
+
+    def clamp_finger(finger: float, limit: float) -> float:
+        span = limit - margin
+        return max(-span, min(span, finger))
+
+    finger_dx = clamp_finger(finger_dx, max_x)
+    finger_dy = clamp_finger(finger_dy, max_y)
+
+    def start_on(origin: float, finger: float, limit: float) -> float:
+        low = max(margin, margin - finger)
+        high = min(limit, limit - finger)
+        if low > high:
+            return margin
+        if origin < low:
+            return low
+        if origin > high:
+            return high
+        return origin
+
+    start_x = start_on(origin_x, finger_dx, max_x)
+    start_y = start_on(origin_y, finger_dy, max_y)
+    return start_x, start_y, start_x + finger_dx, start_y + finger_dy
+
+
+def _gesture_origin(page, locator: str, timeout_ms: int, *, bring_into_view: bool) -> tuple[float, float, dict]:
+    """Center of the visible box. A missing box is not dispatched at 0,0."""
+    found, _calls_page = _action_locator(page, locator)
+    if bring_into_view:
+        found.scroll_into_view_if_needed(timeout=timeout_ms)
+    box = found.bounding_box()
+    viewport = page.viewport_size or dict(DESKTOP_VIEWPORT)
+    if box and box.get("width", 0) > 0 and box.get("height", 0) > 0:
+        center_x = box["x"] + box["width"] / 2
+        center_y = box["y"] + box["height"] / 2
+        inside = 1 <= center_x <= viewport["width"] - 1 and 1 <= center_y <= viewport["height"] - 1
+        if inside:
+            return center_x, center_y, viewport
+    if bring_into_view:
+        raise InspectError(
+            "element has no visible box",
+            "the locator was scrolled into view and still has no positive box inside the viewport. The gesture was not sent at 0,0",
+            stage="inspect",
+        )
+    return viewport["width"] / 2, viewport["height"] / 2, viewport
+
+
+def _perform_chromium_touch(page, step: dict, *, timeout_ms: int) -> int | None:
+    """Chromium CDP touch gestures. Firefox and WebKit never reach this."""
+    try:
+        client = page.context.new_cdp_session(page)
+    except Exception as exc:
+        raise InspectError(
+            "CDP Input session is not available",
+            "Chromium touch gestures need a CDP session",
+            stage="inspect",
+        ) from exc
+    try:
+        action = step["action"]
+        if action == "long-press":
+            x, y, _viewport = _gesture_origin(page, step["locator"], timeout_ms, bring_into_view=True)
+            client.send("Input.synthesizeTapGesture", {
+                "x": x,
+                "y": y,
+                "duration": int(step["duration_ms"]),
+                "gestureSourceType": "touch",
+            })
+            return None
+        if action == "swipe":
+            x, y, viewport = _gesture_origin(page, step["locator"], timeout_ms, bring_into_view=True)
+            start_x, start_y, end_x, end_y = _fit_stroke(x, y, step["dx"], step["dy"], viewport)
+            if abs(end_x - start_x) < 1 and abs(end_y - start_y) < 1:
+                raise InspectError(
+                    "swipe does not fit in the viewport",
+                    "use a shorter DX,DY. A mouse drag was not substituted",
+                    stage="inspect",
+                )
+            _touch_drag(client, start_x, start_y, end_x, end_y)
+            return None
+        remaining_x = float(step["dx"])
+        remaining_y = float(step["dy"])
+        for pass_index in range(TOUCH_SCROLL_PASSES):
+            if abs(remaining_x) < 1 and abs(remaining_y) < 1:
+                break
+            x, y, viewport = _gesture_origin(
+                page, step["locator"], timeout_ms, bring_into_view=pass_index == 0,
+            )
+            start_x, start_y, end_x, end_y = _fit_stroke(x, y, -remaining_x, -remaining_y, viewport)
+            traveled_x = start_x - end_x
+            traveled_y = start_y - end_y
+            if abs(traveled_x) < 1 and abs(traveled_y) < 1:
+                break
+            before = _layout_offsets(client)
+            _touch_drag(client, start_x, start_y, end_x, end_y)
+            time.sleep(0.05)
+            after = _layout_offsets(client)
+            if before and after and after.get("pageX") == before.get("pageX") and after.get("pageY") == before.get("pageY"):
+                break
+            remaining_x -= traveled_x
+            remaining_y -= traveled_y
+        offsets = _layout_offsets(client)
+        if offsets is None:
+            return None
+        return offsets.get("pageY")
+    finally:
+        try:
+            client.detach()
+        except Exception:
+            pass
+
+
 def _cdp_send(client, method: str, params: dict | None, sent: list):
     if method in {"Runtime.evaluate", "Runtime.callFunctionOn"}:
         raise InspectError(
@@ -959,7 +2229,7 @@ def _cdp_send(client, method: str, params: dict | None, sent: list):
     return client.send(method, params or {})
 
 
-def _with_browser(url, browser_name, profile, headed, channel):
+def _with_browser(url, browser_name, profile, headed, channel, viewport=None, touch=False):
     sync_playwright = _playwright()
     playwright = sync_playwright().start()
     browser = None
@@ -975,13 +2245,14 @@ def _with_browser(url, browser_name, profile, headed, channel):
                 "install the browser that matches this Playwright build. Headless commands use the shell build; --headed needs the full browser",
                 stage="launch",
             ) from exc
-        options = context_options(playwright.devices, browser_name, profile, headed)
+        options = context_options(playwright.devices, browser_name, profile, headed, viewport=viewport, touch=touch)
+        has_touch = bool(options.get("has_touch"))
         context = browser.new_context(**options, service_workers="block")
         context.route("**/*", restrict_request)
         page = context.new_page()
         page.set_default_timeout(15000)
         page.set_default_navigation_timeout(30000)
-        return playwright, browser, page
+        return playwright, browser, page, has_touch
     except Exception:
         if browser is not None:
             _close_browser(browser)
@@ -1007,73 +2278,91 @@ def _finish(playwright, browser, failure, result):
 
 def observe_page(*, url: str, browser_name: str, profile: str, headed: bool, channel: str | None,
                  include_hidden: bool, include_storage_keys: bool, include_storage_fingerprints: bool,
-                 role: str, start: int, limit: int) -> dict:
+                 role: str, start: int, limit: int, steps: list | None = None, want_run: bool = False,
+                 dialog_policy: str = "dismiss", timeout_ms: int = 5000, viewport: dict | None = None,
+                 touch: bool = False) -> dict:
+    """Passive snapshot, or the same snapshot before and after each declared step."""
     url = loopback_target(url)
-    playwright, browser, page = _with_browser(url, browser_name, profile, headed, channel)
+    steps = list(steps or [])
+    source = viewport_source_for(profile, headed, viewport)
+    playwright, browser, page, has_touch = _with_browser(
+        url, browser_name, profile, headed, channel, viewport=viewport, touch=touch,
+    )
     failure = None
-    result = None
+    results: list[dict] = []
+    public_steps: list[dict] = []
+    secret_values: list[str] = []
     try:
         sent: list[str] = []
         network: list[dict] = []
         console: list[dict] = []
-        network_truncated = False
-        console_truncated = False
+        dialog_items: list[dict] = []
+        popup_pages: list = []
+        state = {"network_truncated": False, "console_truncated": False}
         client = None
         try:
             client = page.context.new_cdp_session(page)
         except Exception as exc:
-            viewport = page.viewport_size or {}
-            limits = {
-                "page_js_called": False,
-                "navigation_runs_page_scripts": False,
-                "service_workers": "blocked",
-                "reason": "cdp_session_unavailable",
-                "detail": type(exc).__name__,
-                "cdp_methods": sent,
-            }
-            result = assemble_observe(
-                {"title": "", "elements": [], "child_frames": 0, "total": 0, "truncated": False},
-                environment=_environment(browser, browser_name, channel, headed, profile, viewport),
-                url=url, start=start, limit=limit, sections=_unavailable_sections("cdp_session_unavailable"),
-                limits=limits,
-            )
-            return _finish(playwright, browser, None, result)
+            if not steps:
+                seen = page.viewport_size or {}
+                limits = {
+                    "page_js_called": False,
+                    "navigation_runs_page_scripts": False,
+                    "service_workers": "blocked",
+                    "reason": "cdp_session_unavailable",
+                    "detail": type(exc).__name__,
+                    "cdp_methods": sent,
+                    "dialog_policy": dialog_policy,
+                }
+                results.append(_note_emulation(assemble_observe(
+                    {"title": "", "elements": [], "child_frames": 0, "total": 0, "truncated": False},
+                    environment=_environment(
+                        browser, browser_name, channel, headed, profile, seen,
+                        has_touch=has_touch, viewport_source=source,
+                    ),
+                    url=url, start=start, limit=limit, sections=_unavailable_sections("cdp_session_unavailable"),
+                    limits=limits,
+                )))
+                return _finish(playwright, browser, None, {"observations": results, "run": None, "ok": True})
+            client = None
+            cdp_detail = type(exc).__name__
+        else:
+            cdp_detail = None
         requests: dict[str, str] = {}
+        if client is not None:
+            def on_request(event):
+                request = event.get("request") or {}
+                requests[event.get("requestId")] = request.get("method") or ""
 
-        def on_request(event):
-            request = event.get("request") or {}
-            requests[event.get("requestId")] = request.get("method") or ""
+            def on_response(event):
+                if len(network) >= 100:
+                    state["network_truncated"] = True
+                    return
+                response = event.get("response") or {}
+                network.append({
+                    "method": requests.get(event.get("requestId"), ""),
+                    "status": response.get("status"),
+                    "mime": response.get("mimeType") or "",
+                    "type": event.get("type") or "",
+                    "url": strip_userinfo(response.get("url") or ""),
+                })
 
-        def on_response(event):
-            nonlocal network_truncated
-            if len(network) >= 100:
-                network_truncated = True
-                return
-            response = event.get("response") or {}
-            network.append({
-                "method": requests.get(event.get("requestId"), ""),
-                "status": response.get("status"),
-                "mime": response.get("mimeType") or "",
-                "type": event.get("type") or "",
-                "url": strip_userinfo(response.get("url") or ""),
-            })
+            def on_console(event):
+                if len(console) >= 50:
+                    state["console_truncated"] = True
+                    return
+                args = event.get("args") or []
+                console.append({
+                    "type": event.get("type") or "",
+                    "argument_types": [arg.get("type") if isinstance(arg, dict) else "unknown" for arg in args],
+                })
 
-        def on_console(event):
-            nonlocal console_truncated
-            if len(console) >= 50:
-                console_truncated = True
-                return
-            args = event.get("args") or []
-            console.append({
-                "type": event.get("type") or "",
-                "argument_types": [arg.get("type") if isinstance(arg, dict) else "unknown" for arg in args],
-            })
-
-        client.on("Network.requestWillBeSent", on_request)
-        client.on("Network.responseReceived", on_response)
-        client.on("Runtime.consoleAPICalled", on_console)
-        _cdp_send(client, "Network.enable", {}, sent)
-        _cdp_send(client, "Runtime.enable", {}, sent)
+            client.on("Network.requestWillBeSent", on_request)
+            client.on("Network.responseReceived", on_response)
+            client.on("Runtime.consoleAPICalled", on_console)
+            _cdp_send(client, "Network.enable", {}, sent)
+            _cdp_send(client, "Runtime.enable", {}, sent)
+        _watch_pages(page, dialog_policy, dialog_items, popup_pages)
         try:
             page.goto(url, wait_until="load", timeout=30000)
         except Exception as exc:
@@ -1082,77 +2371,217 @@ def observe_page(*, url: str, browser_name: str, profile: str, headed: bool, cha
                 "check that the loopback server is up. Core checks serve a local fixture on 127.0.0.1",
                 stage="navigate",
             ) from exc
-        document = _cdp_send(client, "DOM.getDocument", {"depth": -1, "pierce": False}, sent)
-        ax = _cdp_send(client, "Accessibility.getFullAXTree", {}, sent)
-        resources = _cdp_send(client, "Page.getResourceTree", {}, sent)
-        frames = _cdp_send(client, "Page.getFrameTree", {}, sent)
-        dom_nodes: list[dict] = []
-        dom_truncated = _walk_dom(document.get("root") or {}, dom_nodes)
-        elements, meta = _controls_from_cdp(dom_nodes, ax.get("nodes") or [], include_hidden=include_hidden, role=role)
-        title = ""
-        for ax_node in ax.get("nodes") or []:
-            if _ax_text(ax_node.get("role")) == "RootWebArea":
-                title = clip(_ax_text(ax_node.get("name")), 200)
-                break
-        child_frames = max(0, _frame_count(frames.get("frameTree") or {}) - 1)
-        resource_rows = []
-        for item in (resources.get("frameTree") or {}).get("resources") or []:
-            resource_rows.append({
-                "type": item.get("type") or "",
-                "mime": item.get("mimeType") if isinstance(item.get("mimeType"), str) else "",
-                "url": strip_userinfo(item.get("url") or ""),
+
+        def _env():
+            return _environment(
+                browser, browser_name, channel, headed, profile, page.viewport_size or {},
+                has_touch=has_touch, viewport_source=source,
+            )
+
+        def _limits(page_js: bool, step: dict | None, *, reason: str | None = None) -> dict:
+            limits = {
+                "page_js_called": page_js,
+                "navigation_runs_page_scripts": True,
+                "runtime_domain": "console events only" if client is not None else "unavailable",
+                "service_workers": "blocked",
+                "redirects": "blocked",
+                "non_loopback": "blocked",
+                "cdp_methods": list(sent),
+                "dialog_policy": dialog_policy,
+            }
+            if reason:
+                limits["reason"] = reason
+                if cdp_detail:
+                    limits["detail"] = cdp_detail
+            if step is not None:
+                limits["action_status"] = step.get("status")
+                if step.get("page_js_called"):
+                    limits["selector_engine"] = "playwright"
+                if step.get("action") == "click" and step.get("status") == "done":
+                    limits["click_runs_page_scripts"] = True
+                    limits["selector_engine"] = "playwright"
+                if step.get("action") == "hover" and step.get("status") == "done":
+                    limits["hover_may_trigger_css"] = True
+                    limits["selector_engine"] = "playwright"
+                if step.get("action") in {"scroll", "scroll_into", "scroll-into-view"} and step.get("status") == "done":
+                    limits["scroll_may_run_page_scripts"] = True
+                if step.get("action") in {"scroll_into", "scroll-into-view"} and step.get("status") == "done":
+                    limits["scroll_into_view"] = True
+                    limits["selector_engine"] = "playwright"
+                if step.get("scroll_y") is not None:
+                    limits["scroll_y"] = step["scroll_y"]
+                if "quiet" in step:
+                    limits["quiet"] = bool(step["quiet"])
+            return limits
+
+        def _take_intervals():
+            network_items = list(network)
+            console_items = list(console)
+            dialogs = list(dialog_items)
+            popups = list(popup_pages)
+            flags = (state["network_truncated"], state["console_truncated"])
+            network.clear()
+            console.clear()
+            requests.clear()
+            dialog_items.clear()
+            popup_pages.clear()
+            state["network_truncated"] = False
+            state["console_truncated"] = False
+            return network_items, console_items, dialogs, popups, flags
+
+        def _capture_without_cdp(step: dict | None, page_js: bool) -> dict:
+            network_items, console_items, dialogs, popups, _flags = _take_intervals()
+            sections = _unavailable_sections("cdp_session_unavailable")
+            sections["dialogs"] = _dialog_section(dialogs, dialog_policy)
+            sections["popups"] = _popup_section(popups)
+            sections["network"] = _section("playwright:request", "attach_limited", {
+                "prior_activity_available": False, "bodies": "not_requested", "items": network_items,
             })
-        origin = urllib.parse.urlsplit(page.url)
-        origin_text = f"{origin.scheme}://{origin.netloc}"
-        storage = _storage_section(
-            client, origin_text, keys=include_storage_keys, fingerprints=include_storage_fingerprints, sent=sent,
-        )
-        network_coverage = "truncated" if network_truncated else "attach_limited"
-        console_coverage = "truncated" if console_truncated else "attach_limited"
-        sections = {
-            "dom": _section("cdp:DOM.getDocument", "truncated" if dom_truncated else "complete", {
-                "nodes": meta["dom_nodes"], "attribute_values": "id and data-testid only",
-            }),
-            "accessibility": _section("cdp:Accessibility.getFullAXTree", "complete", {"nodes": meta["ax_nodes"]}),
-            "scripts": _section("cdp:DOM.getDocument", "complete_within_window", {
-                "items": meta["scripts"], "note": "scripts with no DOM node are outside this section",
-            }),
-            "resources": _section("cdp:Page.getResourceTree", "complete", {"items": resource_rows}),
-            "network": _section("cdp:Network", network_coverage, {
-                "prior_activity_available": False, "bodies": "not_requested", "items": network,
-            }),
-            "console": _section("cdp:Runtime.consoleAPICalled", console_coverage, {
-                "text": "not_requested", "prior_activity_available": False, "items": console,
-            }),
-            "storage": storage,
-            "frames": _section("cdp:Page.getFrameTree", "complete", {
-                "child_frames": child_frames, "contents": "not_entered",
-            }),
-        }
-        viewport = page.viewport_size or {}
-        limits = {
-            "page_js_called": False,
-            "navigation_runs_page_scripts": True,
-            "runtime_domain": "console events only",
-            "service_workers": "blocked",
-            "redirects": "blocked",
-            "non_loopback": "blocked",
-            "cdp_methods": sent,
-        }
-        result = assemble_observe(
-            {"title": title, "elements": elements, "child_frames": child_frames, "total": len(elements), "truncated": dom_truncated},
-            environment=_environment(browser, browser_name, channel, headed, profile, viewport),
-            url=page.url, start=start, limit=limit, sections=sections, limits=limits,
-        )
+            snapshot = assemble_observe(
+                {"title": "", "elements": [], "child_frames": 0, "total": 0, "truncated": False},
+                environment=_env(), url=page.url, start=start, limit=limit, sections=sections,
+                limits=_limits(page_js, step, reason="cdp_session_unavailable"),
+            )
+            return _note_emulation(snapshot, step)
+
+        def capture(step: dict | None, page_js: bool) -> dict:
+            if client is None:
+                return _capture_without_cdp(step, page_js)
+            document = _cdp_send(client, "DOM.getDocument", {"depth": -1, "pierce": False}, sent)
+            pierced = _cdp_send(client, "DOM.getDocument", {"depth": -1, "pierce": True}, sent)
+            shadow = count_shadow_roots(pierced.get("root") or {})
+            ax = _cdp_send(client, "Accessibility.getFullAXTree", {}, sent)
+            resources = _cdp_send(client, "Page.getResourceTree", {}, sent)
+            frames = _cdp_send(client, "Page.getFrameTree", {}, sent)
+            dom_nodes: list[dict] = []
+            dom_truncated = _walk_dom(document.get("root") or {}, dom_nodes)
+            elements, meta = _controls_from_cdp(dom_nodes, ax.get("nodes") or [], include_hidden=include_hidden, role=role)
+            title = ""
+            for ax_node in ax.get("nodes") or []:
+                if _ax_text(ax_node.get("role")) == "RootWebArea":
+                    title = clip(_ax_text(ax_node.get("name")), 200)
+                    break
+            child_frames = max(0, _frame_count(frames.get("frameTree") or {}) - 1)
+            resource_rows = []
+            for item in (resources.get("frameTree") or {}).get("resources") or []:
+                resource_rows.append({
+                    "type": item.get("type") or "",
+                    "mime": item.get("mimeType") if isinstance(item.get("mimeType"), str) else "",
+                    "url": strip_userinfo(item.get("url") or ""),
+                })
+            document_url = strip_userinfo(((frames.get("frameTree") or {}).get("frame") or {}).get("url") or "")
+            frame_items, frame_truncated = frame_rows(frames.get("frameTree") or {})
+            controls_digest = _content_digest([
+                [element.get("role"), element.get("name"), element.get("text")] for element in elements
+            ])
+            names_digest = _content_digest([
+                [_ax_text(node.get("role")), _ax_text(node.get("name"))]
+                for node in (ax.get("nodes") or []) if not node.get("ignored")
+            ])
+            origin = urllib.parse.urlsplit(page.url)
+            origin_text = f"{origin.scheme}://{origin.netloc}"
+            storage = _storage_section(
+                client, origin_text, keys=include_storage_keys, fingerprints=include_storage_fingerprints, sent=sent,
+            )
+            network_items, console_items, dialogs, popups, flags = _take_intervals()
+            network_coverage = "truncated" if flags[0] else "attach_limited"
+            console_coverage = "truncated" if flags[1] else "attach_limited"
+            sections = {
+                "dom": _section("cdp:DOM.getDocument", "truncated" if dom_truncated else "complete", {
+                    "nodes": meta["dom_nodes"], "attribute_values": "id and data-testid only",
+                    "document_url": document_url, "title": title, "controls_sha256": controls_digest,
+                }),
+                "accessibility": _section("cdp:Accessibility.getFullAXTree", "complete", {
+                    "nodes": meta["ax_nodes"], "names_sha256": names_digest,
+                }),
+                "scripts": _section("cdp:DOM.getDocument", "complete_within_window", {
+                    "items": meta["scripts"], "note": "scripts with no DOM node are outside this section",
+                }),
+                "resources": _section("cdp:Page.getResourceTree", "complete", {
+                    "items": resource_rows, "document_url": document_url,
+                }),
+                "network": _section("cdp:Network", network_coverage, {
+                    "prior_activity_available": False, "bodies": "not_requested", "items": network_items,
+                }),
+                "console": _section("cdp:Runtime.consoleAPICalled", console_coverage, {
+                    "text": "not_requested", "prior_activity_available": False, "items": console_items,
+                }),
+                "storage": storage,
+                "frames": _section("cdp:Page.getFrameTree", "truncated" if frame_truncated else "complete", {
+                    "child_frames": child_frames, "contents": "not_entered", "items": frame_items,
+                }),
+                "shadow_roots": _section("cdp:DOM.getDocument pierce", "truncated" if shadow["truncated"] else "complete", {
+                    "open": shadow["open"], "closed": shadow["closed"], "count": shadow["count"],
+                    "user_agent": shadow["user_agent"], "contents": "not_entered",
+                }),
+                "dialogs": _dialog_section(dialogs, dialog_policy),
+                "popups": _popup_section(popups),
+            }
+            snapshot = assemble_observe(
+                {"title": title, "elements": elements, "child_frames": child_frames, "total": len(elements), "truncated": dom_truncated},
+                environment=_env(), url=page.url, start=start, limit=limit, sections=sections,
+                limits=_limits(page_js, step),
+            )
+            return _note_emulation(snapshot, step)
+
+        results.append(capture(None, False))
+        for action_index, step in enumerate(steps, start=1):
+            raw_before = page.url
+            url_before = strip_userinfo(raw_before)
+            secret_values.extend(_secret_values(step))
+            _secrets.set(tuple(secret_values))
+            try:
+                outcome = perform_action(
+                    page, step, timeout_ms=timeout_ms, has_touch=has_touch, browser_name=browser_name,
+                    cdp_client=client, cdp_sent=sent,
+                )
+                if outcome.get("status") == "done" and page.url != raw_before:
+                    page.wait_for_load_state("load", timeout=NAVIGATION_TIMEOUT_MS)
+            except InspectError as exc:
+                caught = exc
+            except Exception as exc:
+                caught = InspectError(
+                    redact_text(f"{type(exc).__name__}: {exc}"),
+                    "the step did not settle. The following snapshot was not written",
+                    stage="navigate",
+                )
+            else:
+                caught = None
+            if caught is not None:
+                public_steps.append(publish_step(
+                    step,
+                    {"status": "error", "page_js_called": False, "support": {}, "input": "none", "reason": caught.error},
+                    url_before=url_before, url_after=strip_userinfo(page.url), index=action_index,
+                ))
+                failure = caught
+                break
+            public = publish_step(
+                step, outcome, url_before=url_before, url_after=strip_userinfo(page.url), index=action_index,
+            )
+            public_steps.append(public)
+            embedded = dict(public)
+            embedded["index"] = action_index + 1
+            results.append(capture(embedded, bool(outcome.get("page_js_called"))))
     except InspectError as exc:
         failure = exc
     except Exception as exc:
         failure = InspectError(
-            f"{type(exc).__name__}: {exc}",
+            redact_text(f"{type(exc).__name__}: {exc}"),
             "the CDP read failed; the snapshot was not written",
             stage="inspect",
         )
-    return _finish(playwright, browser, failure, result)
+    if failure is not None and not want_run:
+        failure.error = redact_text(failure.error)
+        failure.hint = redact_text(failure.hint)
+        _secrets.set(())
+        return _finish(playwright, browser, failure, None)
+    run = build_run(results, public_steps, dialog_policy=dialog_policy, error=failure) if want_run else None
+    payload = redact_obj({"observations": results, "run": run, "ok": failure is None})
+    _secrets.set(())
+    return _finish(playwright, browser, None, payload)
+
+
+
 
 
 def _action_locator(page, locator: str):
@@ -1186,31 +2615,35 @@ def _action_locator(page, locator: str):
     )
 
 
-def act_page(*, url: str, browser_name: str, profile: str, headed: bool, channel: str | None,
-             action: str, locator: str, text: str, timeout_ms: int) -> dict:
-    url = loopback_target(url)
-    if action not in ACT_ACTIONS:
-        raise InspectError(
-            f"unknown action {action}",
-            "use click, fill, or wait_for_timeout",
+def _note_emulation(snapshot: dict, step: dict | None = None) -> dict:
+    env = snapshot.get("environment") or {}
+    if env.get("emulation") and env.get("emulated_device"):
+        snapshot["hint"] = snapshot.get("hint", "") + (
+            f". {env['emulated_device']} is Playwright device emulation, not a physical device"
         )
-    if action == "fill" and text is None:
-        raise InspectError("fill needs --text", "pass the literal text to enter")
-    if action != "wait_for_timeout":
-        if not locator or locator.strip().startswith("h:"):
-            raise InspectError(
-                "act does not accept a snapshot ordinal",
-                "pass id:, testid:, role:, or css: so the control is queried again",
-            )
-        if not locator.startswith(("id:", "testid:", "role:", "css:")):
-            raise InspectError(
-                "act locator must be id:, testid:, role:, or css:",
-                "observe prints those addresses; h:N is not accepted",
-            )
-    playwright, browser, page = _with_browser(url, browser_name, profile, headed, channel)
+    if step is not None:
+        snapshot["step"] = step
+    return snapshot
+
+
+def act_page(*, url: str, browser_name: str, profile: str, headed: bool, channel: str | None,
+             action: str, locator: str, text: str, timeout_ms: int, text_env: str | None = None,
+             text_file: str | None = None, to: str | None = None, touch: bool = False,
+             viewport: dict | None = None, dialog_policy: str = "dismiss") -> dict:
+    step = act_arguments_to_step(action, locator, text, text_env, text_file, to, timeout_ms)
+    url = loopback_target(url)
+    source = viewport_source_for(profile, headed, viewport)
+    secret_values = _secret_values(step)
+    playwright, browser, page, has_touch = _with_browser(
+        url, browser_name, profile, headed, channel, viewport=viewport, touch=touch,
+    )
     failure = None
     result = None
+    _secrets.set(tuple(secret_values))
     try:
+        dialog_items: list[dict] = []
+        popup_pages: list = []
+        _watch_pages(page, dialog_policy, dialog_items, popup_pages)
         try:
             page.goto(url, wait_until="load", timeout=30000)
         except Exception as exc:
@@ -1219,24 +2652,8 @@ def act_page(*, url: str, browser_name: str, profile: str, headed: bool, channel
                 "check that the loopback server is up",
                 stage="navigate",
             ) from exc
-        page_js = False
-        try:
-            if action == "wait_for_timeout":
-                page.wait_for_timeout(timeout_ms)
-            else:
-                target, page_js = _action_locator(page, locator)
-                if action == "click":
-                    target.click(timeout=timeout_ms)
-                else:
-                    target.fill(text, timeout=timeout_ms)
-        except InspectError:
-            raise
-        except Exception as exc:
-            raise InspectError(
-                f"{type(exc).__name__}: {exc}",
-                "the locator was resolved on this call. If it missed, observe again and pass that address",
-                stage="inspect",
-            ) from exc
+        outcome = perform_action(page, step, timeout_ms=timeout_ms, has_touch=has_touch, browser_name=browser_name)
+        page_js = bool(outcome.get("page_js_called"))
         if browser_name == "chromium":
             try:
                 client = page.context.new_cdp_session(page)
@@ -1251,38 +2668,56 @@ def act_page(*, url: str, browser_name: str, profile: str, headed: bool, channel
                 ax_section = _section("cdp:Accessibility.getFullAXTree", "unavailable", {"reason": type(exc).__name__})
         else:
             ax_section = _section(None, "not_requested")
-        viewport = page.viewport_size or {}
+        seen = page.viewport_size or {}
+        published = publish_step(step, outcome, url_before=url, url_after=strip_userinfo(page.url), index=1)
         result = {
             "schema": SCHEMA_INSPECT,
             "ok": True,
             "operation": "act",
             "action": action,
+            "status": outcome["status"],
             "locator": locator,
             "url": strip_userinfo(page.url),
-            "environment": _environment(browser, browser_name, channel, headed, profile, viewport),
+            "support": outcome.get("support") or {},
+            "environment": _environment(
+                browser, browser_name, channel, headed, profile, seen,
+                has_touch=has_touch, viewport_source=source,
+            ),
             "limits": {
                 "page_js_called": page_js,
                 "bounded_to": [action],
                 "ordinals": "rejected",
                 "dom": "not_requested",
                 "selector_engine": "playwright" if page_js else "none",
+                "dialog_policy": dialog_policy,
+                "action_status": outcome["status"],
             },
             "sections": {
                 "url": _section("playwright:page.url", "complete", {"url": strip_userinfo(page.url)}),
                 "accessibility": ax_section,
                 "dom": _section(None, "not_requested"),
                 "storage": _section(None, "not_requested"),
+                "dialogs": _dialog_section(dialog_items, dialog_policy),
+                "popups": _popup_section(popup_pages),
             },
-            "hint": "url was captured. dom was not requested, so this result cannot say the markup was unchanged",
+            "step": published,
+            "hint": "url was captured. dom was not requested, so this result cannot say the markup was unchanged. typed values are redacted",
         }
+        if "quiet" in outcome:
+            result["limits"]["quiet"] = bool(outcome["quiet"])
+        if outcome.get("reason"):
+            result["reason"] = outcome["reason"]
+        result = _note_emulation(redact_obj(result))
     except InspectError as exc:
         failure = exc
     except Exception as exc:
         failure = InspectError(
-            f"{type(exc).__name__}: {exc}",
+            redact_text(f"{type(exc).__name__}: {exc}"),
             "the action failed before it could write a result",
             stage="inspect",
         )
+    finally:
+        _secrets.set(())
     return _finish(playwright, browser, failure, result)
 
 
@@ -1305,6 +2740,72 @@ def read_snapshot(path: str) -> dict:
     return data
 
 
+def _shadow_counts(snapshot: dict) -> dict | None:
+    section = (snapshot.get("sections") or {}).get("shadow_roots")
+    if not isinstance(section, dict) or section.get("coverage") not in COMPLETE_COVERAGE:
+        return None
+    counts = {}
+    for key in ("open", "closed", "count"):
+        value = section.get(key)
+        if isinstance(value, bool) or not isinstance(value, int):
+            return None
+        counts[key] = value
+    return counts
+
+
+def _count_pair(left, right) -> dict:
+    delta = right - left if isinstance(left, int) and isinstance(right, int) else None
+    return {"left": left, "right": right, "delta": delta}
+
+
+def compare_snapshots(left: dict, right: dict) -> dict:
+    """Section relations and counts for two observe snapshots. A missing side is never same."""
+    left_sections = left.get("sections") or {}
+    right_sections = right.get("sections") or {}
+    sections = {}
+    for name in sorted(set(left_sections) | set(right_sections)):
+        left_part = left_sections.get(name)
+        right_part = right_sections.get(name)
+        sections[name] = {
+            "relation": evidence_relation(left_part, right_part),
+            "left": left_part.get("coverage") if isinstance(left_part, dict) else None,
+            "right": right_part.get("coverage") if isinstance(right_part, dict) else None,
+        }
+    left_shadow = _shadow_counts(left)
+    right_shadow = _shadow_counts(right)
+    shadow = {key: _count_pair(*_side(left_shadow, right_shadow, key)) for key in ("open", "closed", "count")}
+    left_env = left.get("environment") if isinstance(left.get("environment"), dict) else {}
+    right_env = right.get("environment") if isinstance(right.get("environment"), dict) else {}
+    environment = {key: [left_env.get(key), right_env.get(key)] for key in COMPARE_ENVIRONMENT_KEYS}
+    same_environment = all(pair[0] == pair[1] for pair in environment.values())
+    hints = [
+        "same, different, and unknown are section relations; a missing or truncated section is never same",
+        "shadow_roots counts are null when that section was not complete on one side",
+    ]
+    if not same_environment:
+        hints.append("environments differ; section differences may come from the browser, profile, touch, emulation, or viewport, not only the page")
+    return {
+        "schema": SCHEMA_COMPARE,
+        "ok": True,
+        "left_url": left.get("url"),
+        "right_url": right.get("url"),
+        "same_environment": same_environment,
+        "environment": environment,
+        "sections": sections,
+        "shadow_roots": shadow,
+        "child_frames": _count_pair(left.get("child_frames"), right.get("child_frames")),
+        "elements": _count_pair(left.get("total"), right.get("total")),
+        "hint": ". ".join(hints),
+    }
+
+
+def _side(left_shadow, right_shadow, key):
+    return (
+        left_shadow[key] if left_shadow else None,
+        right_shadow[key] if right_shadow else None,
+    )
+
+
 def dumps(payload: dict) -> str:
     return json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
 
@@ -1312,7 +2813,7 @@ def dumps(payload: dict) -> str:
 def error_envelope(operation: str, exc: InspectError) -> dict:
     payload = {
         "schema": SCHEMA_INSPECT, "ok": False, "operation": operation, "stage": exc.stage,
-        "error": exc.error, "hint": exc.hint,
+        "error": redact_text(exc.error), "hint": redact_text(exc.hint),
     }
     if exc.suggestions:
         payload["suggestions"] = exc.suggestions
@@ -1335,7 +2836,31 @@ def observe_text(payload: dict) -> str:
         f"btk-page-observe/1 {env.get('os')} {env.get('browser')} {env.get('profile')} {mode} "
         f"elements={payload.get('total')} showing={len(payload.get('elements') or [])}"
     ]
+    if env.get("emulation"):
+        lines.append(f"emulation: {env.get('emulated_device')} real_device=false")
+    elif env.get("viewport_source") == "flag":
+        lines.append(f"viewport: {env.get('viewport', {}).get('width')}x{env.get('viewport', {}).get('height')} source=flag real_device=false")
     lines.extend(element_line(element) for element in payload.get("elements") or [])
+    lines.append(f"hint: {payload.get('hint')}")
+    return "\n".join(lines) + "\n"
+
+
+def run_text(payload: dict) -> str:
+    lines = [
+        f"btk-page-observe-run/1 steps={len(payload.get('steps') or [])} "
+        f"observations={len(payload.get('observations') or [])} ok={str(payload.get('ok')).lower()}"
+    ]
+    for step in payload.get("steps") or []:
+        locator = step.get("locator") or ""
+        redacted = " redacted" if step.get("value_source") else ""
+        reason = ""
+        if step.get("status") == "unsupported" and step.get("reason"):
+            reason = " unsupported"
+        lines.append(f"{step.get('index')} {step.get('action')} {locator}{redacted} {step.get('status')}{reason}".rstrip())
+    if payload.get("error"):
+        lines.append(f"error: {payload['error']}")
+    if payload.get("files"):
+        lines.append(f"files={len(payload['files'])}")
     lines.append(f"hint: {payload.get('hint')}")
     return "\n".join(lines) + "\n"
 
@@ -1365,6 +2890,20 @@ def describe_text(payload: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+def compare_text(payload: dict) -> str:
+    lines = [f"btk-page-compare/1 same_environment={str(payload['same_environment']).lower()}"]
+    for name, item in payload["sections"].items():
+        lines.append(f"section {name}={item['relation']} left={item['left']} right={item['right']}")
+    for key in ("open", "closed", "count"):
+        pair = payload["shadow_roots"][key]
+        lines.append(f"shadow_roots {key} left={pair['left']} right={pair['right']} delta={pair['delta']}")
+    for key in ("elements", "child_frames"):
+        pair = payload[key]
+        lines.append(f"{key} left={pair['left']} right={pair['right']} delta={pair['delta']}")
+    lines.append(f"hint: {payload['hint']}")
+    return "\n".join(lines) + "\n"
+
+
 def operations_text(payload: dict) -> str:
     lines = [f"{item['name']}: {item['summary']}" for item in payload["items"]]
     lines.append(f"hint: {payload['hint']}")
@@ -1380,6 +2919,13 @@ def _bounded(maximum: int):
             raise argparse.ArgumentTypeError(f"must be at most {maximum}")
         return value
     return parse
+
+
+def _viewport_arg(text: str) -> dict:
+    try:
+        return parse_viewport(text)
+    except InspectError as exc:
+        raise argparse.ArgumentTypeError(exc.error) from exc
 
 
 def _threshold(text: str) -> float:
@@ -1410,12 +2956,36 @@ def build_parser() -> argparse.ArgumentParser:
     observe.add_argument("--role", default="", help="only this role")
     observe.add_argument("--start", type=_bounded(100000), default=0)
     observe.add_argument("--limit", type=_bounded(SURVEY_LIMIT_MAX), default=SURVEY_LIMIT_DEFAULT)
+    observe.add_argument("--viewport", type=_viewport_arg, default=None, help="WIDTHxHEIGHT size. Not a physical device")
+    observe.add_argument("--touch", action="store_true", help="set hasTouch on the context. Not a physical device")
+    observe.add_argument("--dialog-policy", choices=("dismiss", "accept"), default="dismiss",
+                         help="record JavaScript dialogs. accept only when this is accept; the default dismisses")
+    observe.add_argument("--timeout-ms", type=_bounded(120000), default=5000)
+    observe.add_argument("--step", action="append", default=None,
+                         help="repeatable action such as click:id:save or type:id:search=env:SEARCH. Values are redacted")
+    observe.add_argument(
+        "--out-dir",
+        help="with --step, also write each observation as its own btk-page-observe/1 file in this existing directory",
+    )
+    observe.add_argument(
+        "--after-action",
+        metavar="SPEC",
+        help="one step, then a second snapshot: click:LOCATOR, hover:LOCATOR, scroll:DX,DY, or scroll-into:LOCATOR",
+    )
+    observe.add_argument("--after-click", metavar="LOCATOR", help="alias for --after-action click:LOCATOR")
+    observe.add_argument("--after-out", help="write the second snapshot here; requires --after-action (or --after-click) and --out")
     act = sub.add_parser("act", parents=[common], help="one declared action that re-queries a locator", allow_abbrev=False)
     act.add_argument("target", help="loopback URL; a snapshot ordinal is not accepted")
     act.add_argument("--action", required=True, choices=tuple(sorted(ACT_ACTIONS)))
     act.add_argument("--locator", default="", help="id:, testid:, role:, or css: from observe")
-    act.add_argument("--text", default=None, help="literal text for fill")
+    act.add_argument("--text", default=None, help="non-secret literal. Secrets use --text-env or --text-file and are redacted")
+    act.add_argument("--text-env", default=None, help="read the action value from this environment variable")
+    act.add_argument("--text-file", default=None, help="read the action value from this UTF-8 file")
+    act.add_argument("--to", default=None, help="destination locator for drag")
     act.add_argument("--timeout-ms", type=_bounded(120000), default=5000)
+    act.add_argument("--viewport", type=_viewport_arg, default=None, help="WIDTHxHEIGHT size. Not a physical device")
+    act.add_argument("--touch", action="store_true", help="set hasTouch on the context. Not a physical device")
+    act.add_argument("--dialog-policy", choices=("dismiss", "accept"), default="dismiss")
     act.add_argument("--browser", choices=("chromium", "firefox", "webkit"), default="chromium")
     act.add_argument("--profile", choices=tuple(PROFILES), default="desktop")
     act.add_argument("--channel", help="branded browser channel, for example chrome")
@@ -1453,8 +3023,79 @@ def build_parser() -> argparse.ArgumentParser:
     describe_parser.add_argument("snapshot")
     describe_parser.add_argument("--target", required=True)
     describe_parser.add_argument("--context", type=_bounded(CONTEXT_MAX), default=CONTEXT_DEFAULT)
+    compare_parser = sub.add_parser("compare", parents=[common], help="compare two observe snapshots", allow_abbrev=False)
+    compare_parser.add_argument("left")
+    compare_parser.add_argument("right")
     sub.add_parser("operations", parents=[common], help="list commands", allow_abbrev=False)
     return parser
+
+
+def parse_after_action(spec: str) -> dict:
+    """Parse --after-action into one step. The same performer runs --step."""
+    text = (spec or "").strip()
+    if not text:
+        raise InspectError("after-action is empty", "use click:, hover:, scroll:, or scroll-into:")
+    lowered = text.lower()
+    if lowered.startswith("click:"):
+        return {"kind": "click", "locator": _require_locator(text[6:])}
+    if lowered.startswith("hover:"):
+        return {"kind": "hover", "locator": _require_locator(text[6:])}
+    if lowered.startswith("scroll-into:"):
+        return {"kind": "scroll_into", "locator": _require_locator(text[12:])}
+    if lowered.startswith("scroll:"):
+        body = text[7:]
+        if body.startswith(("id:", "testid:", "role:", "css:")):
+            return {"kind": "scroll_into", "locator": _require_locator(body)}
+        step = parse_step(f"scroll:{body}")
+        return {"kind": "scroll", "dx": step["dx"], "dy": step["dy"]}
+    raise InspectError(
+        "after-action must start with click:, hover:, scroll:, or scroll-into:",
+        "example: --after-action hover:id:menu",
+    )
+
+
+def after_action_to_step(parsed: dict) -> dict:
+    kind = parsed["kind"]
+    if kind == "scroll":
+        return parse_step(f"scroll:{parsed['dx']},{parsed['dy']}")
+    if kind == "scroll_into":
+        step = parse_step(f"scroll-into-view:{parsed['locator']}")
+        step["action"] = "scroll_into"
+        return step
+    return parse_step(f"{kind}:{parsed['locator']}")
+
+
+def resolve_observe_after_action(args: argparse.Namespace) -> dict | None:
+    if args.after_action and args.after_click:
+        raise InspectError(
+            "pass only one of --after-action and --after-click",
+            "--after-click is an alias for --after-action click:LOCATOR",
+        )
+    if args.after_action:
+        return parse_after_action(args.after_action)
+    if args.after_click:
+        return parse_after_action(f"click:{args.after_click.strip()}")
+    return None
+
+
+def _check_sequence_args(args: argparse.Namespace, after_action: dict | None) -> None:
+    if after_action is None or args.after_out is None or not args.out:
+        raise InspectError(
+            "after-action needs --out for the first snapshot and --after-out for the second",
+            "pass both file paths; each file is a btk-page-observe/1 snapshot",
+        )
+    if Path(args.out).resolve() == Path(args.after_out).resolve():
+        raise InspectError("--out and --after-out must be different files", "give each snapshot its own path")
+    for path in (args.out, args.after_out):
+        if not Path(path).parent.is_dir():
+            raise InspectError(f"directory does not exist: {Path(path).parent}", "create the directory before --out or --after-out")
+
+
+def _write_snapshot(path: str, payload: dict) -> None:
+    try:
+        Path(path).write_text(dumps(payload), encoding="utf-8", newline="\n")
+    except OSError as exc:
+        raise InspectError(f"cannot write {path}: {exc}", "choose a writable file path") from exc
 
 
 def dispatch(args: argparse.Namespace) -> tuple[dict, str, int]:
@@ -1464,14 +3105,62 @@ def dispatch(args: argparse.Namespace) -> tuple[dict, str, int]:
     if args.command == "observe":
         if args.limit < 1:
             raise InspectError("limit must be at least 1", f"use 1..{SURVEY_LIMIT_MAX}")
-        payload = observe_page(
+        if args.timeout_ms < 1:
+            raise InspectError("timeout-ms must be at least 1", "use 1..120000")
+        steps: list = []
+        want_run = False
+        after_action = resolve_observe_after_action(args)
+        if args.step and (after_action is not None or args.after_out is not None):
+            raise InspectError(
+                "--step and --after-action both record observe snapshots",
+                "pass --step for a sequence, or --after-action with --after-out for one step",
+            )
+        if args.out_dir and (not args.step or after_action is not None or args.after_out is not None):
+            raise InspectError(
+                "--out-dir is the per-step slice of an observe --step run",
+                "pass --step. A single snapshot still uses --out. --after-action keeps --out and --after-out",
+            )
+        if args.out_dir and not Path(args.out_dir).is_dir():
+            raise InspectError(
+                f"directory does not exist: {args.out_dir}",
+                "create the directory before --out-dir",
+            )
+        if after_action is not None or args.after_out is not None:
+            _check_sequence_args(args, after_action)
+            steps = [after_action_to_step(after_action)]
+        elif args.step:
+            if len(args.step) > MAX_STEPS:
+                raise InspectError(f"at most {MAX_STEPS} steps", "split the session into shorter observe commands")
+            steps = [parse_step(item) for item in args.step]
+            want_run = True
+        session = observe_page(
             url=args.target, browser_name=args.browser, profile=args.profile, headed=args.headed,
             channel=args.channel or None, include_hidden=args.include_hidden,
             include_storage_keys=args.include_storage_keys,
             include_storage_fingerprints=args.include_storage_fingerprints,
-            role=args.role, start=args.start, limit=args.limit,
+            role=args.role, start=args.start, limit=args.limit, steps=steps, want_run=want_run,
+            dialog_policy=args.dialog_policy, timeout_ms=args.timeout_ms, viewport=args.viewport,
+            touch=args.touch,
         )
-        return payload, observe_text(payload), 0
+        if want_run:
+            payload = session["run"]
+            if args.out_dir:
+                payload = dict(payload)
+                payload["files"] = write_observation_slices(args.out_dir, payload.get("observations") or [])
+                payload["hint"] = (payload.get("hint") or "") + (
+                    " files are the same btk-page-observe/1 objects as observations, one per snapshot. "
+                    "The run envelope stays btk-page-observe-run/1; there is no second schema."
+                )
+            return payload, run_text(payload), 0 if payload.get("ok") else 2
+        observations = session["observations"]
+        payload = observations[0]
+        text_out = observe_text(payload)
+        if len(observations) == 2:
+            _write_snapshot(args.after_out, observations[1])
+            step = observations[1].get("step") or {}
+            label = f"{step.get('action', 'step')}:{step.get('target', '')}"
+            text_out += f"after-action {label}: second snapshot written to {args.after_out}\n"
+        return payload, text_out, 0
     if args.command == "scenario":
         from page_inspect_scenarios import run_scenario
         payload = run_scenario(args, sys.modules[__name__])
@@ -1482,10 +3171,14 @@ def dispatch(args: argparse.Namespace) -> tuple[dict, str, int]:
         payload = act_page(
             url=args.target, browser_name=args.browser, profile=args.profile, headed=args.headed,
             channel=args.channel or None, action=args.action, locator=args.locator,
-            text=args.text, timeout_ms=args.timeout_ms,
+            text=args.text, timeout_ms=args.timeout_ms, text_env=args.text_env, text_file=args.text_file,
+            to=args.to, touch=args.touch, viewport=args.viewport, dialog_policy=args.dialog_policy,
         )
-        text_out = f"action={payload['action']} url={payload['url']}\nhint: {payload['hint']}\n"
+        text_out = f"action={payload['action']} status={payload.get('status')} url={payload['url']}\nhint: {payload['hint']}\n"
         return payload, text_out, 0
+    if args.command == "compare":
+        payload = compare_snapshots(read_snapshot(args.left), read_snapshot(args.right))
+        return payload, compare_text(payload), 0
     snapshot = read_snapshot(args.snapshot)
     elements = snapshot["elements"]
     if args.command == "count":
@@ -1505,7 +3198,31 @@ def dispatch(args: argparse.Namespace) -> tuple[dict, str, int]:
     return payload, describe_text(payload), 0 if payload["ok"] else 1
 
 
+def observation_file_name(index: int, observation: dict) -> str:
+    """00-initial.json, then NN-action.json. The index keeps repeated actions distinct."""
+    if index == 0:
+        return "00-initial.json"
+    step = observation.get("step") if isinstance(observation, dict) else None
+    action = step.get("action") if isinstance(step, dict) else None
+    slug = re.sub(r"[^a-z0-9-]", "-", str(action or "step"))
+    return f"{index:02d}-{slug}.json"
+
+
+def write_observation_slices(directory: str, observations: list) -> list[str]:
+    """Write each btk-page-observe/1 object already stored on the run. No second schema."""
+    files = []
+    for index, observation in enumerate(observations):
+        if not isinstance(observation, dict) or observation.get("schema") != SCHEMA_OBSERVE:
+            continue
+        path = str(Path(directory) / observation_file_name(index, observation))
+        _write_snapshot(path, observation)
+        files.append(path)
+    return files
+
+
 def emit(payload: dict, text: str, code: int, args: argparse.Namespace) -> int:
+    payload = redact_obj(payload)
+    text = redact_text(text)
     raw = dumps(payload)
     if args.out:
         path = Path(args.out)

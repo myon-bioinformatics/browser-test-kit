@@ -1,0 +1,36 @@
+{
+  "schema": "btk-parts-lock/1",
+  "purpose": "the parts a Python and Node run needs; fetch one part at a time with scripts/fetch_member.py --lock",
+  "parts": {
+    "node": {
+      "role": "Node runtime for vendor/py_launch.cjs: Node 24 or later, no upper bound",
+      "npm_package": "node-linux-x64",
+      "version": "24.22.1",
+      "source": "https://registry.npmjs.org/node-linux-x64/-/node-linux-x64-24.22.1.tgz",
+      "integrity": "sha512-ogMoFZRQLCX7VpzQAtfs7q0DVFa7D79LKhmttHZNGJrz0Yp5/LtU0MISM7gvThSo6AbVelac9uVu9Jfm1464ow==",
+      "member": "package/bin/node",
+      "bundled_alternative": "a Playwright driver may bundle a Node that meets the 24+ floor; the npm node part above is kept so the Node runtime is chosen separately and is not pinned to a Playwright release",
+      "minimum": "24.0.0",
+      "maximum": null,
+      "verified_on": [
+        "24.22.1",
+        "26.12.1"
+      ]
+    },
+    "python_playwright": {
+      "role": "observe and act; Python runs under py_launch with no Node packages",
+      "pypi_package": "playwright",
+      "version": ">=1.64.1",
+      "source": "pypi",
+      "integrity": null,
+      "note": "lower bound only, the same as pyproject.toml. uv.lock records the resolution for the stack and is not an exact pin. Installed with pip or uv; the integrity is not recorded here"
+    },
+    "chromium": {
+      "role": "browser for observe and act in Chromium",
+      "version": "141.0.7390.37",
+      "source": "environment: PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers (chromium-1194)",
+      "integrity": null,
+      "note": "the Playwright CDN is not reachable from this environment, so this part cannot be fetched here; chromium 141 was used for the checks run here"
+    }
+  }
+}

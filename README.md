@@ -262,38 +262,6 @@ python -S scripts/twin_parity.py scripts/interaction.py:press_point scripts/inte
 - The first run found two real drifts, now fixed and recorded: `TWIN_PARSER_DRIFT` (27 of 250 URLs) and `ROUNDING_TIE_DRIFT` (0.562 vs 0.563).
 - Library: `node_calls(module, export, cases)`, `python_calls(fn, cases)`, `mismatches(a, b)`. Exit codes: 0 agree; 1 mismatch; 2 input error.
 
-
-
-#### Platform settings and fault scenarios
-
-The active \`scenario\` command tests environment settings, cross-OS shortcuts,
-browser-context offline, local HTTP 503 and latency, permissions, in-memory upload,
-and fixture download. It runs through the existing Python CLI or the Node
-\`page_inspect.cjs\` → \`py_launch.cjs\` bridge. It emits the existing
-\`btk-page-observe/1\` sections with complete/truncated/unavailable coverage.
-
-\`\`\`bash
-python scripts/page_inspect.py scenario http://127.0.0.1:8765/scenarios --case display --viewport 390x844 --color-scheme dark --reduced-motion reduce --locale ja-JP --timezone Asia/Tokyo --device-scale-factor 2 --json
-python scripts/page_inspect.py scenario http://127.0.0.1:8765/scenarios --case shortcut --json
-python scripts/page_inspect.py scenario http://127.0.0.1:8765/scenarios --case offline --json
-python scripts/page_inspect.py scenario http://127.0.0.1:8765/scenarios --case http-error --json
-python scripts/page_inspect.py scenario http://127.0.0.1:8765/scenarios --case latency --latency-ms 150 --json
-python scripts/page_inspect.py scenario http://127.0.0.1:8765/scenarios --case permission --permission geolocation --permission-state grant --json
-python scripts/page_inspect.py scenario http://127.0.0.1:8765/scenarios --case upload --json
-python scripts/page_inspect.py scenario http://127.0.0.1:8765/scenarios --case download --json
-node scripts/page_inspect.cjs scenario http://127.0.0.1:8765/scenarios --case display --json
-\`\`\`
-
-Serve \`fixtures/page_inspect_scenarios.html\` on a local HTTP server; it must serve
-\`/scenario.txt\` as a download. Use \`--channel chrome|msedge\` only for
-installed Chromium channels. OS fields describe the **actual host**; device
-profiles and appearance settings are **browser emulation**, not an actual phone
-or host OS setting. Permission \`clear\` returns to browser defaults, not forced
-denial. Network entries have a limit of 30 and never include credentials,
-query strings, bodies, or raw browser errors. Upload is fixed in-memory
-and download contents are never read or saved by this tool. Detailed limits:
-[REA observation](docs/rea-observation.md).
-
 ### Page observe, locate, and act (`scripts/page_inspect.py`, `scripts/page_inspect.cjs`)
 
 Separate commands for a loopback page: passive observe, offline locate, and one declared action. The design follows REA's browser observation notes (morluto/rea, MIT), not that project's server. See [REA observation](docs/rea-observation.md). Later phases stay on [issue 117](https://github.com/myon-bioinformatics/browser-test-kit/issues/117).
@@ -303,13 +271,43 @@ python scripts/page_inspect.py observe http://127.0.0.1:8765/page --json --out o
 python -S scripts/page_inspect.py locate observe.json --query "Save draft" --unique --json
 python scripts/page_inspect.py act http://127.0.0.1:8765/page --action click --locator id:save-draft --json
 node scripts/page_inspect.cjs locate observe.json --query "Save draft" --unique --json
+python -S scripts/page_inspect.py compare before.json after.json --json
+python scripts/page_inspect.py observe http://127.0.0.1:8765/page --viewport 390x844 \
+  --step focus:id:search --step type:id:search=env:SEARCH --step press:Enter \
+  --step wait:id:results --step click:id:result-1 --out obs.json
+python scripts/page_inspect.py observe http://127.0.0.1:8765/page --out before.json --after-action click:id:next --after-out after.json
 ```
 
+- `observe --step` records a `btk-page-observe/1` snapshot before the steps and after each step, then compares each pair with the existing `compare` function. The file schema is `btk-page-observe-run/1`. `--out-dir DIR` also writes each of those observation objects as `00-initial.json` and `NN-action.json` in an existing directory. Those files are slices of the run, not a second schema. `--after-action` (`click:`, `hover:`, `scroll:DX,DY`, `scroll-into:`) and `--after-click` are one step from that same performer, written to two snapshot files.
+- Steps cover keyboard (`type`, `fill`, `clear`, `press`, `shortcut`, `focus`, `blur`), mouse (`click`, `dblclick`, `rightclick`, `hover`, `drag`, `scroll`, `scroll-into-view`), form (`check`, `uncheck`, `select`, `set-files`, `submit`), page (`goto`, `back`, `forward`, `reload`, `wait`, `resize`, `settle`), and touch (`tap` on every engine when `hasTouch` is set; `long-press`, `swipe`, and `touch-scroll` on Chromium via CDP Input, and `unsupported` on Firefox and WebKit because those protocols only have a point tap). `settle` is Chromium-only: readyState past loading and no DOM mutation for 400 ms, from CDP lifecycle and DOM events, with `quiet: false` on timeout. Firefox and WebKit report `settle` unsupported because they have no CDP DOM mutation stream. `Primary` is Playwright `ControlOrMeta`. Values from `env:NAME` and `file:PATH` are redacted in full. Exception text and JSON output also apply Stagehand's key redaction (query keys, `sk-` keys, Browserbase keys, `AIza` keys, and bearer tokens).
+- `compare` reads two observe files offline. Each section is `same`, `different`, or `unknown` (a missing or truncated section is never `same`), with open, closed, and total shadow-root counts and their deltas. It reports when the browser, profile, touch, emulation, or viewport differ.
 - Targets are `http://127.0.0.1:PORT/...` or `http://[::1]:PORT/...` only. Hostnames, file URLs, and missing ports are rejected.
-- `observe` on Chromium reads CDP and does not call the page. Firefox and WebKit report CDP unavailable instead of inventing a DOM. Storage is keys and SHA-256 fingerprints, never values. A missing section is not a claim that two captures match.
-- `act` is click, fill, or wait_for_timeout. It re-queries the locator and rejects `h:N`. Playwright's selector engine runs only for click and fill.
-- The Node CLI is `.cjs` and calls Python through the vendored `vendor/py_launch.cjs` launcher, which requires Node 24. Score, loopback, fingerprint, and evidence comparison are checked with `scripts/twin_parity.py`.
+- `observe` on Chromium reads CDP and does not call the page. It counts author open and closed shadow roots in a pierced DOM (`shadow_roots` section) without entering them; Chromium user-agent shadow roots are reported separately as `user_agent`. Child frames are listed by name, URL, and origin in document order (`frames.items`) and their documents are not entered. Firefox and WebKit report CDP unavailable instead of inventing a DOM. Storage is keys and SHA-256 fingerprints, never values. A missing section is not a claim that two captures match. `python -S scripts/fetch_member.py --lock parts.lock.json --part node --dest DIR` checks one archive's integrity and extracts the named member. Playwright there is `>=1.64.1`, a lower bound with no upper bound. The Node package `@playwright/test` uses the same lower bound.
+- iPhone and Pixel profiles are Playwright device emulation (`real_device: false`). `--viewport` is only a size. `--touch` sets `hasTouch` without naming a phone.
+- `act` runs one action from the same vocabulary. It re-queries the locator and rejects `h:N`. Dialogs are recorded and dismissed unless `--dialog-policy accept`.
+- The Node CLI is `.cjs` and calls Python through the vendored `vendor/py_launch.cjs` launcher, which requires Node 24 or later with no upper bound. Score, loopback, fingerprint, and evidence comparison are checked with `scripts/twin_parity.py`.
 - Exit codes: `0` success; `1` no match or a shared top score; `2` usage, a bad snapshot, or launch/navigate/inspect/cleanup failure. Headless is the default.
+
+### Platform and fault scenarios (PR #123)
+
+The **active** `scenario` subcommand verifies OS-dependent shortcuts, display settings,
+browser-context offline/HTTP errors/latency, permissions and bounded file interactions.
+It uses the same `btk-page-observe/1` envelope and existing Node `page_inspect.cjs`
+→ `py_launch.cjs` bridge without replacing `observe --step`, `act`, or `compare`.
+
+```bash
+python scripts/page_inspect.py scenario http://127.0.0.1:8765/scenarios --case display --viewport 390x844 --color-scheme dark --reduced-motion reduce --locale ja-JP --timezone Asia/Tokyo --json
+python scripts/page_inspect.py scenario http://127.0.0.1:8765/scenarios --case offline --json
+python scripts/page_inspect.py scenario http://127.0.0.1:8765/scenarios --case permission --permission geolocation --permission-state grant --json
+node scripts/page_inspect.cjs scenario http://127.0.0.1:8765/scenarios --case shortcut --json
+```
+
+The local test fixture is `fixtures/page_inspect_scenarios.html`, served with the
+`/api/probe` and `/scenario.txt` fixture routes. `scenario` can also test
+`http-error`, `latency`, `upload`, and `download`; see
+[platform scenario contract](docs/page-inspect-platform-scenarios.md).
+`.nvmrc` selects **Node 24**. Emulated phone profiles are not real devices.
+Only a complete section with an eligible digest can compare as `same`.
 
 ### Sequence status
 

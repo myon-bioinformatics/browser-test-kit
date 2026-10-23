@@ -114,11 +114,12 @@ function explicitPort(target) {
 }
 
 function helpText() {
-  return `page_inspect.cjs — observe a loopback page, rank locators, and run one action.
+  return `page_inspect.cjs — observe a loopback page, rank locators, and run declared steps.
 
 Commands delegate to page_inspect.py through vendor/py_launch.cjs (Node 24+).
 offline: node scripts/page_inspect.cjs locate SNAPSHOT --query TEXT --json
 live:    node scripts/page_inspect.cjs observe http://127.0.0.1:PORT/page --json
+steps:   node scripts/page_inspect.cjs observe http://127.0.0.1:PORT/page --viewport 390x844 --step focus:id:search --step type:id:search=env:SEARCH --out obs.json --out-dir DIR
 `;
 }
 
@@ -126,8 +127,8 @@ function delegate(argv) {
   const launch = require(path.join(__dirname, "..", "vendor", "py_launch.cjs"));
   try {
     const result = launch.run(path.join(__dirname, "page_inspect.py"), argv, {
-      timeout: 120000,
-      maxBuffer: 8 * 1024 * 1024,
+      timeout: 180000,
+      maxBuffer: 16 * 1024 * 1024,
     });
     process.stdout.write(result.stdout);
     return 0;
