@@ -69,9 +69,11 @@ def test_real_chromium_scenarios(url, case, key, value):
     assert evidence["sections"]["scenario"][key] == value
     assert evidence["sections"]["network"]["coverage"] == "complete_within_window"
     if case == "http-error":
-        assert {"kind": "http_error", "path": "/api/probe", "status": 503} in evidence["sections"]["network"]["items"]
+        assert any(item["kind"] == "http_error" and item["path"] == "/api/probe" and item["status"] == 503
+                   and item["phase"] == "fault" for item in evidence["sections"]["network"]["items"])
     if case == "offline":
         assert any(item["kind"] == "request_failed" for item in evidence["sections"]["network"]["items"])
+        assert evidence["sections"]["scenario"]["recovered"] is True
 
 
 def test_display_and_permissions(url):
@@ -88,12 +90,12 @@ def test_display_and_permissions(url):
     assert evidence["environment"]["viewport"] == {"width": 390, "height": 844}
     assert evidence["environment"]["device_claim"] == "emulation_only"
     granted = run(url, "--case", "permission", "--permission", "notifications", "--permission-state", "grant")
-    reported = granted["sections"]["scenario"]["reported_state"]
-    assert reported in ("granted", "denied", "default", "unsupported")
-    assert granted["sections"]["scenario"]["configured_state"] == "grant"
-    assert granted["sections"]["scenario"]["matches_requested"] == (reported == "granted")
+    section = granted["sections"]["scenario"]
+    assert section["reported_state"] in ("granted", "denied", "prompt", "unsupported")
+    assert section["configured_state"] == "grant"
+    assert section["matches_requested"] == (None if section["coverage"] == "unavailable" else section["reported_state"] == "granted")
     geo = run(url, "--case", "permission", "--permission", "geolocation", "--permission-state", "grant")
-    geo_state = geo["sections"]["scenario"]["reported_state"]
-    assert geo_state in ("granted", "denied", "unsupported")
-    assert geo["sections"]["scenario"]["matches_requested"] == (geo_state == "granted")
+    assert geo["sections"]["scenario"]["reported_state"] == "granted"
+    assert geo["sections"]["scenario"]["matches_requested"] is True
+    assert geo["sections"]["scenario"]["reset_matches_baseline"] is True
     assert "latitude" not in json.dumps(geo)
