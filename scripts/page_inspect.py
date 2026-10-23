@@ -1318,16 +1318,7 @@ def act_page(*, url: str, browser_name: str, profile: str, headed: bool, channel
         raise InspectError(f"{action} needs --text", "pass the literal text, key name, or option value")
     keyboard_only = action == "press" and not (locator or "").strip()
     if action != "wait_for_timeout" and not keyboard_only:
-        if not locator or locator.strip().startswith("h:"):
-            raise InspectError(
-                "act does not accept a snapshot ordinal",
-                "pass id:, testid:, role:, or css: so the control is queried again",
-            )
-        if not locator.startswith(("id:", "testid:", "role:", "css:")):
-            raise InspectError(
-                "act locator must be id:, testid:, role:, or css:",
-                "observe prints those addresses; h:N is not accepted",
-            )
+        _check_action_locator(locator)
     playwright, browser, page = _with_browser(url, browser_name, profile, headed, channel)
     failure = None
     result = None
@@ -1664,17 +1655,28 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _check_action_locator(locator: str | None) -> None:
+    """Shared by act and observe --after-click: an address from observe, never a snapshot ordinal."""
+    text = (locator or "").strip()
+    if not text or text.startswith("h:"):
+        raise InspectError(
+            "act does not accept a snapshot ordinal",
+            "pass id:, testid:, role:, or css: so the control is queried again",
+        )
+    if not text.startswith(("id:", "testid:", "role:", "css:")):
+        raise InspectError(
+            "act locator must be id:, testid:, role:, or css:",
+            "observe prints those addresses; h:N is not accepted",
+        )
+
+
 def _check_sequence_args(args: argparse.Namespace) -> None:
     if args.after_click is None or args.after_out is None or not args.out:
         raise InspectError(
             "after-click needs --out for the first snapshot and --after-out for the second",
             "pass both file paths; each file is a btk-page-observe/1 snapshot",
         )
-    locator = args.after_click.strip()
-    if locator.startswith("h:"):
-        raise InspectError("after-click does not accept a snapshot ordinal", "pass id:, testid:, role:, or css:")
-    if not locator.startswith(("id:", "testid:", "role:", "css:")):
-        raise InspectError("after-click locator must be id:, testid:, role:, or css:", "observe prints those addresses")
+    _check_action_locator(args.after_click)
     if Path(args.out).resolve() == Path(args.after_out).resolve():
         raise InspectError("--out and --after-out must be different files", "give each snapshot its own path")
     for path in (args.out, args.after_out):
