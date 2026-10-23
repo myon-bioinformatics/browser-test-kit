@@ -54,7 +54,7 @@ Service workers are blocked and redirects are aborted. Those are bounds on the s
 
 `observe --after-click LOCATOR` takes one snapshot, clicks the locator once (the same `id:`, `testid:`, `role:`, or `css:` addresses as `act`), waits for the load state, and takes a second snapshot in the same browser. The second snapshot has `step` (index, action, locator, URL before and after) and `limits.click_runs_page_scripts: true`. The two results go to separate files so `compare` can read them. Network and console are cleared after the click, so the second snapshot shows activity from the click onward only. This is not passive observation: the click runs page scripts.
 
-Known gap: section digests do not yet capture page identity. `dom` and `accessibility` digest node counts, and `resources` digests the resource list, so two different pages can read `same` in `compare`. The page URLs are reported in `left_url` and `right_url`. Fixing this changes the digests of every observe output and is a separate decision.
+Section digests carry page identity. `dom` digests the document URL, title, and a hash of the control list (address, role, name, text). `accessibility` digests a hash of the non-ignored accessibility names and roles. `resources` digests the document URL with the resource list. So two different pages read `different` in `compare` even when their node counts match. Digests stay hashes; the output does not list the full control text again.
 
 ## Deferred on issue 117
 

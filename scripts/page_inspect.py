@@ -812,6 +812,11 @@ def _unavailable_sections(reason: str) -> dict:
     }
 
 
+def _content_digest(items: list) -> str:
+    canonical = json.dumps(items, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def _ax_text(field) -> str:
     if isinstance(field, dict) and field.get("value") is not None:
         return str(field.get("value"))
@@ -1131,6 +1136,14 @@ def observe_page(*, url: str, browser_name: str, profile: str, headed: bool, cha
                     "mime": item.get("mimeType") if isinstance(item.get("mimeType"), str) else "",
                     "url": strip_userinfo(item.get("url") or ""),
                 })
+            document_url = strip_userinfo(((frames.get("frameTree") or {}).get("frame") or {}).get("url") or "")
+            controls_digest = _content_digest([
+                [e.get("address"), e.get("role"), e.get("name"), e.get("text")] for e in elements
+            ])
+            names_digest = _content_digest([
+                [_ax_text(n.get("role")), _ax_text(n.get("name"))]
+                for n in (ax.get("nodes") or []) if not n.get("ignored")
+            ])
             origin = urllib.parse.urlsplit(page.url)
             origin_text = f"{origin.scheme}://{origin.netloc}"
             storage = _storage_section(
@@ -1141,12 +1154,17 @@ def observe_page(*, url: str, browser_name: str, profile: str, headed: bool, cha
             sections = {
                 "dom": _section("cdp:DOM.getDocument", "truncated" if dom_truncated else "complete", {
                     "nodes": meta["dom_nodes"], "attribute_values": "id and data-testid only",
+                    "document_url": document_url, "title": title, "controls_sha256": controls_digest,
                 }),
-                "accessibility": _section("cdp:Accessibility.getFullAXTree", "complete", {"nodes": meta["ax_nodes"]}),
+                "accessibility": _section("cdp:Accessibility.getFullAXTree", "complete", {
+                    "nodes": meta["ax_nodes"], "names_sha256": names_digest,
+                }),
                 "scripts": _section("cdp:DOM.getDocument", "complete_within_window", {
                     "items": meta["scripts"], "note": "scripts with no DOM node are outside this section",
                 }),
-                "resources": _section("cdp:Page.getResourceTree", "complete", {"items": resource_rows}),
+                "resources": _section("cdp:Page.getResourceTree", "complete", {
+                    "items": resource_rows, "document_url": document_url,
+                }),
                 "network": _section("cdp:Network", network_coverage, {
                     "prior_activity_available": False, "bodies": "not_requested", "items": network,
                 }),

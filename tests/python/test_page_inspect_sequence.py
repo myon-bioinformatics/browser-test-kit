@@ -73,7 +73,29 @@ def test_click_then_second_snapshot_in_its_own_file(tmp_path):
                                str(tmp_path / "after.json"), "--json"], cwd=tmp_path,
                               capture_output=True, text=True, timeout=60)
     assert compared.returncode == 0
-    # Section digests do not yet capture page identity: dom, accessibility, and resources can read "same"
-    # for these two pages (see the PR notes). The page URLs are reported directly, so check those here.
+    sections = json.loads(compared.stdout)["sections"]
+    for name in ("dom", "accessibility", "resources"):
+        assert sections[name]["relation"] == "different", name
     report = json.loads(compared.stdout)
     assert report["left_url"].endswith("/first.html") and report["right_url"].endswith("/second.html")
+
+
+@pytest.mark.browser
+def test_same_page_observed_twice_reads_same_for_identity_sections(tmp_path):
+    (tmp_path / "first.html").write_text(FIRST, encoding="utf-8")
+    handler = functools.partial(SimpleHTTPRequestHandler, directory=str(tmp_path))
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        url = f"http://127.0.0.1:{server.server_port}/first.html"
+        for name in ("one.json", "two.json"):
+            done = run([url, "--out", str(tmp_path / name), "--json"], tmp_path)
+            assert done.returncode == 0, done.stderr
+    finally:
+        server.shutdown()
+    compared = subprocess.run([sys.executable, "-S", str(SCRIPT), "compare", str(tmp_path / "one.json"),
+                               str(tmp_path / "two.json"), "--json"], cwd=tmp_path,
+                              capture_output=True, text=True, timeout=60)
+    sections = json.loads(compared.stdout)["sections"]
+    for name in ("dom", "accessibility", "resources"):
+        assert sections[name]["relation"] == "same", name
