@@ -13,7 +13,7 @@ def test_browser_install_and_config_parity() -> None:
     assert engines <= set(re.findall(r"name: '(chromium|firefox|webkit)'", config))
     jobs = yaml.load(workflow, Loader=yaml.BaseLoader)["jobs"]
     installs = {
-        name: re.findall(r"playwright install --with-deps ([^\n]+)",
+        name: re.findall(r"playwright install(?: --with-deps)? ([^\n]+)",
                          "\n".join(step.get("run", "") for step in job.get("steps", [])))
         for name, job in jobs.items()
     }
