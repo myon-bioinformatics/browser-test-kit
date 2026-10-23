@@ -12,9 +12,9 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import page_inspect  # noqa: E402
+import btk  # noqa: E402
 
-SCRIPT = ROOT / "scripts" / "page_inspect.py"
+SCRIPT = ROOT / "scripts" / "btk.py"
 
 SETTLES = """<!doctype html><meta charset="utf-8"><title>settles</title><p id="p">0</p>
 <script>
@@ -33,18 +33,18 @@ NEVER = """<!doctype html><meta charset="utf-8"><title>never</title><p id="p">0<
 def test_redaction_removes_keys_tokens_and_bearer_values():
     text = ("nav failed https://h/x?token=abcd1234efgh&a=1 Bearer abcdefghijkl "
             "sk-abcdefghij1234 AIza" + "x" * 32)
-    cleaned = page_inspect.redact_text(text)
+    cleaned = btk.redact_text(text)
     assert "abcd1234efgh" not in cleaned and "abcdefghijkl" not in cleaned
     assert "sk-abcdef[redacted]" in cleaned and "AIza[redacted]" in cleaned
     assert "a=1" in cleaned  # non-secret query parameters are kept
-    envelope = page_inspect.error_envelope("act", page_inspect.InspectError(
+    envelope = btk.error_envelope("act", btk.InspectError(
         "bad https://h/?apiKey=zzzzzzzz", "retry with Bearer abcdefghijk"))
     assert "zzzzzzzz" not in json.dumps(envelope) and "abcdefghijk" not in json.dumps(envelope)
 
 
 def test_settle_needs_no_locator_and_is_declared_as_an_action(tmp_path):
-    assert "settle" in page_inspect.ACT_ACTIONS
-    assert page_inspect._parse_step("settle - -", 1)["action"] == "settle"
+    assert "settle" in btk.ACT_ACTIONS
+    assert btk._parse_step("settle - -", 1)["action"] == "settle"
 
 
 def serve(directory: Path):

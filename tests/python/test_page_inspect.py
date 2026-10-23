@@ -8,10 +8,10 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-spec = importlib.util.spec_from_file_location("page_inspect", ROOT / "scripts" / "page_inspect.py")
-page_inspect = importlib.util.module_from_spec(spec)
+spec = importlib.util.spec_from_file_location("btk", ROOT / "scripts" / "btk.py")
+btk = importlib.util.module_from_spec(spec)
 assert spec.loader
-spec.loader.exec_module(page_inspect)
+spec.loader.exec_module(btk)
 
 
 def element(name, **extra):
@@ -28,7 +28,7 @@ def element(name, **extra):
 def snapshot_of(*items, total=None):
     raw = {"title": "Fixture", "child_frames": 0, "total": total if total is not None else len(items),
            "truncated": False, "elements": list(items)}
-    return page_inspect.assemble_observe(
+    return btk.assemble_observe(
         raw, environment={"os": "Linux", "browser": "chromium", "version": "0", "channel": None,
                           "headless": True, "profile": "desktop", "viewport": {"width": 1280, "height": 800}},
         url="http://127.0.0.1:9/fixture", start=0, limit=50,
@@ -38,14 +38,14 @@ def snapshot_of(*items, total=None):
 
 
 def test_similarity_is_the_shorter_string_ratio():
-    assert page_inspect.lcs_length("save drft", "save draft") == 7
-    assert page_inspect.lcs_length("", "abc") == 0
-    assert page_inspect.lcs_length("abc", "xyz") == 0
-    assert page_inspect.similarity("Save", "save draft") == 1
-    assert page_inspect.similarity("save drft", "save draft") == page_inspect.round6(7 / 9)
-    assert page_inspect.similarity("", "save") == 0
-    assert page_inspect.lcs_length("a\U0001f600b", "a\U0001f600b") == 4
-    assert page_inspect.similarity("\U0001f600", "x\U0001f600y") == 1
+    assert btk.lcs_length("save drft", "save draft") == 7
+    assert btk.lcs_length("", "abc") == 0
+    assert btk.lcs_length("abc", "xyz") == 0
+    assert btk.similarity("Save", "save draft") == 1
+    assert btk.similarity("save drft", "save draft") == btk.round6(7 / 9)
+    assert btk.similarity("", "save") == 0
+    assert btk.lcs_length("a\U0001f600b", "a\U0001f600b") == 4
+    assert btk.similarity("\U0001f600", "x\U0001f600y") == 1
 
 
 def test_addresses_prefer_stable_ids_and_number_duplicate_roles():
@@ -70,16 +70,16 @@ def test_locate_pages_ranks_and_refuses_a_shared_top_score():
         element("Saved items", role="link", tag="a"),
         element("Search", role="searchbox", tag="input", id="q", id_unique=True, css="#q", css_unique=True),
     )["elements"]
-    unique = page_inspect.locate(elements, query="Save draft", unique=True)
+    unique = btk.locate(elements, query="Save draft", unique=True)
     assert unique["ok"] is True and unique["items"][0]["address"] == "id:save-draft"
-    shared = page_inspect.locate(elements, query="Save", unique=True)
+    shared = btk.locate(elements, query="Save", unique=True)
     assert shared["ok"] is False and shared["error"].startswith("more than one")
     assert {item["name"] for item in shared["suggestions"]} == {"Save draft", "Saved items"}
-    missed = page_inspect.locate(elements, query="Save drft")
+    missed = btk.locate(elements, query="Save drft")
     assert missed["ok"] is False and missed["suggestions"][0]["name"] == "Save draft"
-    page = page_inspect.locate(elements, query="", start=1, limit=1)
+    page = btk.locate(elements, query="", start=1, limit=1)
     assert page["pagination"] == {"start": 1, "limit": 1, "returned": 1, "total": 3, "next_start": 2}
-    counted = page_inspect.count_elements(elements, role="button")
+    counted = btk.count_elements(elements, role="button")
     assert counted["total"] == 1 and counted["by_role"] == {"button": 1}
 
 
@@ -91,29 +91,29 @@ def test_describe_accepts_common_target_forms_and_rejects_memory_addresses():
     )["elements"]
     for target in ("id:save-draft", "#save-draft", "save-draft", 'role=button[name="Save draft"]',
                    'getByRole("button", { name: "Save draft" })', 'button "Save draft"', "h:0"):
-        found = page_inspect.describe_element(elements, target)
+        found = btk.describe_element(elements, target)
         assert found["ok"] is True and found["item"]["id"] == "save-draft", target
-    second = page_inspect.describe_element(elements, "role:button/Cancel#1")
+    second = btk.describe_element(elements, "role:button/Cancel#1")
     assert second["ok"] is True and second["item"]["handle"] == "h:2"
-    ambiguous = page_inspect.describe_element(elements, 'button "Cancel"')
+    ambiguous = btk.describe_element(elements, 'button "Cancel"')
     assert ambiguous["ok"] is False and len(ambiguous["suggestions"]) == 2
-    with pytest.raises(page_inspect.InspectError) as raised:
-        page_inspect.describe_element(elements, "0x401000")
+    with pytest.raises(btk.InspectError) as raised:
+        btk.describe_element(elements, "0x401000")
     assert "memory addresses" in raised.value.error
-    missing = page_inspect.describe_element(elements, "zzzz")
+    missing = btk.describe_element(elements, "zzzz")
     assert missing["ok"] is False and missing["suggestions"] == []
     spaced = snapshot_of(element("Save draft"), element("Go \U0001f600", role="link", tag="a"))["elements"]
     assert spaced[0]["address"] == "role:button/Save%20draft#0"
-    emoji = page_inspect.describe_element(spaced, spaced[1]["address"])
+    emoji = btk.describe_element(spaced, spaced[1]["address"])
     assert emoji["ok"] is True and emoji["item"]["handle"] == "h:1"
-    paged = page_inspect.normalize_elements(
+    paged = btk.normalize_elements(
         {"elements": [element("One"), element("Two"), element("Three")], "total": 3}, start=1, limit=1,
     )
     assert paged["truncated"] is True and paged["elements"][0]["handle"] == "h:1"
 
 
 def test_option_names_are_not_abbreviated_and_do_not_swallow_the_next_flag():
-    parser = page_inspect.build_parser()
+    parser = btk.build_parser()
     args = parser.parse_args(["observe", "http://127.0.0.1:9/page", "--browser", "firefox", "--json", "--limit", "2"])
     assert args.browser == "firefox" and args.json is True and args.limit == 2
     attached = parser.parse_args(["observe", "http://127.0.0.1:9/page", "--browser=webkit"])
@@ -125,11 +125,11 @@ def test_option_names_are_not_abbreviated_and_do_not_swallow_the_next_flag():
 
 def test_context_options_drop_is_mobile_only_for_firefox():
     devices = {"iPhone 13": {"is_mobile": True, "has_touch": True, "viewport": {"width": 390, "height": 844}, "default_browser_type": "webkit"}}
-    firefox = page_inspect.context_options(devices, "firefox", "iphone", False)
-    webkit = page_inspect.context_options(devices, "webkit", "iphone", False)
+    firefox = btk.context_options(devices, "firefox", "iphone", False)
+    webkit = btk.context_options(devices, "webkit", "iphone", False)
     assert "is_mobile" not in firefox and firefox["has_touch"] is True
     assert webkit["is_mobile"] is True and "default_browser_type" not in webkit
-    desktop = page_inspect.context_options(devices, "chromium", "desktop", False)
+    desktop = btk.context_options(devices, "chromium", "desktop", False)
     assert desktop["viewport"] == {"width": 1280, "height": 800}
 
 
@@ -139,8 +139,8 @@ def test_cli_offline_commands_match_the_library(tmp_path: Path):
         element("Saved items", role="link", tag="a"),
     )
     path = tmp_path / "survey.json"
-    path.write_text(page_inspect.dumps(survey), encoding="utf-8")
-    script = ROOT / "scripts" / "page_inspect.py"
+    path.write_text(btk.dumps(survey), encoding="utf-8")
+    script = ROOT / "scripts" / "btk.py"
 
     def run(args):
         return subprocess.run([sys.executable, "-S", str(script), *args], cwd=tmp_path, capture_output=True, text=True, timeout=30)
@@ -164,9 +164,9 @@ def test_cli_offline_commands_match_the_library(tmp_path: Path):
 
 
 def test_loopback_policy_and_evidence_do_not_treat_missing_as_same():
-    assert page_inspect.loopback_target("http://127.0.0.1:9/a") == "http://127.0.0.1:9/a"
-    assert page_inspect.loopback_target("http://[::1]:80/a") == "http://[::1]:80/a"
-    assert page_inspect.loopback_target("http://127.0.0.1:8081/") == "http://127.0.0.1:8081/"
+    assert btk.loopback_target("http://127.0.0.1:9/a") == "http://127.0.0.1:9/a"
+    assert btk.loopback_target("http://[::1]:80/a") == "http://[::1]:80/a"
+    assert btk.loopback_target("http://127.0.0.1:8081/") == "http://127.0.0.1:8081/"
     for url in (
         "http://localhost:9/",
         "http://127.0.0.1/a",
@@ -175,24 +175,24 @@ def test_loopback_policy_and_evidence_do_not_treat_missing_as_same():
         "https://example.test:9/",
         "http://user:secret" + chr(64) + "127.0.0.1:9/",
     ):
-        with pytest.raises(page_inspect.InspectError):
-            page_inspect.loopback_target(url)
+        with pytest.raises(btk.InspectError):
+            btk.loopback_target(url)
     missing = {"coverage": "not_requested"}
-    assert page_inspect.evidence_relation(missing, missing) == "unknown"
+    assert btk.evidence_relation(missing, missing) == "unknown"
     same = {"coverage": "complete", "digest": "abc"}
-    assert page_inspect.evidence_relation(same, dict(same)) == "same"
-    assert page_inspect.evidence_relation(same, {"coverage": "complete", "digest": "def"}) == "different"
+    assert btk.evidence_relation(same, dict(same)) == "same"
+    assert btk.evidence_relation(same, {"coverage": "complete", "digest": "def"}) == "different"
     limited = {"coverage": "attach_limited", "digest": "abc"}
-    assert page_inspect.evidence_relation(limited, dict(limited)) == "unknown"
-    finger = page_inspect.storage_fingerprint("secret-value")
+    assert btk.evidence_relation(limited, dict(limited)) == "unknown"
+    finger = btk.storage_fingerprint("secret-value")
     assert finger["fingerprint_version"] == 2 and "secret-value" not in json.dumps(finger)
     # observe never calls page script. The only direct page evaluation is the settle cleanup in
     # _wait_quiet, which act and --step run after the page has been driven, never during observe.
     import inspect
-    source = (ROOT / "scripts" / "page_inspect.py").read_text(encoding="utf-8")
+    source = (ROOT / "scripts" / "btk.py").read_text(encoding="utf-8")
     assert source.count(".evaluate(") == 1
-    assert ".evaluate(" in inspect.getsource(page_inspect._wait_quiet)
-    assert ".evaluate(" not in inspect.getsource(page_inspect.observe_page)
+    assert ".evaluate(" in inspect.getsource(btk._wait_quiet)
+    assert ".evaluate(" not in inspect.getsource(btk.observe_page)
 
 
 def test_twins_agree_on_score_loopback_fingerprint_and_evidence():
@@ -216,21 +216,21 @@ def test_twins_agree_on_score_loopback_fingerprint_and_evidence():
     for python_name, node_name, cases in pairs:
         done = subprocess.run(
             [sys.executable, "-S", str(ROOT / "scripts" / "twin_parity.py"),
-             f"scripts/page_inspect.py:{python_name}", f"scripts/page_inspect.cjs:{node_name}"],
+             f"scripts/btk.py:{python_name}", f"scripts/page_inspect.cjs:{node_name}"],
             input=json.dumps(cases), text=True, capture_output=True, cwd=ROOT, timeout=30,
         )
         assert done.returncode == 0, done.stdout + done.stderr
 
 
 def test_act_rejects_ordinals_before_launch():
-    with pytest.raises(page_inspect.InspectError) as raised:
-        page_inspect.act_page(
+    with pytest.raises(btk.InspectError) as raised:
+        btk.act_page(
             url="http://127.0.0.1:9/", browser_name="chromium", profile="desktop", headed=False,
             channel=None, action="click", locator="h:0", text=None, timeout_ms=500,
         )
     assert "ordinal" in raised.value.error
-    with pytest.raises(page_inspect.InspectError):
-        page_inspect.act_page(
+    with pytest.raises(btk.InspectError):
+        btk.act_page(
             url="http://127.0.0.1:9/", browser_name="chromium", profile="desktop", headed=False,
             channel=None, action="dance", locator="id:save", text=None, timeout_ms=500,
         )
@@ -241,14 +241,14 @@ def test_request_boundary_rejects_redirects_and_external_resources():
     rejected = "http://localhost:9/"
     route = Mock()
     route.request.url = rejected
-    page_inspect.restrict_request(route)
+    btk.restrict_request(route)
     route.abort.assert_called_once_with("blockedbyclient")
     route.fetch.assert_not_called()
     for status in (200, 302):
         route = Mock()
         route.request.url = "http://127.0.0.1:9/"
         route.fetch.return_value.status = status
-        page_inspect.restrict_request(route)
+        btk.restrict_request(route)
         route.fetch.assert_called_once_with(max_redirects=0)
         if status == 302:
             route.abort.assert_called_once_with("blockedbyclient")

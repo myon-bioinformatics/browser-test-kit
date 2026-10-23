@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = ROOT / "scripts" / "page_inspect.py"
+SCRIPT = ROOT / "scripts" / "btk.py"
 
 FIRST = """<!doctype html><meta charset="utf-8"><title>first</title>
 <a id="next" href="second.html">Next</a>

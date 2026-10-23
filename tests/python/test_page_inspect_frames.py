@@ -12,9 +12,9 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import page_inspect  # noqa: E402
+import btk  # noqa: E402
 
-SCRIPT = ROOT / "scripts" / "page_inspect.py"
+SCRIPT = ROOT / "scripts" / "btk.py"
 
 PAGE = """<!doctype html><meta charset="utf-8"><title>frames fixture</title>
 <iframe name="inner" srcdoc="&lt;button&gt;inside&lt;/button&gt;"></iframe>
@@ -31,7 +31,7 @@ def test_frame_rows_are_document_order_without_userinfo_or_ids():
          "childFrames": [{"frame": {"name": "deep", "url": "about:srcdoc"}}]},
         {"frame": {"name": "b", "url": "about:blank"}},
     ]}
-    rows, truncated = page_inspect.frame_rows(tree)
+    rows, truncated = btk.frame_rows(tree)
     assert truncated is False
     assert [row["name"] for row in rows] == ["a", "deep", "b"]
     assert rows[0] == {"name": "a", "url": "http://127.0.0.1/a?x=1", "origin": "http://127.0.0.1"}
@@ -40,7 +40,7 @@ def test_frame_rows_are_document_order_without_userinfo_or_ids():
 
 def test_frame_rows_report_truncation_instead_of_silently_dropping():
     tree = {"frame": {}, "childFrames": [{"frame": {"name": str(i)}} for i in range(4)]}
-    rows, truncated = page_inspect.frame_rows(tree, limit=2)
+    rows, truncated = btk.frame_rows(tree, limit=2)
     assert len(rows) == 2 and truncated is True
 
 

@@ -12,9 +12,9 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import page_inspect  # noqa: E402
+import btk  # noqa: E402
 
-SCRIPT = ROOT / "scripts" / "page_inspect.py"
+SCRIPT = ROOT / "scripts" / "btk.py"
 
 PAGE = """<!doctype html><meta charset="utf-8"><title>events fixture</title>
 <img src="http://example.invalid/blocked.png" alt="">
@@ -31,7 +31,7 @@ def test_user_agent_roots_are_reported_apart_from_author_roots():
         {"nodeType": 1, "shadowRoots": [{"shadowRootType": "user-agent", "children": []}]},
         {"nodeType": 1, "shadowRoots": [{"shadowRootType": "open", "children": []}]},
     ]}
-    counts = page_inspect.count_shadow_roots(tree)
+    counts = btk.count_shadow_roots(tree)
     assert counts["user_agent"] == 1
     assert (counts["open"], counts["closed"], counts["count"]) == (1, 0, 1)
 

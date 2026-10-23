@@ -87,7 +87,7 @@ def test_a_named_part_from_the_lock_file_resolves_source_integrity_and_member(tm
         "node": {"source": str(archive), "integrity": sri(data), "member": "package/bin/node"},
         "chromium": {"source": "environment", "integrity": None, "member": None},
     }}), encoding="utf-8")
-    args = btk.build_parser().parse_args([
+    args = btk.fetch_parser().parse_args([
         "--lock", str(lock), "--part", "node", "--dest", str(tmp_path / "out")])
     source, integrity, members = btk.resolve(args)
     result = btk.fetch_members(source, integrity, members, str(tmp_path / "out"))

@@ -12,7 +12,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import page_inspect  # noqa: E402
+import btk  # noqa: E402
 
 PAGE = """<!doctype html><meta charset="utf-8"><title>shadow fixture</title>
 <div id="open-host"></div><div id="closed-host"></div><div id="nested-host"></div>
@@ -34,7 +34,7 @@ def test_counts_open_closed_and_nested_roots_without_frames():
             {"nodeType": 1, "shadowRoots": [{"shadowRootType": "closed", "children": []}]}]}]},
         {"nodeType": 1, "contentDocument": {"nodeType": 9, "shadowRoots": [{"shadowRootType": "open"}]}},
     ]}
-    counts = page_inspect.count_shadow_roots(tree)
+    counts = btk.count_shadow_roots(tree)
     assert counts == {"open": 1, "closed": 1, "count": 2, "user_agent": 0, "truncated": False}
 
 
@@ -42,7 +42,7 @@ def test_truncation_is_reported_not_silent():
     deep = {"nodeType": 1, "children": []}
     for _ in range(5):
         deep = {"nodeType": 1, "children": [deep]}
-    counts = page_inspect.count_shadow_roots(deep, limit=3)
+    counts = btk.count_shadow_roots(deep, limit=3)
     assert counts["truncated"] is True
 
 
@@ -54,7 +54,7 @@ def test_observe_reports_shadow_root_section(tmp_path):
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
         url = f"http://127.0.0.1:{server.server_port}/index.html"
-        run = subprocess.run([sys.executable, str(ROOT / "scripts" / "page_inspect.py"), "observe", url, "--json"],
+        run = subprocess.run([sys.executable, str(ROOT / "scripts" / "btk.py"), "observe", url, "--json"],
                              capture_output=True, text=True, timeout=180)
     finally:
         server.shutdown()

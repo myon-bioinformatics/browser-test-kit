@@ -116,7 +116,7 @@ function explicitPort(target) {
 function helpText() {
   return `page_inspect.cjs — observe a loopback page, rank locators, and run one action.
 
-Commands delegate to page_inspect.py through vendor/py_launch.cjs (Node 24+).
+Commands delegate to btk.py through vendor/py_launch.cjs (Node 24+).
 offline: node scripts/page_inspect.cjs locate SNAPSHOT --query TEXT --json
 live:    node scripts/page_inspect.cjs observe http://127.0.0.1:PORT/page --json
 `;
@@ -125,7 +125,7 @@ live:    node scripts/page_inspect.cjs observe http://127.0.0.1:PORT/page --json
 function delegate(argv) {
   const launch = require(path.join(__dirname, "..", "vendor", "py_launch.cjs"));
   try {
-    const result = launch.run(path.join(__dirname, "page_inspect.py"), argv, {
+    const result = launch.run(path.join(__dirname, "btk.py"), argv, {
       timeout: 120000,
       maxBuffer: 8 * 1024 * 1024,
     });
