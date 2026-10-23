@@ -49,3 +49,38 @@ Service workers are blocked and redirects are aborted. Those are bounds on the s
 ## Deferred on issue 117
 
 Child frames and shadow roots as their own address spaces (observe counts frames and does not read shadow attributes). A new snapshot after navigation in one session. macOS, Windows, Linux, and Android Chrome or WebView. Branded channels as a matrix. A Stagehand caller. A headed lane in CI. An agent transport after these envelopes stay stable. Screenshot comparison and full scenario diffs.
+
+
+## Browser environments and fault scenarios (parallel increment)
+
+\`page_inspect.py scenario TARGET --case NAME\` reuses \`assemble_observe\`,
+\`_section\`, \`evidence_relation\` and the pre-existing Node launcher.
+This is **active Playwright automation** with a fixed vocabulary, not
+the passive CDP \`observe\` command and not an independent evidence schema.
+Scenarios: \`display\`, \`shortcut\` (\`ControlOrMeta+A\`),
+\`offline\` (BrowserContext only, **not host OS offline**),
+\`http-error\` (503 on fixed fixture endpoint), \`latency\` (bounded
+0–2000ms), \`permission\` (notifications/geolocation grant or reset),
+\`upload\` (fixed 5-byte in-memory payload), and \`download\`
+(attachment metadata only; no file body saved or read).
+The fixture is \`fixtures/page_inspect_scenarios.html\`, served at
+an HTTP loopback address. No external URLs or redirects are followed.
+
+\`environment\` separates actual host OS and browser version/channel
+from browser context settings and profile emulation. Browser device emulation
+never proves actual Android/iOS behavior. Real OS-specific shortcuts
+require Windows/macOS/Linux runs. Unsupported permissions are marked
+\`unavailable\`; clearing permissions is *not* a simulated rejection.
+Camera/microphone and host-native dialogs remain out of scope pending
+safe fake-device verification. Chrome/Edge are optional installed channels.
+
+Scenario evidence uses existing \`btk-page-observe/1\` and sections
+\`scenario\`, \`environment_settings\` and \`network\`; DOM/AX and storage
+remain \`not_requested\`, not falsely measured. Network listener is attached
+before navigation; only fixed fixture endpoints' paths and HTTP error status
+or request-failed category are stored. Events are capped at 30 with
+\`truncated\`, so the existing \`evidence_relation\` returns \`unknown\`
+rather than fabricating equality. URL query/fragment, arbitrary request paths,
+console text, file contents, passwords and browser exception messages are
+not emitted. #122's \`compare\` can compare these sections once merged,
+without adding a second comparison protocol.

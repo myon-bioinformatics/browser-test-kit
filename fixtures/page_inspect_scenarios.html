@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>page_inspect bounded scenarios</title>
+<input id="scenario-shortcut" value="keyboard probe" aria-label="Shortcut input">
+<div id="scenario-display"></div>
+<button id="scenario-fetch">Fetch local response</button>
+<div id="scenario-result"></div>
+<button id="scenario-permission">Check permission</button>
+<div id="scenario-permission-result"></div>
+<div id="scenario-geolocation-result"></div>
+<input type="file" id="scenario-upload" aria-label="Upload fixture">
+<div id="scenario-upload-result"></div>
+<a id="scenario-download" href="/scenario.txt" download="scenario.txt">Download fixture</a>
+<script>
+const display = document.querySelector("#scenario-display");
+display.dataset.scheme = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+display.dataset.motion = matchMedia("(prefers-reduced-motion: reduce)").matches ? "reduce" : "no-preference";
+display.dataset.locale = navigator.language;
+display.dataset.timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+display.dataset.dpr = String(devicePixelRatio);
+document.querySelector("#scenario-fetch").addEventListener("click", async () => {
+  const output = document.querySelector("#scenario-result");
+  output.dataset.state = "pending";
+  try {
+    const response = await fetch("/api/probe");
+    output.dataset.state = response.ok ? "ok" : "error";
+  } catch (_) {
+    output.dataset.state = "error";
+  }
+});
+document.querySelector("#scenario-permission").addEventListener("click", async () => {
+  const output = document.querySelector("#scenario-permission-result");
+  output.dataset.state = typeof Notification !== "undefined" ? Notification.permission : "unsupported";
+  const geo = document.querySelector("#scenario-geolocation-result");
+  if (!navigator.geolocation) {
+    geo.dataset.state = "unsupported";
+  } else {
+    navigator.geolocation.getCurrentPosition(
+      () => { geo.dataset.state = "granted"; },
+      () => { geo.dataset.state = "denied"; },
+      {timeout: 1000}
+    );
+  }
+});
+document.querySelector("#scenario-upload").addEventListener("change", event => {
+  document.querySelector("#scenario-upload-result").dataset.state =
+    event.target.files.length === 1 && event.target.files[0].size === 5 ? "accepted" : "rejected";
+});
+</script>
+</html>

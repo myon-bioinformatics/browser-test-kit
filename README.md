@@ -262,6 +262,38 @@ python -S scripts/twin_parity.py scripts/interaction.py:press_point scripts/inte
 - The first run found two real drifts, now fixed and recorded: `TWIN_PARSER_DRIFT` (27 of 250 URLs) and `ROUNDING_TIE_DRIFT` (0.562 vs 0.563).
 - Library: `node_calls(module, export, cases)`, `python_calls(fn, cases)`, `mismatches(a, b)`. Exit codes: 0 agree; 1 mismatch; 2 input error.
 
+
+
+#### Platform settings and fault scenarios
+
+The active \`scenario\` command tests environment settings, cross-OS shortcuts,
+browser-context offline, local HTTP 503 and latency, permissions, in-memory upload,
+and fixture download. It runs through the existing Python CLI or the Node
+\`page_inspect.cjs\` → \`py_launch.cjs\` bridge. It emits the existing
+\`btk-page-observe/1\` sections with complete/truncated/unavailable coverage.
+
+\`\`\`bash
+python scripts/page_inspect.py scenario http://127.0.0.1:8765/scenarios --case display --viewport 390x844 --color-scheme dark --reduced-motion reduce --locale ja-JP --timezone Asia/Tokyo --device-scale-factor 2 --json
+python scripts/page_inspect.py scenario http://127.0.0.1:8765/scenarios --case shortcut --json
+python scripts/page_inspect.py scenario http://127.0.0.1:8765/scenarios --case offline --json
+python scripts/page_inspect.py scenario http://127.0.0.1:8765/scenarios --case http-error --json
+python scripts/page_inspect.py scenario http://127.0.0.1:8765/scenarios --case latency --latency-ms 150 --json
+python scripts/page_inspect.py scenario http://127.0.0.1:8765/scenarios --case permission --permission geolocation --permission-state grant --json
+python scripts/page_inspect.py scenario http://127.0.0.1:8765/scenarios --case upload --json
+python scripts/page_inspect.py scenario http://127.0.0.1:8765/scenarios --case download --json
+node scripts/page_inspect.cjs scenario http://127.0.0.1:8765/scenarios --case display --json
+\`\`\`
+
+Serve \`fixtures/page_inspect_scenarios.html\` on a local HTTP server; it must serve
+\`/scenario.txt\` as a download. Use \`--channel chrome|msedge\` only for
+installed Chromium channels. OS fields describe the **actual host**; device
+profiles and appearance settings are **browser emulation**, not an actual phone
+or host OS setting. Permission \`clear\` returns to browser defaults, not forced
+denial. Network entries have a limit of 30 and never include credentials,
+query strings, bodies, or raw browser errors. Upload is fixed in-memory
+and download contents are never read or saved by this tool. Detailed limits:
+[REA observation](docs/rea-observation.md).
+
 ### Page observe, locate, and act (`scripts/page_inspect.py`, `scripts/page_inspect.cjs`)
 
 Separate commands for a loopback page: passive observe, offline locate, and one declared action. The design follows REA's browser observation notes (morluto/rea, MIT), not that project's server. See [REA observation](docs/rea-observation.md). Later phases stay on [issue 117](https://github.com/myon-bioinformatics/browser-test-kit/issues/117).

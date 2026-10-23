@@ -1,0 +1,94 @@
+"""Real Chromium CLI tests with a private loopback HTTP server."""
+import json
+import subprocess
+import sys
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+import pytest
+
+pytestmark = pytest.mark.browser
+ROOT = Path(__file__).resolve().parents[2]
+FIXTURE = (ROOT / "fixtures/page_inspect_scenarios.html").read_bytes()
+
+
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path.startswith("/scenario.txt"):
+            body, mime = b"fixture", "text/plain"
+            self.send_response(200)
+            self.send_header("Content-Disposition", 'attachment; filename="scenario.txt"')
+        elif self.path.startswith("/api/probe"):
+            body, mime = b"ok", "text/plain"
+            self.send_response(200)
+        else:
+            body, mime = FIXTURE, "text/html; charset=utf-8"
+            self.send_response(200)
+        self.send_header("Content-Type", mime)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, fmt, *args):
+        return
+
+
+@pytest.fixture(scope="module")
+def url():
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield "http://127.0.0.1:%d/scenarios?token=redact-me" % server.server_port
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def run(url, *flags):
+    proc = subprocess.run([sys.executable, "scripts/page_inspect.py", "scenario", url,
+                           "--browser", "chromium", *flags, "--json"],
+                          cwd=ROOT, capture_output=True, text=True, timeout=90)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "redact-me" not in proc.stdout
+    return json.loads(proc.stdout)
+
+
+@pytest.mark.parametrize("case,key,value", [
+    ("shortcut", "select_all_replaced", True),
+    ("offline", "fetch_result", "error"),
+    ("http-error", "fetch_result", "error"),
+    ("latency", "fetch_result", "ok"),
+    ("upload", "upload_accepted", True),
+    ("download", "completed", True),
+])
+def test_real_chromium_scenarios(url, case, key, value):
+    evidence = run(url, "--case", case)
+    assert evidence["schema"] == "btk-page-observe/1"
+    assert evidence["sections"]["scenario"][key] == value
+    assert evidence["sections"]["network"]["coverage"] == "complete_within_window"
+    if case == "http-error":
+        assert {"kind": "http_error", "path": "/api/probe", "status": 503} in evidence["sections"]["network"]["items"]
+    if case == "offline":
+        assert any(item["kind"] == "request_failed" for item in evidence["sections"]["network"]["items"])
+
+
+def test_display_and_permissions(url):
+    evidence = run(url, "--case", "display", "--viewport", "390x844",
+                   "--color-scheme", "dark", "--reduced-motion", "reduce",
+                   "--locale", "ja-JP", "--timezone", "Asia/Tokyo",
+                   "--device-scale-factor", "2")
+    observed = evidence["sections"]["scenario"]["computed"]
+    assert observed["color_scheme"] == "dark"
+    assert observed["reduced_motion"] == "reduce"
+    assert observed["locale"] == "ja-JP"
+    assert observed["timezone"] == "Asia/Tokyo"
+    assert float(observed["dpr"]) == 2
+    assert evidence["environment"]["viewport"] == {"width": 390, "height": 844}
+    assert evidence["environment"]["device_claim"] == "emulation_only"
+    granted = run(url, "--case", "permission", "--permission", "notifications", "--permission-state", "grant")
+    assert granted["sections"]["scenario"]["reported_state"] == "granted"
+    geo = run(url, "--case", "permission", "--permission", "geolocation", "--permission-state", "grant")
+    assert geo["sections"]["scenario"]["reported_state"] == "granted"
+    assert "latitude" not in json.dumps(geo)
