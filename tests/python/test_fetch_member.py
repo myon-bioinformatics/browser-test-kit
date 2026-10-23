@@ -77,3 +77,22 @@ def test_integrity_formats_are_parsed_or_refused():
     assert fetch_member.parse_integrity("ab" * 32)[0] == "sha256"
     with pytest.raises(fetch_member.FetchError):
         fetch_member.parse_integrity("md5-abc")
+
+
+def test_a_named_part_from_the_lock_file_resolves_source_integrity_and_member(tmp_path):
+    archive = tmp_path / "node.tgz"
+    data = make_archive(archive, {"package/bin/node": (b"#!/bin/sh\necho ok\n", 0o755)})
+    lock = tmp_path / "parts.lock.json"
+    lock.write_text(__import__("json").dumps({"schema": "btk-parts-lock/1", "parts": {
+        "node": {"source": str(archive), "integrity": sri(data), "member": "package/bin/node"},
+        "chromium": {"source": "environment", "integrity": None, "member": None},
+    }}), encoding="utf-8")
+    args = fetch_member.build_parser().parse_args([
+        "--lock", str(lock), "--part", "node", "--dest", str(tmp_path / "out")])
+    source, integrity, members = fetch_member.resolve(args)
+    result = fetch_member.fetch_members(source, integrity, members, str(tmp_path / "out"))
+    assert result["ok"] and (tmp_path / "out" / "package" / "bin" / "node").exists()
+    with pytest.raises(fetch_member.FetchError, match="cannot be fetched"):
+        fetch_member.load_part(str(lock), "chromium")
+    with pytest.raises(fetch_member.FetchError, match="no part named"):
+        fetch_member.load_part(str(lock), "firefox")

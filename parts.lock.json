@@ -1,0 +1,30 @@
+{
+  "schema": "btk-parts-lock/1",
+  "purpose": "the parts a Python and Node run needs; fetch one part at a time with scripts/fetch_member.py --lock",
+  "parts": {
+    "node": {
+      "role": "Node runtime for vendor/py_launch.cjs, which requires Node 24 or later",
+      "npm_package": "node-linux-x64",
+      "version": "24.22.1",
+      "source": "https://registry.npmjs.org/node-linux-x64/-/node-linux-x64-24.22.1.tgz",
+      "integrity": "sha512-ogMoFZRQLCX7VpzQAtfs7q0DVFa7D79LKhmttHZNGJrz0Yp5/LtU0MISM7gvThSo6AbVelac9uVu9Jfm1464ow==",
+      "member": "package/bin/node",
+      "bundled_alternative": "playwright 1.56.0 driver/node is Node 22.20, too old for py_launch"
+    },
+    "python_playwright": {
+      "role": "observe and act; Python runs under py_launch with no Node packages",
+      "pypi_package": "playwright",
+      "version": "1.56.0",
+      "source": "pypi",
+      "integrity": null,
+      "note": "installed with pip or uv; the integrity is not recorded here"
+    },
+    "chromium": {
+      "role": "browser for observe and act in Chromium",
+      "version": "141.0.7390.37",
+      "source": "environment: PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers (chromium-1194)",
+      "integrity": null,
+      "note": "the Playwright CDN is not reachable from this environment, so this part cannot be fetched here"
+    }
+  }
+}

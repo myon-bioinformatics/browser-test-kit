@@ -96,19 +96,49 @@ def fetch_members(source: str, integrity: str, members: list[str], dest: str) ->
     return {"ok": True, "algorithm": algorithm, "files": written}
 
 
+def load_part(lock_path: str, name: str) -> dict:
+    """One part from parts.lock.json: its source, integrity, and the archive member it needs."""
+    try:
+        lock = json.loads(Path(lock_path).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise FetchError(f"cannot read lock file: {lock_path}") from exc
+    if lock.get("schema") != "btk-parts-lock/1":
+        raise FetchError("lock file schema is not btk-parts-lock/1")
+    part = (lock.get("parts") or {}).get(name)
+    if not isinstance(part, dict):
+        raise FetchError(f"no part named {name} in the lock file")
+    if not part.get("integrity") or not part.get("source") or not part.get("member"):
+        raise FetchError(f"part {name} cannot be fetched: it has no source, integrity, or member")
+    return part
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="fetch_member.py", description=__doc__.split("\n\n")[0])
-    parser.add_argument("source", help="https URL on an allowed host, or a local archive path")
-    parser.add_argument("--integrity", required=True, help="sha512-BASE64 or sha256-BASE64 from the registry")
-    parser.add_argument("--member", action="append", default=[], required=True, help="path inside the archive (repeatable)")
+    parser.add_argument("source", nargs="?", help="https URL on an allowed host, or a local archive path")
+    parser.add_argument("--integrity", help="sha512-BASE64 or sha256-BASE64 from the registry")
+    parser.add_argument("--member", action="append", default=[], help="path inside the archive (repeatable)")
+    parser.add_argument("--lock", help="parts.lock.json; use with --part instead of source, integrity, and member")
+    parser.add_argument("--part", help="part name in the lock file, for example node")
     parser.add_argument("--dest", required=True, help="directory to extract into")
     return parser
+
+
+def resolve(args) -> tuple[str, str, list[str]]:
+    if args.lock or args.part:
+        if not (args.lock and args.part):
+            raise FetchError("--lock and --part go together")
+        part = load_part(args.lock, args.part)
+        return part["source"], part["integrity"], [part["member"]]
+    if not (args.source and args.integrity and args.member):
+        raise FetchError("give source, --integrity, and --member, or use --lock with --part")
+    return args.source, args.integrity, args.member
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        payload = fetch_members(args.source, args.integrity, args.member, args.dest)
+        source, integrity, members = resolve(args)
+        payload = fetch_members(source, integrity, members, args.dest)
     except (FetchError, OSError, tarfile.TarError) as exc:
         sys.stdout.write(json.dumps({"ok": False, "error": str(exc)}) + "\n")
         return 2
