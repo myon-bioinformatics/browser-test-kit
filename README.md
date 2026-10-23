@@ -271,10 +271,14 @@ python scripts/page_inspect.py observe http://127.0.0.1:8765/page --json --out o
 python -S scripts/page_inspect.py locate observe.json --query "Save draft" --unique --json
 python scripts/page_inspect.py act http://127.0.0.1:8765/page --action click --locator id:save-draft --json
 node scripts/page_inspect.cjs locate observe.json --query "Save draft" --unique --json
+python -S scripts/page_inspect.py compare before.json after.json --json
+python scripts/page_inspect.py observe http://127.0.0.1:8765/page --out before.json --after-action click:id:next --after-out after.json
 ```
 
+- `observe --after-action SPEC --out A.json --after-out B.json` takes a passive first snapshot, runs one step (`click:LOCATOR`, `hover:LOCATOR`, `scroll:DX,DY`, or `scroll-into:LOCATOR`), then writes a second snapshot. `--after-click LOCATOR` is an alias for `click:LOCATOR`. The second file has `step` (action, target, URLs) and limits that describe whether the step could run page scripts or trigger `:hover` CSS. Network and console are cleared after the step so `compare` sees only post-step activity.
+- `compare` reads two observe files offline. Each section is `same`, `different`, or `unknown` (a missing or truncated section is never `same`), with open, closed, and total shadow-root counts and their deltas. It reports when the browser, profile, or OS differ.
 - Targets are `http://127.0.0.1:PORT/...` or `http://[::1]:PORT/...` only. Hostnames, file URLs, and missing ports are rejected.
-- `observe` on Chromium reads CDP and does not call the page. Firefox and WebKit report CDP unavailable instead of inventing a DOM. Storage is keys and SHA-256 fingerprints, never values. A missing section is not a claim that two captures match.
+- `observe` on Chromium reads CDP and does not call the page. It counts author open and closed shadow roots in a pierced DOM (`shadow_roots` section) without entering them; Chromium user-agent shadow roots are reported separately as `user_agent`. Firefox and WebKit report CDP unavailable instead of inventing a DOM. Storage is keys and SHA-256 fingerprints, never values. A missing section is not a claim that two captures match.
 - `act` is click, fill, or wait_for_timeout. It re-queries the locator and rejects `h:N`. Playwright's selector engine runs only for click and fill.
 - The Node CLI is `.cjs` and calls Python through the vendored `vendor/py_launch.cjs` launcher, which requires Node 24. Score, loopback, fingerprint, and evidence comparison are checked with `scripts/twin_parity.py`.
 - Exit codes: `0` success; `1` no match or a shared top score; `2` usage, a bad snapshot, or launch/navigate/inspect/cleanup failure. Headless is the default.

@@ -27,6 +27,8 @@ from pathlib import Path
 
 SCHEMA_INSPECT = "btk-page-inspect/1"
 SCHEMA_OBSERVE = "btk-page-observe/1"
+SCHEMA_COMPARE = "btk-page-compare/1"
+COMPARE_ENVIRONMENT_KEYS = ("os", "browser", "profile", "headless")
 COMPLETE_COVERAGE = {"complete", "complete_within_window"}
 INTERACTIVE_ROLES = {
     "button", "link", "textbox", "searchbox", "checkbox", "radio", "combobox",
@@ -666,6 +668,8 @@ def operations() -> dict:
          "limit_default": PAGE_LIMIT_DEFAULT, "limit_max": PAGE_LIMIT_MAX},
         {"name": "describe", "needs": "snapshot", "summary": "Return one control, its locators, and a few neighbor lines",
          "limit_default": CONTEXT_DEFAULT, "limit_max": CONTEXT_MAX},
+        {"name": "compare", "needs": "snapshot", "summary": "Compare two observe snapshots by section relation and counts",
+         "limit_default": None, "limit_max": None},
         {"name": "operations", "needs": "none", "summary": "List these commands",
          "limit_default": None, "limit_max": None},
     ]
@@ -676,7 +680,11 @@ def operations() -> dict:
 
 
 def context_options(devices: dict, browser_name: str, profile: str, headed: bool) -> dict:
-    """Playwright Python context kwargs. Firefox rejects is_mobile on phone descriptors."""
+    """Playwright Python context kwargs. Firefox rejects is_mobile on phone descriptors.
+
+    A future ``observe --viewport`` on the stacked follow-up PR replaces any device
+    viewport from iphone/pixel profiles when that flag is set.
+    """
     device = PROFILES[profile]
     if device:
         args = dict(devices[device])
@@ -804,7 +812,13 @@ def _unavailable_sections(reason: str) -> dict:
         "console": _section(None, "unavailable", body),
         "storage": _section(None, "not_requested"),
         "frames": _section(None, "unavailable", body),
+        "shadow_roots": _section(None, "unavailable", body),
     }
+
+
+def _content_digest(items: list) -> str:
+    canonical = json.dumps(items, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _ax_text(field) -> str:
@@ -845,6 +859,41 @@ def _walk_dom(node, found: list) -> bool:
 
 def _frame_count(node) -> int:
     return 1 + sum(_frame_count(child) for child in node.get("childFrames") or [])
+
+
+def count_shadow_roots(root: dict, *, limit: int = HARD_CAP * 10) -> dict:
+    """Count author open and closed shadow roots in a pierced DOM tree. Roots are counted, never entered.
+
+    Chromium also reports user-agent shadow roots (input, select, video controls, etc.); those are
+    counted separately and excluded from open/closed/count. Walks children and shadowRoots of the main
+    document only; child frame documents are not descended.
+    """
+    opened = closed = user_agent = visited = 0
+    truncated = False
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        visited += 1
+        if visited > limit:
+            truncated = True
+            break
+        for shadow in node.get("shadowRoots") or []:
+            kind = shadow.get("shadowRootType")
+            if kind == "closed":
+                closed += 1
+            elif kind == "open":
+                opened += 1
+            elif kind == "user-agent":
+                user_agent += 1
+            stack.append(shadow)
+        stack.extend(node.get("children") or [])
+    return {
+        "open": opened,
+        "closed": closed,
+        "count": opened + closed,
+        "user_agent": user_agent,
+        "truncated": truncated,
+    }
 
 
 def _controls_from_cdp(dom_nodes, ax_nodes, *, include_hidden: bool, role: str) -> tuple[list, dict]:
@@ -1005,17 +1054,17 @@ def _finish(playwright, browser, failure, result):
 
 def observe_page(*, url: str, browser_name: str, profile: str, headed: bool, channel: str | None,
                  include_hidden: bool, include_storage_keys: bool, include_storage_fingerprints: bool,
-                 role: str, start: int, limit: int) -> dict:
+                 role: str, start: int, limit: int, after_action: dict | None = None) -> list[dict]:
+    """One observation, or two when after_action is set: the second follows one Playwright step in the same browser."""
     url = loopback_target(url)
     playwright, browser, page = _with_browser(url, browser_name, profile, headed, channel)
     failure = None
-    result = None
+    results: list[dict] = []
     try:
         sent: list[str] = []
         network: list[dict] = []
         console: list[dict] = []
-        network_truncated = False
-        console_truncated = False
+        state = {"network_truncated": False, "console_truncated": False}
         client = None
         try:
             client = page.context.new_cdp_session(page)
@@ -1029,13 +1078,13 @@ def observe_page(*, url: str, browser_name: str, profile: str, headed: bool, cha
                 "detail": type(exc).__name__,
                 "cdp_methods": sent,
             }
-            result = assemble_observe(
+            results.append(assemble_observe(
                 {"title": "", "elements": [], "child_frames": 0, "total": 0, "truncated": False},
                 environment=_environment(browser, browser_name, channel, headed, profile, viewport),
                 url=url, start=start, limit=limit, sections=_unavailable_sections("cdp_session_unavailable"),
                 limits=limits,
-            )
-            return _finish(playwright, browser, None, result)
+            ))
+            return _finish(playwright, browser, None, results)
         requests: dict[str, str] = {}
 
         def on_request(event):
@@ -1043,9 +1092,8 @@ def observe_page(*, url: str, browser_name: str, profile: str, headed: bool, cha
             requests[event.get("requestId")] = request.get("method") or ""
 
         def on_response(event):
-            nonlocal network_truncated
             if len(network) >= 100:
-                network_truncated = True
+                state["network_truncated"] = True
                 return
             response = event.get("response") or {}
             network.append({
@@ -1057,9 +1105,8 @@ def observe_page(*, url: str, browser_name: str, profile: str, headed: bool, cha
             })
 
         def on_console(event):
-            nonlocal console_truncated
             if len(console) >= 50:
-                console_truncated = True
+                state["console_truncated"] = True
                 return
             args = event.get("args") or []
             console.append({
@@ -1080,68 +1127,120 @@ def observe_page(*, url: str, browser_name: str, profile: str, headed: bool, cha
                 "check that the loopback server is up. Core checks serve a local fixture on 127.0.0.1",
                 stage="navigate",
             ) from exc
-        document = _cdp_send(client, "DOM.getDocument", {"depth": -1, "pierce": False}, sent)
-        ax = _cdp_send(client, "Accessibility.getFullAXTree", {}, sent)
-        resources = _cdp_send(client, "Page.getResourceTree", {}, sent)
-        frames = _cdp_send(client, "Page.getFrameTree", {}, sent)
-        dom_nodes: list[dict] = []
-        dom_truncated = _walk_dom(document.get("root") or {}, dom_nodes)
-        elements, meta = _controls_from_cdp(dom_nodes, ax.get("nodes") or [], include_hidden=include_hidden, role=role)
-        title = ""
-        for ax_node in ax.get("nodes") or []:
-            if _ax_text(ax_node.get("role")) == "RootWebArea":
-                title = clip(_ax_text(ax_node.get("name")), 200)
-                break
-        child_frames = max(0, _frame_count(frames.get("frameTree") or {}) - 1)
-        resource_rows = []
-        for item in (resources.get("frameTree") or {}).get("resources") or []:
-            resource_rows.append({
-                "type": item.get("type") or "",
-                "mime": item.get("mimeType") if isinstance(item.get("mimeType"), str) else "",
-                "url": strip_userinfo(item.get("url") or ""),
-            })
-        origin = urllib.parse.urlsplit(page.url)
-        origin_text = f"{origin.scheme}://{origin.netloc}"
-        storage = _storage_section(
-            client, origin_text, keys=include_storage_keys, fingerprints=include_storage_fingerprints, sent=sent,
-        )
-        network_coverage = "truncated" if network_truncated else "attach_limited"
-        console_coverage = "truncated" if console_truncated else "attach_limited"
-        sections = {
-            "dom": _section("cdp:DOM.getDocument", "truncated" if dom_truncated else "complete", {
-                "nodes": meta["dom_nodes"], "attribute_values": "id and data-testid only",
-            }),
-            "accessibility": _section("cdp:Accessibility.getFullAXTree", "complete", {"nodes": meta["ax_nodes"]}),
-            "scripts": _section("cdp:DOM.getDocument", "complete_within_window", {
-                "items": meta["scripts"], "note": "scripts with no DOM node are outside this section",
-            }),
-            "resources": _section("cdp:Page.getResourceTree", "complete", {"items": resource_rows}),
-            "network": _section("cdp:Network", network_coverage, {
-                "prior_activity_available": False, "bodies": "not_requested", "items": network,
-            }),
-            "console": _section("cdp:Runtime.consoleAPICalled", console_coverage, {
-                "text": "not_requested", "prior_activity_available": False, "items": console,
-            }),
-            "storage": storage,
-            "frames": _section("cdp:Page.getFrameTree", "complete", {
-                "child_frames": child_frames, "contents": "not_entered",
-            }),
-        }
-        viewport = page.viewport_size or {}
-        limits = {
-            "page_js_called": False,
-            "navigation_runs_page_scripts": True,
-            "runtime_domain": "console events only",
-            "service_workers": "blocked",
-            "redirects": "blocked",
-            "non_loopback": "blocked",
-            "cdp_methods": sent,
-        }
-        result = assemble_observe(
-            {"title": title, "elements": elements, "child_frames": child_frames, "total": len(elements), "truncated": dom_truncated},
-            environment=_environment(browser, browser_name, channel, headed, profile, viewport),
-            url=page.url, start=start, limit=limit, sections=sections, limits=limits,
-        )
+
+        def capture(step: dict | None, page_js: bool, step_limits: dict | None = None) -> dict:
+            document = _cdp_send(client, "DOM.getDocument", {"depth": -1, "pierce": False}, sent)
+            pierced = _cdp_send(client, "DOM.getDocument", {"depth": -1, "pierce": True}, sent)
+            shadow = count_shadow_roots(pierced.get("root") or {})
+            ax = _cdp_send(client, "Accessibility.getFullAXTree", {}, sent)
+            resources = _cdp_send(client, "Page.getResourceTree", {}, sent)
+            frames = _cdp_send(client, "Page.getFrameTree", {}, sent)
+            dom_nodes: list[dict] = []
+            dom_truncated = _walk_dom(document.get("root") or {}, dom_nodes)
+            elements, meta = _controls_from_cdp(dom_nodes, ax.get("nodes") or [], include_hidden=include_hidden, role=role)
+            title = ""
+            for ax_node in ax.get("nodes") or []:
+                if _ax_text(ax_node.get("role")) == "RootWebArea":
+                    title = clip(_ax_text(ax_node.get("name")), 200)
+                    break
+            child_frames = max(0, _frame_count(frames.get("frameTree") or {}) - 1)
+            resource_rows = []
+            for item in (resources.get("frameTree") or {}).get("resources") or []:
+                resource_rows.append({
+                    "type": item.get("type") or "",
+                    "mime": item.get("mimeType") if isinstance(item.get("mimeType"), str) else "",
+                    "url": strip_userinfo(item.get("url") or ""),
+                })
+            document_url = strip_userinfo(((frames.get("frameTree") or {}).get("frame") or {}).get("url") or "")
+            controls_digest = _content_digest([
+                [element.get("role"), element.get("name"), element.get("text")] for element in elements
+            ])
+            names_digest = _content_digest([
+                [_ax_text(node.get("role")), _ax_text(node.get("name"))]
+                for node in (ax.get("nodes") or []) if not node.get("ignored")
+            ])
+            origin = urllib.parse.urlsplit(page.url)
+            origin_text = f"{origin.scheme}://{origin.netloc}"
+            storage = _storage_section(
+                client, origin_text, keys=include_storage_keys, fingerprints=include_storage_fingerprints, sent=sent,
+            )
+            network_coverage = "truncated" if state["network_truncated"] else "attach_limited"
+            console_coverage = "truncated" if state["console_truncated"] else "attach_limited"
+            sections = {
+                "dom": _section("cdp:DOM.getDocument", "truncated" if dom_truncated else "complete", {
+                    "nodes": meta["dom_nodes"], "attribute_values": "id and data-testid only",
+                    "document_url": document_url, "title": title, "controls_sha256": controls_digest,
+                }),
+                "accessibility": _section("cdp:Accessibility.getFullAXTree", "complete", {
+                    "nodes": meta["ax_nodes"], "names_sha256": names_digest,
+                }),
+                "scripts": _section("cdp:DOM.getDocument", "complete_within_window", {
+                    "items": meta["scripts"], "note": "scripts with no DOM node are outside this section",
+                }),
+                "resources": _section("cdp:Page.getResourceTree", "complete", {
+                    "items": resource_rows, "document_url": document_url,
+                }),
+                "network": _section("cdp:Network", network_coverage, {
+                    "prior_activity_available": False, "bodies": "not_requested", "items": network,
+                }),
+                "console": _section("cdp:Runtime.consoleAPICalled", console_coverage, {
+                    "text": "not_requested", "prior_activity_available": False, "items": console,
+                }),
+                "storage": storage,
+                "frames": _section("cdp:Page.getFrameTree", "complete", {
+                    "child_frames": child_frames, "contents": "not_entered",
+                }),
+                "shadow_roots": _section("cdp:DOM.getDocument pierce", "truncated" if shadow["truncated"] else "complete", {
+                    "open": shadow["open"], "closed": shadow["closed"], "count": shadow["count"],
+                    "user_agent": shadow["user_agent"], "contents": "not_entered",
+                }),
+            }
+            viewport = page.viewport_size or {}
+            limits = {
+                "page_js_called": page_js,
+                "navigation_runs_page_scripts": True,
+                "runtime_domain": "console events only",
+                "service_workers": "blocked",
+                "redirects": "blocked",
+                "non_loopback": "blocked",
+                "cdp_methods": sent,
+            }
+            if step is not None and step_limits:
+                limits.update(step_limits)
+            snapshot = assemble_observe(
+                {"title": title, "elements": elements, "child_frames": child_frames, "total": len(elements), "truncated": dom_truncated},
+                environment=_environment(browser, browser_name, channel, headed, profile, viewport),
+                url=page.url, start=start, limit=limit, sections=sections, limits=limits,
+            )
+            if step is not None:
+                snapshot["step"] = step
+            return snapshot
+
+        results.append(capture(None, False))
+        if after_action is not None:
+            url_before = strip_userinfo(page.url)
+            try:
+                step_part, page_js, step_limits = _perform_after_action(page, after_action, client, sent)
+            except InspectError:
+                raise
+            except Exception as exc:
+                raise InspectError(
+                    f"{type(exc).__name__}: {exc}",
+                    "the after-action step failed; the second snapshot was not written",
+                    stage="inspect",
+                ) from exc
+            network.clear()
+            console.clear()
+            requests.clear()
+            state["network_truncated"] = False
+            state["console_truncated"] = False
+            results.append(capture({
+                "index": 2,
+                **step_part,
+                "url_before": url_before,
+                "url_after": strip_userinfo(page.url),
+                "hint": _after_action_hint(after_action["kind"]),
+            }, page_js, step_limits))
     except InspectError as exc:
         failure = exc
     except Exception as exc:
@@ -1150,16 +1249,195 @@ def observe_page(*, url: str, browser_name: str, profile: str, headed: bool, cha
             "the CDP read failed; the snapshot was not written",
             stage="inspect",
         )
-    return _finish(playwright, browser, failure, result)
+    return _finish(playwright, browser, failure, results)
+
+
+STEP_SETTLE_MS_DEFAULT = 150
+DEFAULT_STEP_TIMEOUT_MS = 5000
+
+
+def _parse_action_locator_prefix(locator: str, *, context: str) -> str:
+    text = (locator or "").strip()
+    if text.startswith("h:"):
+        raise InspectError(f"{context} does not accept a snapshot ordinal", "pass id:, testid:, role:, or css:")
+    if not text.startswith(("id:", "testid:", "role:", "css:")):
+        raise InspectError(
+            f"{context} locator must be id:, testid:, role:, or css:",
+            "observe prints those addresses",
+        )
+    return text
+
+
+def _parse_scroll_body(body: str, *, context: str) -> dict:
+    """scroll:DX,DY uses the mouse wheel; scroll:LOCATOR scrolls the element into view."""
+    text = (body or "").strip()
+    if not text:
+        raise InspectError(f"{context} needs scroll:DX,DY or scroll:LOCATOR", "example: scroll:0,400 or scroll:id:deep")
+    parts = text.split(",", 1)
+    if len(parts) == 2:
+        try:
+            dx = int(parts[0].strip(), 10)
+            dy = int(parts[1].strip(), 10)
+            return {"kind": "scroll", "dx": dx, "dy": dy}
+        except ValueError:
+            pass
+    return {"kind": "scroll_into", "locator": _parse_action_locator_prefix(text, context=context)}
+
+
+def _mouse_wheel_scroll(page, dx: int, dy: int) -> None:
+    """Apply one wheel delta (dx, dy) in CSS pixels. Does not repeat the full vector."""
+    page.mouse.wheel(dx, dy)
+
+
+def _layout_scroll_y(client, sent: list[str]) -> int:
+    """Vertical scroll offset from Page.getLayoutMetrics (no page JavaScript)."""
+    metrics = _cdp_send(client, "Page.getLayoutMetrics", {}, sent)
+    viewport = metrics.get("cssVisualViewport") or {}
+    page_y = viewport.get("pageY", 0)
+    if isinstance(page_y, (int, float)) and not isinstance(page_y, bool):
+        return int(page_y)
+    return 0
+
+
+def _post_step_settle_plan(action: dict) -> tuple[int, str]:
+    kind = action["kind"]
+    if kind == "wait_ms":
+        return STEP_SETTLE_MS_DEFAULT, "wait_ms_then_settle"
+    if kind == "scroll":
+        return STEP_SETTLE_MS_DEFAULT, "wheel_then_settle"
+    if kind == "scroll_into":
+        return STEP_SETTLE_MS_DEFAULT, "scroll_locator_then_settle"
+    return STEP_SETTLE_MS_DEFAULT, "default_settle"
+
+
+def parse_after_action(spec: str) -> dict:
+    """Parse --after-action: click:LOCATOR | hover:LOCATOR | scroll:DX,DY | scroll:LOCATOR | scroll-into:LOCATOR."""
+    text = (spec or "").strip()
+    if not text:
+        raise InspectError("after-action is empty", "use click:, hover:, scroll:, or scroll-into:")
+    lowered = text.lower()
+    if lowered.startswith("click:"):
+        return {"kind": "click", "locator": _parse_action_locator_prefix(text[6:], context="after-action click")}
+    if lowered.startswith("hover:"):
+        return {"kind": "hover", "locator": _parse_action_locator_prefix(text[6:], context="after-action hover")}
+    if lowered.startswith("scroll-into:"):
+        return {
+            "kind": "scroll_into",
+            "locator": _parse_action_locator_prefix(text[12:], context="after-action scroll-into"),
+        }
+    if lowered.startswith("scroll:"):
+        return _parse_scroll_body(text[7:], context="after-action scroll")
+    raise InspectError(
+        "after-action must start with click:, hover:, scroll:, or scroll-into:",
+        "example: --after-action hover:id:menu",
+    )
+
+
+def _after_action_hint(kind: str) -> str:
+    hints = {
+        "click": "network and console start empty after the click; url_before equal to url_after means the click did not navigate",
+        "hover": "network and console start empty after the hover; :hover CSS may change the tree without navigation",
+        "scroll": "network and console start empty after the scroll; scroll listeners may change the DOM",
+        "scroll_into": "network and console start empty after scroll-into-view; the locator was brought into view",
+    }
+    return hints.get(kind, "the second snapshot is not passive observation")
+
+
+def run_playwright_step(
+    page,
+    action: dict,
+    *,
+    timeout_ms: int = DEFAULT_STEP_TIMEOUT_MS,
+    cdp_client=None,
+    cdp_sent: list[str] | None = None,
+) -> tuple[dict, bool, dict]:
+    """Shared Playwright step for observe after-action and act."""
+    from interaction import press as pointer_press
+
+    kind = action["kind"]
+    extra_limits = {"selector_engine": "playwright"}
+    dialogs: list[dict] = []
+
+    def on_dialog(dialog):
+        try:
+            dialogs.append({"type": dialog.type})
+            dialog.dismiss()
+        except Exception:
+            return
+
+    page.on("dialog", on_dialog)
+    page_js = False
+    step_fields: dict
+    try:
+        if kind == "click":
+            target, page_js = _action_locator(page, action["locator"])
+            pointer_press(page, target, timeout=timeout_ms)
+            page.wait_for_load_state("load", timeout=30000)
+            extra_limits["click_runs_page_scripts"] = True
+            step_fields = {"action": "click", "target": action["locator"]}
+        elif kind == "hover":
+            target, page_js = _action_locator(page, action["locator"])
+            target.hover(timeout=timeout_ms)
+            extra_limits["hover_may_trigger_css"] = True
+            extra_limits["hover_input"] = "locator.hover"
+            step_fields = {"action": "hover", "target": action["locator"]}
+        elif kind == "scroll":
+            dx, dy = action["dx"], action["dy"]
+            _mouse_wheel_scroll(page, dx, dy)
+            extra_limits["scroll_may_run_page_scripts"] = True
+            extra_limits["scroll_input"] = "mouse.wheel"
+            step_fields = {"action": "scroll", "target": f"{action['dx']},{action['dy']}"}
+        elif kind == "scroll_into":
+            target, page_js = _action_locator(page, action["locator"])
+            target.scroll_into_view_if_needed(timeout=timeout_ms)
+            extra_limits["scroll_into_view"] = True
+            extra_limits["scroll_may_run_page_scripts"] = True
+            extra_limits["scroll_input"] = "scroll_into_view_if_needed"
+            step_fields = {"action": "scroll_into", "target": action["locator"]}
+        elif kind == "type":
+            target, page_js = _action_locator(page, action["locator"])
+            target.fill(action["text"], timeout=timeout_ms)
+            extra_limits["type_runs_page_scripts"] = True
+            step_fields = {"action": "type", "target": action["locator"]}
+        elif kind == "wait_ms":
+            page.wait_for_timeout(action["ms"])
+            extra_limits["wait_used"] = f"timeout:{action['ms']}"
+            step_fields = {"action": "wait", "target": str(action["ms"])}
+        else:
+            raise InspectError(f"unknown step kind {kind}", "use click, hover, scroll, or scroll_into")
+    finally:
+        page.remove_listener("dialog", on_dialog)
+
+    settle_ms, wait_policy = _post_step_settle_plan(action)
+    page.wait_for_timeout(settle_ms)
+    extra_limits["post_step_settle_ms"] = settle_ms
+    extra_limits["wait_policy"] = wait_policy
+    if kind == "scroll" and cdp_client is not None and cdp_sent is not None:
+        extra_limits["scroll_y"] = _layout_scroll_y(cdp_client, cdp_sent)
+    if dialogs:
+        step_fields["dialogs"] = dialogs
+    return step_fields, page_js, extra_limits
+
+
+def _perform_after_action(page, action: dict, client, sent: list[str]) -> tuple[dict, bool, dict]:
+    return run_playwright_step(page, action, cdp_client=client, cdp_sent=sent)
+
+
+def resolve_observe_after_action(args: argparse.Namespace) -> dict | None:
+    if args.after_action and args.after_click:
+        raise InspectError(
+            "pass only one of --after-action and --after-click",
+            "--after-click is an alias for --after-action click:LOCATOR",
+        )
+    if args.after_action:
+        return parse_after_action(args.after_action)
+    if args.after_click:
+        return parse_after_action(f"click:{args.after_click.strip()}")
+    return None
 
 
 def _action_locator(page, locator: str):
-    text = (locator or "").strip()
-    if text.startswith("h:"):
-        raise InspectError(
-            "act does not accept a snapshot ordinal",
-            "pass id:, testid:, role:, or css: so the control is queried again",
-        )
+    text = _parse_action_locator_prefix(locator, context="act")
     if text.startswith("id:"):
         ident = text[3:]
         if not SAFE.fullmatch(ident):
@@ -1195,16 +1473,7 @@ def act_page(*, url: str, browser_name: str, profile: str, headed: bool, channel
     if action == "fill" and text is None:
         raise InspectError("fill needs --text", "pass the literal text to enter")
     if action != "wait_for_timeout":
-        if not locator or locator.strip().startswith("h:"):
-            raise InspectError(
-                "act does not accept a snapshot ordinal",
-                "pass id:, testid:, role:, or css: so the control is queried again",
-            )
-        if not locator.startswith(("id:", "testid:", "role:", "css:")):
-            raise InspectError(
-                "act locator must be id:, testid:, role:, or css:",
-                "observe prints those addresses; h:N is not accepted",
-            )
+        _parse_action_locator_prefix(locator or "", context="act")
     playwright, browser, page = _with_browser(url, browser_name, profile, headed, channel)
     failure = None
     result = None
@@ -1218,15 +1487,20 @@ def act_page(*, url: str, browser_name: str, profile: str, headed: bool, channel
                 stage="navigate",
             ) from exc
         page_js = False
+        step_limits: dict = {}
         try:
             if action == "wait_for_timeout":
-                page.wait_for_timeout(timeout_ms)
+                _, page_js, step_limits = run_playwright_step(
+                    page, {"kind": "wait_ms", "ms": timeout_ms}, timeout_ms=timeout_ms,
+                )
+            elif action == "click":
+                _, page_js, step_limits = run_playwright_step(
+                    page, {"kind": "click", "locator": locator}, timeout_ms=timeout_ms,
+                )
             else:
-                target, page_js = _action_locator(page, locator)
-                if action == "click":
-                    target.click(timeout=timeout_ms)
-                else:
-                    target.fill(text, timeout=timeout_ms)
+                _, page_js, step_limits = run_playwright_step(
+                    page, {"kind": "type", "locator": locator, "text": text}, timeout_ms=timeout_ms,
+                )
         except InspectError:
             raise
         except Exception as exc:
@@ -1264,6 +1538,7 @@ def act_page(*, url: str, browser_name: str, profile: str, headed: bool, channel
                 "ordinals": "rejected",
                 "dom": "not_requested",
                 "selector_engine": "playwright" if page_js else "none",
+                **step_limits,
             },
             "sections": {
                 "url": _section("playwright:page.url", "complete", {"url": strip_userinfo(page.url)}),
@@ -1301,6 +1576,72 @@ def read_snapshot(path: str) -> dict:
         if not isinstance(element, dict) or not isinstance(element.get("address"), str) or not isinstance(element.get("handle"), str):
             raise InspectError("snapshot element is missing address or handle", "run observe again")
     return data
+
+
+def _shadow_counts(snapshot: dict) -> dict | None:
+    section = (snapshot.get("sections") or {}).get("shadow_roots")
+    if not isinstance(section, dict) or section.get("coverage") not in COMPLETE_COVERAGE:
+        return None
+    counts = {}
+    for key in ("open", "closed", "count"):
+        value = section.get(key)
+        if isinstance(value, bool) or not isinstance(value, int):
+            return None
+        counts[key] = value
+    return counts
+
+
+def _count_pair(left, right) -> dict:
+    delta = right - left if isinstance(left, int) and isinstance(right, int) else None
+    return {"left": left, "right": right, "delta": delta}
+
+
+def compare_snapshots(left: dict, right: dict) -> dict:
+    """Section relations and counts for two observe snapshots. A missing side is never same."""
+    left_sections = left.get("sections") or {}
+    right_sections = right.get("sections") or {}
+    sections = {}
+    for name in sorted(set(left_sections) | set(right_sections)):
+        left_part = left_sections.get(name)
+        right_part = right_sections.get(name)
+        sections[name] = {
+            "relation": evidence_relation(left_part, right_part),
+            "left": left_part.get("coverage") if isinstance(left_part, dict) else None,
+            "right": right_part.get("coverage") if isinstance(right_part, dict) else None,
+        }
+    left_shadow = _shadow_counts(left)
+    right_shadow = _shadow_counts(right)
+    shadow = {key: _count_pair(*_side(left_shadow, right_shadow, key)) for key in ("open", "closed", "count")}
+    left_env = left.get("environment") if isinstance(left.get("environment"), dict) else {}
+    right_env = right.get("environment") if isinstance(right.get("environment"), dict) else {}
+    environment = {key: [left_env.get(key), right_env.get(key)] for key in COMPARE_ENVIRONMENT_KEYS}
+    same_environment = all(pair[0] == pair[1] for pair in environment.values())
+    hints = [
+        "same, different, and unknown are section relations; a missing or truncated section is never same",
+        "shadow_roots counts are null when that section was not complete on one side",
+    ]
+    if not same_environment:
+        hints.append("environments differ; section differences may come from the browser or profile, not the page")
+    return {
+        "schema": SCHEMA_COMPARE,
+        "ok": True,
+        "left_url": left.get("url"),
+        "right_url": right.get("url"),
+        "same_environment": same_environment,
+        "environment": environment,
+        "sections": sections,
+        "shadow_roots": shadow,
+        "child_frames": _count_pair(left.get("child_frames"), right.get("child_frames")),
+        "elements": _count_pair(left.get("total"), right.get("total")),
+        "hint": ". ".join(hints),
+    }
+
+
+def _side(left_shadow, right_shadow, key):
+    return (
+        left_shadow[key] if left_shadow else None,
+        right_shadow[key] if right_shadow else None,
+    )
 
 
 def dumps(payload: dict) -> str:
@@ -1363,6 +1704,20 @@ def describe_text(payload: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+def compare_text(payload: dict) -> str:
+    lines = [f"btk-page-compare/1 same_environment={str(payload['same_environment']).lower()}"]
+    for name, item in payload["sections"].items():
+        lines.append(f"section {name}={item['relation']} left={item['left']} right={item['right']}")
+    for key in ("open", "closed", "count"):
+        pair = payload["shadow_roots"][key]
+        lines.append(f"shadow_roots {key} left={pair['left']} right={pair['right']} delta={pair['delta']}")
+    for key in ("elements", "child_frames"):
+        pair = payload[key]
+        lines.append(f"{key} left={pair['left']} right={pair['right']} delta={pair['delta']}")
+    lines.append(f"hint: {payload['hint']}")
+    return "\n".join(lines) + "\n"
+
+
 def operations_text(payload: dict) -> str:
     lines = [f"{item['name']}: {item['summary']}" for item in payload["items"]]
     lines.append(f"hint: {payload['hint']}")
@@ -1408,6 +1763,17 @@ def build_parser() -> argparse.ArgumentParser:
     observe.add_argument("--role", default="", help="only this role")
     observe.add_argument("--start", type=_bounded(100000), default=0)
     observe.add_argument("--limit", type=_bounded(SURVEY_LIMIT_MAX), default=SURVEY_LIMIT_DEFAULT)
+    observe.add_argument(
+        "--after-action",
+        metavar="SPEC",
+        help="one step before a second snapshot: click:LOCATOR, hover:LOCATOR, scroll:DX,DY, or scroll-into:LOCATOR",
+    )
+    observe.add_argument(
+        "--after-click",
+        metavar="LOCATOR",
+        help="alias for --after-action click:LOCATOR (id:, testid:, role:, or css: address)",
+    )
+    observe.add_argument("--after-out", help="write the second snapshot here; requires --after-action (or --after-click) and --out")
     act = sub.add_parser("act", parents=[common], help="one declared action that re-queries a locator", allow_abbrev=False)
     act.add_argument("target", help="loopback URL; a snapshot ordinal is not accepted")
     act.add_argument("--action", required=True, choices=tuple(sorted(ACT_ACTIONS)))
@@ -1435,8 +1801,31 @@ def build_parser() -> argparse.ArgumentParser:
     describe_parser.add_argument("snapshot")
     describe_parser.add_argument("--target", required=True)
     describe_parser.add_argument("--context", type=_bounded(CONTEXT_MAX), default=CONTEXT_DEFAULT)
+    compare_parser = sub.add_parser("compare", parents=[common], help="compare two observe snapshots", allow_abbrev=False)
+    compare_parser.add_argument("left")
+    compare_parser.add_argument("right")
     sub.add_parser("operations", parents=[common], help="list commands", allow_abbrev=False)
     return parser
+
+
+def _check_sequence_args(args: argparse.Namespace, after_action: dict | None) -> None:
+    if after_action is None or args.after_out is None or not args.out:
+        raise InspectError(
+            "after-action needs --out for the first snapshot and --after-out for the second",
+            "pass both file paths; each file is a btk-page-observe/1 snapshot",
+        )
+    if Path(args.out).resolve() == Path(args.after_out).resolve():
+        raise InspectError("--out and --after-out must be different files", "give each snapshot its own path")
+    for path in (args.out, args.after_out):
+        if not Path(path).parent.is_dir():
+            raise InspectError(f"directory does not exist: {Path(path).parent}", "create the directory before --out or --after-out")
+
+
+def _write_snapshot(path: str, payload: dict) -> None:
+    try:
+        Path(path).write_text(dumps(payload), encoding="utf-8", newline="\n")
+    except OSError as exc:
+        raise InspectError(f"cannot write {path}: {exc}", "choose a writable file path") from exc
 
 
 def dispatch(args: argparse.Namespace) -> tuple[dict, str, int]:
@@ -1446,14 +1835,24 @@ def dispatch(args: argparse.Namespace) -> tuple[dict, str, int]:
     if args.command == "observe":
         if args.limit < 1:
             raise InspectError("limit must be at least 1", f"use 1..{SURVEY_LIMIT_MAX}")
-        payload = observe_page(
+        after_action = resolve_observe_after_action(args)
+        if after_action is not None or args.after_out is not None:
+            _check_sequence_args(args, after_action)
+        results = observe_page(
             url=args.target, browser_name=args.browser, profile=args.profile, headed=args.headed,
             channel=args.channel or None, include_hidden=args.include_hidden,
             include_storage_keys=args.include_storage_keys,
             include_storage_fingerprints=args.include_storage_fingerprints,
-            role=args.role, start=args.start, limit=args.limit,
+            role=args.role, start=args.start, limit=args.limit, after_action=after_action,
         )
-        return payload, observe_text(payload), 0
+        payload = results[0]
+        text_out = observe_text(payload)
+        if len(results) == 2:
+            _write_snapshot(args.after_out, results[1])
+            step = results[1].get("step") or {}
+            label = f"{step.get('action', 'step')}:{step.get('target', '')}"
+            text_out += f"after-action {label}: second snapshot written to {args.after_out}\n"
+        return payload, text_out, 0
     if args.command == "act":
         if args.timeout_ms < 1:
             raise InspectError("timeout-ms must be at least 1", "use 1..120000")
@@ -1464,6 +1863,9 @@ def dispatch(args: argparse.Namespace) -> tuple[dict, str, int]:
         )
         text_out = f"action={payload['action']} url={payload['url']}\nhint: {payload['hint']}\n"
         return payload, text_out, 0
+    if args.command == "compare":
+        payload = compare_snapshots(read_snapshot(args.left), read_snapshot(args.right))
+        return payload, compare_text(payload), 0
     snapshot = read_snapshot(args.snapshot)
     elements = snapshot["elements"]
     if args.command == "count":
