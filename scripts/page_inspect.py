@@ -1314,6 +1314,20 @@ def _mouse_wheel_scroll(page, dx: int, dy: int) -> None:
     page.mouse.wheel(dx, dy)
 
 
+def _window_scroll_y(page) -> int:
+    """Read vertical scroll offset without Playwright page.evaluate (observe policy)."""
+    client = page.context.new_cdp_session(page)
+    try:
+        payload = client.send("Runtime.evaluate", {"expression": "window.scrollY", "returnByValue": True})
+        value = (payload.get("result") or {}).get("value")
+        return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0
+    finally:
+        try:
+            client.detach()
+        except Exception:
+            pass
+
+
 def _post_step_settle_plan(action: dict) -> tuple[int, str]:
     kind = action["kind"]
     if kind == "wait_ms":
@@ -1658,7 +1672,7 @@ def run_playwright_step(page, action: dict, *, timeout_ms: int = DEFAULT_STEP_TI
     extra_limits["post_step_settle_ms"] = settle_ms
     extra_limits["wait_policy"] = wait_policy
     if kind == "scroll":
-        extra_limits["scroll_y"] = page.evaluate("() => window.scrollY")
+        extra_limits["scroll_y"] = _window_scroll_y(page)
     if dialogs:
         step_fields["dialogs"] = dialogs
     return step_fields, page_js, extra_limits
