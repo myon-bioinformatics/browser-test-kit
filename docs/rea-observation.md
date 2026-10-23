@@ -59,3 +59,19 @@ Section digests carry page identity. `dom` digests the document URL, title, and 
 ## Deferred on issue 117
 
 Child frames and shadow roots as their own address spaces. Observe lists child frames by name, URL, and origin (`frames` section, `items`, no frame ids) and counts open plus closed shadow roots (`shadow_roots` section); it does not enter either and does not read shadow attributes. Giving frames their own addresses is still open. macOS, Windows, Linux, and Android Chrome or WebView. Branded channels as a matrix. A Stagehand caller. A headed lane in CI. An agent transport after these envelopes stay stable. Screenshot comparison and full scenario diffs.
+
+### URL evidence privacy
+
+Navigation uses the original URL, including query and fragment. Saved URL evidence
+keeps only scheme, host, port and path: userinfo, query and fragment are omitted
+from initial observations, frames, scripts, resources, network events, step results,
+act results and compare URLs. The Python and Node entry points share this policy.
+Navigation error call logs also omit URL values. Equal evidence URLs do not prove
+that no navigation occurred: query-only or fragment-only changes are intentionally
+indistinguishable in the URL evidence.
+
+New section digests are computed from sanitized URLs. Compare sanitizes legacy
+top-level URLs before emitting them, but preserves existing section digests rather
+than rewriting historical evidence; recapture both sides to compare under the new
+policy. Old snapshot files are not modified. This URL policy does not redact values
+that a page itself displays as control text or its title.

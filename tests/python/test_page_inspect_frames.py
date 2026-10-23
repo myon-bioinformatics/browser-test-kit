@@ -34,7 +34,7 @@ def test_frame_rows_are_document_order_without_userinfo_or_ids():
     rows, truncated = btk.frame_rows(tree)
     assert truncated is False
     assert [row["name"] for row in rows] == ["a", "deep", "b"]
-    assert rows[0] == {"name": "a", "url": "http://127.0.0.1/a?x=1", "origin": "http://127.0.0.1"}
+    assert rows[0] == {"name": "a", "url": "http://127.0.0.1/a", "origin": "http://127.0.0.1"}
     assert all("id" not in row for row in rows)
 
 

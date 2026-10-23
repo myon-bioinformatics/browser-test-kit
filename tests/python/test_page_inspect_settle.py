@@ -36,7 +36,7 @@ def test_redaction_removes_keys_tokens_and_bearer_values():
     cleaned = btk.redact_text(text)
     assert "abcd1234efgh" not in cleaned and "abcdefghijkl" not in cleaned
     assert "sk-abcdef[redacted]" in cleaned and "AIza[redacted]" in cleaned
-    assert "a=1" in cleaned  # non-secret query parameters are kept
+    assert "a=1" not in cleaned  # query values are omitted regardless of key name
     envelope = btk.error_envelope("act", btk.InspectError(
         "bad https://h/?apiKey=zzzzzzzz", "retry with Bearer abcdefghijk"))
     assert "zzzzzzzz" not in json.dumps(envelope) and "abcdefghijk" not in json.dumps(envelope)

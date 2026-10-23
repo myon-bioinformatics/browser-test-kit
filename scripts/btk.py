@@ -986,16 +986,20 @@ def context_options(devices: dict, browser_name: str, profile: str, headed: bool
 
 
 def strip_userinfo(url: str) -> str:
-    parts = urllib.parse.urlsplit(url)
-    if parts.scheme not in {"http", "https"}:
-        return url
-    host = parts.hostname or ""
-    if ":" in host:
-        host = f"[{host}]"
-    netloc = host
-    if parts.port is not None:
-        netloc = f"{netloc}:{parts.port}"
-    return urllib.parse.urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+    """Evidence URL only: omit credentials, query and fragment; never use for navigation."""
+    try:
+        parts = urllib.parse.urlsplit(url)
+        if parts.scheme not in {"http", "https"}:
+            return urllib.parse.urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+        host = parts.hostname or ""
+        if ":" in host:
+            host = f"[{host}]"
+        netloc = host
+        if parts.port is not None:
+            netloc = f"{netloc}:{parts.port}"
+        return urllib.parse.urlunsplit((parts.scheme, netloc, parts.path, "", ""))
+    except ValueError:
+        return "[invalid-url]"
 
 
 def restrict_request(route):
@@ -1556,7 +1560,7 @@ def observe_page(*, url: str, browser_name: str, profile: str, headed: bool, cha
                 "locator": step["locator"],
                 "url_before": url_before,
                 "url_after": strip_userinfo(page.url),
-                "hint": "network and console start empty after this step; url_before equal to url_after means it did not navigate; text values are not recorded",
+                "hint": "network and console start empty after this step; URL credentials, query and fragment are omitted; equal evidence URLs do not prove no navigation; text values are not recorded",
             }
             if "quiet" in step_outcome:
                 step_record["quiet"] = step_outcome["quiet"]
@@ -1846,8 +1850,8 @@ def compare_snapshots(left: dict, right: dict) -> dict:
     return {
         "schema": SCHEMA_COMPARE,
         "ok": True,
-        "left_url": left.get("url"),
-        "right_url": right.get("url"),
+        "left_url": strip_userinfo(left["url"]) if isinstance(left.get("url"), str) else None,
+        "right_url": strip_userinfo(right["url"]) if isinstance(right.get("url"), str) else None,
         "same_environment": same_environment,
         "environment": environment,
         "sections": sections,
@@ -1881,6 +1885,7 @@ REDACTIONS = (
 
 
 def redact_text(text: str) -> str:
+    text = re.sub(r"https?://[^\s\"'<>]+", lambda match: strip_userinfo(match.group()), text)
     for pattern, replacement in REDACTIONS:
         text = pattern.sub(replacement, text)
     return text
