@@ -186,8 +186,13 @@ def test_loopback_policy_and_evidence_do_not_treat_missing_as_same():
     assert page_inspect.evidence_relation(limited, dict(limited)) == "unknown"
     finger = page_inspect.storage_fingerprint("secret-value")
     assert finger["fingerprint_version"] == 2 and "secret-value" not in json.dumps(finger)
+    # observe never calls page script. The only direct page evaluation is the settle cleanup in
+    # _wait_quiet, which act and --step run after the page has been driven, never during observe.
+    import inspect
     source = (ROOT / "scripts" / "page_inspect.py").read_text(encoding="utf-8")
-    assert ".evaluate(" not in source
+    assert source.count(".evaluate(") == 1
+    assert ".evaluate(" in inspect.getsource(page_inspect._wait_quiet)
+    assert ".evaluate(" not in inspect.getsource(page_inspect.observe_page)
 
 
 def test_twins_agree_on_score_loopback_fingerprint_and_evidence():
