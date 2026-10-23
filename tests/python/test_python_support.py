@@ -59,7 +59,7 @@ def test_built_wheel_metadata_when_present():
 
 @pytest.mark.parametrize('layout', ['target', 'prefix'])
 def test_built_wheel_image_diff_outside_checkout(tmp_path, layout):
-    """Install the actual wheel and exercise PNGs, not just --help, without PIL."""
+    """Install the wheel outside the checkout. tools/ stay in the checkout and are not modules."""
     import os
     import subprocess
     import sys
@@ -77,14 +77,25 @@ def test_built_wheel_image_diff_outside_checkout(tmp_path, layout):
             'purelib', vars={'base': str(target), 'platbase': str(target)})
         # -S bypasses site packages; only the distribution just installed is visible.
         env = {**os.environ, 'PYTHONPATH': str(module_path)}
+        missing = subprocess.run(
+            [sys.executable, '-S', '-m', 'image_diff', '--help'],
+            cwd=tmp_path, env=env, capture_output=True, text=True, timeout=30,
+        )
+        assert missing.returncode != 0
+        installed = subprocess.run(
+            [sys.executable, '-S', '-m', 'btk', '--help'],
+            cwd=tmp_path, env=env, capture_output=True, text=True, timeout=30,
+        )
+        assert installed.returncode == 0, installed.stderr
         fixtures = ROOT / 'tests/fixtures/image_diff'
         import json
         golden = json.loads((fixtures / 'golden.json').read_text())
         for name, left, right in [('identical', 'identical_a.png', 'identical_b.png'),
                                   ('red_rect', 'red_rect_a.png', 'red_rect_b.png')]:
             result = subprocess.run(
-                [sys.executable, '-S', '-m', 'image_diff', str(fixtures / left), str(fixtures / right)],
-                cwd=tmp_path, env=env, capture_output=True, text=True, timeout=30,
+                [sys.executable, '-S', str(ROOT / 'tools' / 'image_diff.py'),
+                 str(fixtures / left), str(fixtures / right)],
+                cwd=tmp_path, capture_output=True, text=True, timeout=30,
             )
             assert result.returncode == golden[name]['returncode'], result.stderr
             assert result.stdout.strip() == golden[name]['stdout']
