@@ -12,6 +12,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = (ROOT / "fixtures" / "page_inspect.html").read_bytes()
 SCRIPT = ROOT / "scripts" / "page_inspect.py"
+sys.path.insert(0, str(ROOT / "scripts"))
 RESULTS = ROOT / "test-results" / "page-inspect"
 
 
@@ -64,7 +65,10 @@ def test_chromium_observe_is_passive_and_fingerprints_storage(loopback, capsys):
     assert payload["schema"] == "btk-page-observe/1" and payload["ok"] is True
     assert payload["limits"]["page_js_called"] is False
     assert "Runtime.evaluate" not in payload["limits"]["cdp_methods"]
-    assert ".evaluate(" not in (ROOT / "scripts" / "page_inspect.py").read_text(encoding="utf-8")
+    # Only _wait_quiet (settle, after a driven page) may call page.evaluate; observe_page must not.
+    import inspect
+    import page_inspect
+    assert ".evaluate(" not in inspect.getsource(page_inspect.observe_page)
     found = names(payload)
     for expected in ("Save draft", "Cancel", "Documentation", "Search", "Remember me", "Unavailable"):
         assert expected in found, found

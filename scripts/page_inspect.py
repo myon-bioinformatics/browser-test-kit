@@ -1365,6 +1365,8 @@ def _perform(page, action: str, locator: str, text, timeout_ms: int, outcome: di
         if outcome is not None:
             outcome["quiet"] = quiet
         return True
+    if action == "press" and isinstance(text, str):
+        text = resolve_smart_key(text)
     if action == "press" and not (locator or "").strip():
         page.keyboard.press(text, timeout=timeout_ms)
         return True
@@ -1581,6 +1583,14 @@ def redact_text(text: str) -> str:
     for pattern, replacement in REDACTIONS:
         text = pattern.sub(replacement, text)
     return text
+
+
+# Ported from Playwright's resolveSmartModifierString (packages/playwright-core/src/server/input.ts).
+# ControlOrMeta is Meta on macOS and Control elsewhere. Chords are split on "+" and each part resolved.
+def resolve_smart_key(key: str, platform_name: str | None = None) -> str:
+    name = sys.platform if platform_name is None else platform_name
+    smart = "Meta" if name == "darwin" else "Control"
+    return "+".join(smart if part == "ControlOrMeta" else part for part in key.split("+"))
 
 
 def error_envelope(operation: str, exc: InspectError) -> dict:
