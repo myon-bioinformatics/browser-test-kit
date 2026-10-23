@@ -139,6 +139,14 @@ def run_scenario(args, api):
                 page.keyboard.type("Z")
                 outcome["select_all_replaced"] = field.input_value() == "Z"
                 outcome["shortcut"] = "ControlOrMeta+A"
+                page.keyboard.press("ControlOrMeta+Z")
+                outcome["undo_restored"] = field.input_value() == "keyboard probe"
+                redo_key = "ControlOrMeta+Shift+Z" if api.os_name() == "macOS" else "ControlOrMeta+Y"
+                page.keyboard.press(redo_key)
+                outcome["redo_applied"] = field.input_value() == "Z"
+                outcome["redo_shortcut"] = redo_key
+                page.keyboard.press("Tab")
+                outcome["tab_focus_advanced"] = page.locator("#scenario-fetch").is_focused()
             elif args.case in ("offline", "http-error", "latency"):
                 if args.case == "offline":
                     context.set_offline(True)
