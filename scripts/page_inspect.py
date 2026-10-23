@@ -680,7 +680,12 @@ def operations() -> dict:
 
 
 def context_options(devices: dict, browser_name: str, profile: str, headed: bool) -> dict:
-    """Playwright Python context kwargs. Firefox rejects is_mobile on phone descriptors."""
+    """Playwright Python context kwargs. Firefox rejects is_mobile on phone descriptors.
+
+    ``observe --viewport WxH`` replaces any device viewport from iphone/pixel profiles and
+    clears ``no_viewport`` from headed mode. Desktop profile without ``--viewport`` keeps the
+    default 1280x800 headless viewport or headed ``no_viewport``.
+    """
     device = PROFILES[profile]
     if device:
         args = dict(devices[device])
@@ -1229,11 +1234,10 @@ def observe_page(*, url: str, browser_name: str, profile: str, headed: bool, cha
         results.append(capture(None, False))
         for action in steps or []:
             url_before = strip_userinfo(page.url)
-            collector = StepEventCollector(page)
+            collector = StepEventCollector(client, page, sent)
             collector.attach()
             try:
-                step_part, page_js, step_limits = _perform_step(page, action)
-                page.wait_for_timeout(250)
+                step_part, page_js, step_limits = run_playwright_step(page, action)
             except InspectError:
                 raise
             except Exception as exc:
@@ -1249,12 +1253,16 @@ def observe_page(*, url: str, browser_name: str, profile: str, headed: bool, cha
             requests.clear()
             state["network_truncated"] = False
             state["console_truncated"] = False
+            events = collector.payload()
+            dialogs = step_part.pop("dialogs", None)
+            if dialogs:
+                events["dialogs"] = dialogs
             results.append(capture({
                 "index": len(results) + 1,
                 **step_part,
                 "url_before": url_before,
                 "url_after": strip_userinfo(page.url),
-                "events": collector.payload(),
+                "events": events,
                 "hint": _step_hint(action["kind"]),
             }, page_js, step_limits))
     except InspectError as exc:
@@ -1269,89 +1277,11 @@ def observe_page(*, url: str, browser_name: str, profile: str, headed: bool, cha
 
 
 STEP_INTERSTITIAL_CAP = 50
+STEP_SETTLE_MS_DEFAULT = 150
+DEFAULT_STEP_TIMEOUT_MS = 5000
 
 
-class StepEventCollector:
-    """Console levels, failed HTTP, and navigations during one observe step. Message bodies are never stored."""
-
-    def __init__(self, page):
-        self.page = page
-        self.console: list[dict] = []
-        self.failed_requests: list[dict] = []
-        self.navigations: list[dict] = []
-        self.truncated = False
-        self._console = None
-        self._failed = None
-        self._response = None
-        self._nav = None
-
-    def _over_cap(self) -> bool:
-        total = len(self.console) + len(self.failed_requests) + len(self.navigations)
-        if total >= STEP_INTERSTITIAL_CAP:
-            self.truncated = True
-            return True
-        return False
-
-    def attach(self) -> None:
-        def on_console(message):
-            try:
-                if self._over_cap():
-                    return
-                if message.type in ("error", "warning"):
-                    self.console.append({"level": message.type})
-            except Exception:
-                return
-
-        def on_failed(request):
-            try:
-                if self._over_cap():
-                    return
-                self.failed_requests.append({"url": strip_userinfo(request.url), "status": None})
-            except Exception:
-                return
-
-        def on_response(response):
-            try:
-                if self._over_cap():
-                    return
-                status = response.status
-                if status >= 400:
-                    self.failed_requests.append({"url": strip_userinfo(response.url), "status": status})
-            except Exception:
-                return
-
-        def on_navigated(frame):
-            try:
-                if frame != self.page.main_frame or self._over_cap():
-                    return
-                self.navigations.append({"url": strip_userinfo(frame.url)})
-            except Exception:
-                return
-
-        self.page.on("console", on_console)
-        self.page.on("requestfailed", on_failed)
-        self.page.on("response", on_response)
-        self.page.on("framenavigated", on_navigated)
-        self._console, self._failed, self._response, self._nav = on_console, on_failed, on_response, on_navigated
-
-    def detach(self) -> None:
-        if self._console is not None:
-            self.page.remove_listener("console", self._console)
-            self.page.remove_listener("requestfailed", self._failed)
-            self.page.remove_listener("response", self._response)
-            self.page.remove_listener("framenavigated", self._nav)
-
-    def payload(self) -> dict:
-        return {
-            "console": list(self.console),
-            "failed_requests": list(self.failed_requests),
-            "navigations": list(self.navigations),
-            "truncated": self.truncated,
-            "bodies": "not_recorded",
-        }
-
-
-def _ensure_action_locator(locator: str, *, context: str) -> str:
+def _parse_action_locator_prefix(locator: str, *, context: str) -> str:
     text = (locator or "").strip()
     if text.startswith("h:"):
         raise InspectError(f"{context} does not accept a snapshot ordinal", "pass id:, testid:, role:, or css:")
@@ -1361,6 +1291,180 @@ def _ensure_action_locator(locator: str, *, context: str) -> str:
             "observe prints those addresses",
         )
     return text
+
+
+def _parse_scroll_body(body: str, *, context: str) -> dict:
+    """scroll:DX,DY uses the mouse wheel; scroll:LOCATOR scrolls the element into view."""
+    text = (body or "").strip()
+    if not text:
+        raise InspectError(f"{context} needs scroll:DX,DY or scroll:LOCATOR", "example: scroll:0,400 or scroll:id:deep")
+    parts = text.split(",", 1)
+    if len(parts) == 2:
+        try:
+            dx = int(parts[0].strip(), 10)
+            dy = int(parts[1].strip(), 10)
+            return {"kind": "scroll", "dx": dx, "dy": dy}
+        except ValueError:
+            pass
+    return {"kind": "scroll_into", "locator": _parse_action_locator_prefix(text, context=context)}
+
+
+def _post_step_settle_plan(action: dict) -> tuple[int, str]:
+    kind = action["kind"]
+    if kind == "wait_ms":
+        return STEP_SETTLE_MS_DEFAULT, "wait_ms_then_settle"
+    if kind == "wait_locator":
+        return STEP_SETTLE_MS_DEFAULT, "wait_locator_then_settle"
+    if kind == "scroll":
+        return STEP_SETTLE_MS_DEFAULT, "wheel_then_settle"
+    if kind == "scroll_into":
+        return STEP_SETTLE_MS_DEFAULT, "scroll_locator_then_settle"
+    return STEP_SETTLE_MS_DEFAULT, "default_settle"
+
+
+def _typed_value_meta(text: str) -> dict:
+    payload = {"length": len(text)}
+    if text:
+        payload.update(storage_fingerprint(text))
+    return payload
+
+
+class StepEventCollector:
+    """CDP interstitial events for one observe step. Text, bodies, and secrets are never stored."""
+
+    def __init__(self, client, page, sent: list[str]):
+        self.client = client
+        self.page = page
+        self.sent = sent
+        self.console: list[dict] = []
+        self.failed_requests: list[dict] = []
+        self.navigations: list[dict] = []
+        self.truncated = False
+        self._failed_by_loader: dict[str, dict] = {}
+        self._handlers: dict[str, object] = {}
+        self._domains_enabled = False
+
+    def _over_cap(self) -> bool:
+        total = len(self.console) + len(self.failed_requests) + len(self.navigations)
+        if total >= STEP_INTERSTITIAL_CAP:
+            self.truncated = True
+            return True
+        return False
+
+    def _note_failed(self, loader_id: str | None, url: str, status: int | None) -> None:
+        if self._over_cap():
+            return
+        key = loader_id or url or f"anon:{len(self._failed_by_loader)}"
+        row = self._failed_by_loader.get(key)
+        if row is None:
+            row = {"url": strip_userinfo(url), "status": status}
+            self._failed_by_loader[key] = row
+            self.failed_requests.append(row)
+        elif status is not None and row.get("status") is None:
+            row["status"] = status
+        elif url and not row.get("url"):
+            row["url"] = strip_userinfo(url)
+
+    def attach(self) -> None:
+        if not self._domains_enabled:
+            _cdp_send(self.client, "Page.enable", {}, self.sent)
+            _cdp_send(self.client, "Log.enable", {}, self.sent)
+            self._domains_enabled = True
+
+        def on_console(event):
+            try:
+                if self._over_cap():
+                    return
+                level = event.get("type") or ""
+                if level not in ("error", "warning"):
+                    return
+                args = event.get("args") or []
+                self.console.append({
+                    "level": level,
+                    "source": "console",
+                    "argument_types": [arg.get("type") if isinstance(arg, dict) else "unknown" for arg in args],
+                })
+            except Exception:
+                return
+
+        def on_exception(_event):
+            try:
+                if self._over_cap():
+                    return
+                self.console.append({"level": "error", "source": "exception"})
+            except Exception:
+                return
+
+        def on_log(event):
+            try:
+                if self._over_cap():
+                    return
+                entry = event.get("entry") or {}
+                level = entry.get("level") or ""
+                if level in ("error", "warning"):
+                    self.console.append({"level": level, "source": "log"})
+            except Exception:
+                return
+
+        def on_response(event):
+            try:
+                response = event.get("response") or {}
+                status = response.get("status")
+                if isinstance(status, int) and status >= 400:
+                    self._note_failed(
+                        event.get("loaderId") or event.get("requestId"),
+                        response.get("url") or "",
+                        status,
+                    )
+            except Exception:
+                return
+
+        def on_loading_failed(event):
+            try:
+                self._note_failed(
+                    event.get("loaderId") or event.get("requestId"),
+                    event.get("url") or event.get("documentURL") or "",
+                    None,
+                )
+            except Exception:
+                return
+
+        def on_frame_navigated(event):
+            try:
+                frame = event.get("frame") or {}
+                if frame.get("parentId") is not None or self._over_cap():
+                    return
+                url = frame.get("url") or ""
+                if url:
+                    self.navigations.append({"url": strip_userinfo(url)})
+            except Exception:
+                return
+
+        handlers = {
+            "Runtime.consoleAPICalled": on_console,
+            "Runtime.exceptionThrown": on_exception,
+            "Log.entryAdded": on_log,
+            "Network.responseReceived": on_response,
+            "Network.loadingFailed": on_loading_failed,
+            "Page.frameNavigated": on_frame_navigated,
+        }
+        for name, handler in handlers.items():
+            self.client.on(name, handler)
+        self._handlers = handlers
+
+    def detach(self) -> None:
+        for name, handler in self._handlers.items():
+            self.client.remove_listener(name, handler)
+        self._handlers = {}
+
+    def payload(self) -> dict:
+        return {
+            "console": list(self.console),
+            "failed_requests": list(self.failed_requests),
+            "navigations": list(self.navigations),
+            "truncated": self.truncated,
+            "bodies": "not_recorded",
+        }
 
 
 def parse_step_spec(spec: str) -> dict:
@@ -1376,16 +1480,30 @@ def parse_step_spec(spec: str) -> dict:
         locator, typed = body.split("=", 1)
         return {
             "kind": "type",
-            "locator": _ensure_action_locator(locator.strip(), context="type step"),
+            "locator": _parse_action_locator_prefix(locator.strip(), context="type step"),
             "text": typed,
         }
+    if lowered.startswith("select:"):
+        body = text[7:]
+        if "=" not in body:
+            raise InspectError("select step needs select:LOCATOR=VALUE", "the selected value is not stored in the snapshot")
+        locator, value = body.split("=", 1)
+        return {
+            "kind": "select",
+            "locator": _parse_action_locator_prefix(locator.strip(), context="select step"),
+            "value": value,
+        }
+    if lowered.startswith("check:"):
+        return {"kind": "check", "locator": _parse_action_locator_prefix(text[6:], context="check step")}
+    if lowered.startswith("uncheck:"):
+        return {"kind": "uncheck", "locator": _parse_action_locator_prefix(text[8:], context="uncheck step")}
     if lowered.startswith("press:"):
         key = text[6:].strip()
         if not key:
             raise InspectError("press step needs press:KEY", "example: press:Enter")
         return {"kind": "press", "key": key}
     if lowered.startswith("focus:"):
-        return {"kind": "focus", "locator": _ensure_action_locator(text[6:], context="focus step")}
+        return {"kind": "focus", "locator": _parse_action_locator_prefix(text[6:], context="focus step")}
     if lowered.startswith("wait:"):
         rest = text[5:].strip()
         if rest.isdigit():
@@ -1393,25 +1511,20 @@ def parse_step_spec(spec: str) -> dict:
             if ms < 0 or ms > 120000:
                 raise InspectError("wait:MS must be from 0 to 120000", "example: wait:500")
             return {"kind": "wait_ms", "ms": ms}
-        return {"kind": "wait_locator", "locator": _ensure_action_locator(rest, context="wait step")}
+        return {"kind": "wait_locator", "locator": _parse_action_locator_prefix(rest, context="wait step")}
     if lowered.startswith("click:"):
-        return {"kind": "click", "locator": _ensure_action_locator(text[6:], context="click step")}
+        return {"kind": "click", "locator": _parse_action_locator_prefix(text[6:], context="click step")}
     if lowered.startswith("hover:"):
-        return {"kind": "hover", "locator": _ensure_action_locator(text[6:], context="hover step")}
+        return {"kind": "hover", "locator": _parse_action_locator_prefix(text[6:], context="hover step")}
     if lowered.startswith("scroll-into:"):
-        return {"kind": "scroll_into", "locator": _ensure_action_locator(text[12:], context="scroll-into step")}
+        return {
+            "kind": "scroll_into",
+            "locator": _parse_action_locator_prefix(text[12:], context="scroll-into step"),
+        }
     if lowered.startswith("scroll:"):
-        coords = text[7:].split(",", 1)
-        if len(coords) != 2:
-            raise InspectError("scroll step needs scroll:DX,DY", "use two integers separated by a comma")
-        try:
-            dx = int(coords[0].strip(), 10)
-            dy = int(coords[1].strip(), 10)
-        except ValueError as exc:
-            raise InspectError("scroll step needs integer DX and DY", "example: scroll:0,400") from exc
-        return {"kind": "scroll", "dx": dx, "dy": dy}
+        return _parse_scroll_body(text[7:], context="scroll step")
     raise InspectError(
-        "step must start with click:, hover:, type:, press:, focus:, wait:, scroll:, or scroll-into:",
+        "step must start with click:, hover:, type:, select:, check:, uncheck:, press:, focus:, wait:, or scroll:",
         "example: --step type:id:q=hello",
     )
 
@@ -1432,62 +1545,118 @@ def _step_hint(kind: str) -> str:
         "focus": "post-step snapshot after focus",
         "wait_ms": "post-step snapshot after a timeout",
         "wait_locator": "post-step snapshot after the locator became visible",
+        "select": "post-step snapshot; selected values are not recorded in step events",
+        "check": "post-step snapshot after checking a control",
+        "uncheck": "post-step snapshot after unchecking a control",
     }
     return hints.get(kind, "this snapshot is not passive observation")
 
 
-def _perform_step(page, action: dict) -> tuple[dict, bool, dict]:
-    """Run one observe step. Returns (step fields, page_js_called, extra limits)."""
+def run_playwright_step(page, action: dict, *, timeout_ms: int = DEFAULT_STEP_TIMEOUT_MS) -> tuple[dict, bool, dict]:
+    """Run one Playwright step for observe or act. Returns (step fields, page_js_called, extra limits)."""
+    from interaction import press as pointer_press
+
     kind = action["kind"]
     extra_limits = {"selector_engine": "playwright"}
-    if kind == "click":
-        target, _ = _action_locator(page, action["locator"])
-        target.click(timeout=5000)
-        page.wait_for_load_state("load", timeout=30000)
-        extra_limits["click_runs_page_scripts"] = True
-        return {"action": "click", "target": action["locator"]}, True, extra_limits
-    if kind == "hover":
-        target, _ = _action_locator(page, action["locator"])
-        target.hover(timeout=5000)
-        extra_limits["hover_may_trigger_css"] = True
-        return {"action": "hover", "target": action["locator"]}, True, extra_limits
-    if kind == "scroll":
-        dx, dy = action["dx"], action["dy"]
-        repeats = max(1, (abs(dx) + abs(dy)) // 300 + 1)
-        for _ in range(repeats):
-            page.mouse.wheel(dx, dy)
-        page.wait_for_timeout(200)
-        extra_limits["scroll_may_run_page_scripts"] = True
-        return {"action": "scroll", "target": f"{action['dx']},{action['dy']}"}, False, extra_limits
-    if kind == "scroll_into":
-        target, _ = _action_locator(page, action["locator"])
-        target.scroll_into_view_if_needed(timeout=5000)
-        page.wait_for_timeout(200)
-        extra_limits["scroll_into_view"] = True
-        extra_limits["scroll_may_run_page_scripts"] = True
-        return {"action": "scroll_into", "target": action["locator"]}, True, extra_limits
-    if kind == "type":
-        target, _ = _action_locator(page, action["locator"])
-        target.fill(action["text"], timeout=5000)
-        extra_limits["type_runs_page_scripts"] = True
-        return {"action": "type", "target": action["locator"]}, True, extra_limits
-    if kind == "press":
-        page.keyboard.press(action["key"])
-        extra_limits["press_may_run_page_scripts"] = True
-        return {"action": "press", "target": action["key"]}, True, extra_limits
-    if kind == "focus":
-        target, _ = _action_locator(page, action["locator"])
-        target.focus(timeout=5000)
-        extra_limits["focus_may_trigger_css"] = True
-        return {"action": "focus", "target": action["locator"]}, True, extra_limits
-    if kind == "wait_ms":
-        page.wait_for_timeout(action["ms"])
-        return {"action": "wait", "target": str(action["ms"])}, False, extra_limits
-    if kind == "wait_locator":
-        target, _ = _action_locator(page, action["locator"])
-        target.wait_for(state="visible", timeout=5000)
-        return {"action": "wait", "target": action["locator"]}, True, extra_limits
-    raise InspectError(f"unknown step kind {kind}", "use a supported --step spec")
+    dialogs: list[dict] = []
+
+    def on_dialog(dialog):
+        try:
+            dialogs.append({"type": dialog.type})
+            dialog.dismiss()
+        except Exception:
+            return
+
+    page.on("dialog", on_dialog)
+    page_js = False
+    step_fields: dict
+    try:
+        if kind == "click":
+            target, page_js = _action_locator(page, action["locator"])
+            pointer_press(page, target, timeout=timeout_ms)
+            page.wait_for_load_state("load", timeout=30000)
+            extra_limits["click_runs_page_scripts"] = True
+            step_fields = {"action": "click", "target": action["locator"]}
+        elif kind == "hover":
+            target, page_js = _action_locator(page, action["locator"])
+            target.hover(timeout=timeout_ms)
+            extra_limits["hover_may_trigger_css"] = True
+            extra_limits["hover_input"] = "locator.hover"
+            step_fields = {"action": "hover", "target": action["locator"]}
+        elif kind == "scroll":
+            dx, dy = action["dx"], action["dy"]
+            repeats = max(1, (abs(dx) + abs(dy)) // 300 + 1)
+            for _ in range(repeats):
+                page.mouse.wheel(dx, dy)
+            extra_limits["scroll_may_run_page_scripts"] = True
+            extra_limits["scroll_input"] = "mouse.wheel"
+            step_fields = {"action": "scroll", "target": f"{action['dx']},{action['dy']}"}
+        elif kind == "scroll_into":
+            target, page_js = _action_locator(page, action["locator"])
+            target.scroll_into_view_if_needed(timeout=timeout_ms)
+            extra_limits["scroll_into_view"] = True
+            extra_limits["scroll_may_run_page_scripts"] = True
+            extra_limits["scroll_input"] = "scroll_into_view_if_needed"
+            step_fields = {"action": "scroll_into", "target": action["locator"]}
+        elif kind == "type":
+            target, page_js = _action_locator(page, action["locator"])
+            target.fill(action["text"], timeout=timeout_ms)
+            extra_limits["type_runs_page_scripts"] = True
+            step_fields = {
+                "action": "type",
+                "target": action["locator"],
+                "value_meta": _typed_value_meta(action["text"]),
+            }
+        elif kind == "select":
+            target, page_js = _action_locator(page, action["locator"])
+            target.select_option(action["value"], timeout=timeout_ms)
+            extra_limits["select_runs_page_scripts"] = True
+            step_fields = {
+                "action": "select",
+                "target": action["locator"],
+                "value_meta": _typed_value_meta(action["value"]),
+            }
+        elif kind == "check":
+            target, page_js = _action_locator(page, action["locator"])
+            target.check(timeout=timeout_ms)
+            extra_limits["check_runs_page_scripts"] = True
+            step_fields = {"action": "check", "target": action["locator"]}
+        elif kind == "uncheck":
+            target, page_js = _action_locator(page, action["locator"])
+            target.uncheck(timeout=timeout_ms)
+            extra_limits["uncheck_runs_page_scripts"] = True
+            step_fields = {"action": "uncheck", "target": action["locator"]}
+        elif kind == "press":
+            page.keyboard.press(action["key"])
+            page_js = True
+            extra_limits["press_may_run_page_scripts"] = True
+            step_fields = {"action": "press", "target": action["key"]}
+        elif kind == "focus":
+            target, page_js = _action_locator(page, action["locator"])
+            target.focus(timeout=timeout_ms)
+            extra_limits["focus_may_trigger_css"] = True
+            step_fields = {"action": "focus", "target": action["locator"]}
+        elif kind == "wait_ms":
+            page.wait_for_timeout(action["ms"])
+            extra_limits["wait_used"] = f"timeout:{action['ms']}"
+            step_fields = {"action": "wait", "target": str(action["ms"])}
+        elif kind == "wait_locator":
+            target, page_js = _action_locator(page, action["locator"])
+            target.wait_for(state="visible", timeout=timeout_ms)
+            extra_limits["wait_used"] = f"locator:{action['locator']}"
+            step_fields = {"action": "wait", "target": action["locator"]}
+        else:
+            raise InspectError(f"unknown step kind {kind}", "use a supported --step spec")
+    finally:
+        page.remove_listener("dialog", on_dialog)
+
+    settle_ms, wait_policy = _post_step_settle_plan(action)
+    page.wait_for_timeout(settle_ms)
+    extra_limits["post_step_settle_ms"] = settle_ms
+    extra_limits["wait_policy"] = wait_policy
+    if dialogs:
+        step_fields["dialogs"] = dialogs
+    return step_fields, page_js, extra_limits
 
 
 def resolve_observe_steps(args: argparse.Namespace) -> list[dict]:
@@ -1512,12 +1681,7 @@ def resolve_observe_steps(args: argparse.Namespace) -> list[dict]:
 
 
 def _action_locator(page, locator: str):
-    text = (locator or "").strip()
-    if text.startswith("h:"):
-        raise InspectError(
-            "act does not accept a snapshot ordinal",
-            "pass id:, testid:, role:, or css: so the control is queried again",
-        )
+    text = _parse_action_locator_prefix(locator, context="act")
     if text.startswith("id:"):
         ident = text[3:]
         if not SAFE.fullmatch(ident):
@@ -1553,16 +1717,7 @@ def act_page(*, url: str, browser_name: str, profile: str, headed: bool, channel
     if action == "fill" and text is None:
         raise InspectError("fill needs --text", "pass the literal text to enter")
     if action != "wait_for_timeout":
-        if not locator or locator.strip().startswith("h:"):
-            raise InspectError(
-                "act does not accept a snapshot ordinal",
-                "pass id:, testid:, role:, or css: so the control is queried again",
-            )
-        if not locator.startswith(("id:", "testid:", "role:", "css:")):
-            raise InspectError(
-                "act locator must be id:, testid:, role:, or css:",
-                "observe prints those addresses; h:N is not accepted",
-            )
+        _parse_action_locator_prefix(locator or "", context="act")
     playwright, browser, page = _with_browser(url, browser_name, profile, headed, channel)
     failure = None
     result = None
@@ -1576,15 +1731,20 @@ def act_page(*, url: str, browser_name: str, profile: str, headed: bool, channel
                 stage="navigate",
             ) from exc
         page_js = False
+        step_limits: dict = {}
         try:
             if action == "wait_for_timeout":
-                page.wait_for_timeout(timeout_ms)
+                _, page_js, step_limits = run_playwright_step(
+                    page, {"kind": "wait_ms", "ms": timeout_ms}, timeout_ms=timeout_ms,
+                )
+            elif action == "click":
+                _, page_js, step_limits = run_playwright_step(
+                    page, {"kind": "click", "locator": locator}, timeout_ms=timeout_ms,
+                )
             else:
-                target, page_js = _action_locator(page, locator)
-                if action == "click":
-                    target.click(timeout=timeout_ms)
-                else:
-                    target.fill(text, timeout=timeout_ms)
+                _, page_js, step_limits = run_playwright_step(
+                    page, {"kind": "type", "locator": locator, "text": text}, timeout_ms=timeout_ms,
+                )
         except InspectError:
             raise
         except Exception as exc:
@@ -1622,6 +1782,7 @@ def act_page(*, url: str, browser_name: str, profile: str, headed: bool, channel
                 "ordinals": "rejected",
                 "dom": "not_requested",
                 "selector_engine": "playwright" if page_js else "none",
+                **step_limits,
             },
             "sections": {
                 "url": _section("playwright:page.url", "complete", {"url": strip_userinfo(page.url)}),
@@ -1687,6 +1848,7 @@ def _step_events_block(snapshot: dict) -> dict | None:
         "console": list(events.get("console") or []),
         "failed_requests": list(events.get("failed_requests") or []),
         "navigations": list(events.get("navigations") or []),
+        "dialogs": list(events.get("dialogs") or []),
         "truncated": bool(events.get("truncated")),
         "bodies": events.get("bodies"),
     }
@@ -1699,6 +1861,7 @@ def _step_event_counts(block: dict | None) -> dict | None:
         "console": len(block["console"]),
         "failed_requests": len(block["failed_requests"]),
         "navigations": len(block["navigations"]),
+        "dialogs": len(block["dialogs"]),
     }
 
 
@@ -1737,7 +1900,7 @@ def compare_snapshots(left: dict, right: dict) -> dict:
             left_counts[key] if left_counts else None,
             right_counts[key] if right_counts else None,
         )
-        for key in ("console", "failed_requests", "navigations")
+        for key in ("console", "failed_requests", "navigations", "dialogs")
     }
     event_digest_left = _content_digest(left_events) if left_events else None
     event_digest_right = _content_digest(right_events) if right_events else None

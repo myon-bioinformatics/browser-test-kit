@@ -86,8 +86,12 @@ def test_multi_step_writes_indexed_snapshots(tmp_path):
     assert one["step"]["index"] == 2 and one["step"]["action"] == "focus"
     two = json.loads((steps_dir / "step-002.json").read_text(encoding="utf-8"))
     assert two["step"]["action"] == "type" and two["step"]["target"] == "id:q"
+    assert two["step"]["value_meta"]["length"] == 2
+    assert "hi" not in json.dumps(two["step"]["events"])
     assert three["step"]["index"] == 4 and three["step"]["action"] == "click"
-    assert three["step"]["events"]["console"] == [{"level": "warning"}]
+    console = three["step"]["events"]["console"]
+    assert console and console[0]["level"] == "warning" and console[0]["source"] == "console"
+    assert "clicked" not in json.dumps(console)
 
 
 @pytest.mark.browser
