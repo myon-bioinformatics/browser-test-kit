@@ -146,7 +146,7 @@ def run_scenario(args, api):
                 outcome["redo_applied"] = field.input_value() == "Z"
                 outcome["redo_shortcut"] = redo_key
                 page.keyboard.press("Tab")
-                outcome["tab_focus_advanced"] = page.locator("#scenario-fetch").is_focused()
+                outcome["tab_focus_advanced"] = page.locator(":focus").first.get_attribute("id") == "scenario-fetch"
             elif args.case in ("offline", "http-error", "latency"):
                 if args.case == "offline":
                     context.set_offline(True)
@@ -175,6 +175,7 @@ def run_scenario(args, api):
                     outcome["permission"] = args.permission
                     outcome["configured_state"] = args.permission_state
                     outcome["reported_state"] = page.locator(probe_id).get_attribute("data-state")
+                    outcome["matches_requested"] = (args.permission_state != "grant" or outcome["reported_state"] == "granted")
                 except Exception:
                     scenario_coverage = "unavailable"
                     outcome = {"case": args.case, "reason": "unsupported_or_failed"}
