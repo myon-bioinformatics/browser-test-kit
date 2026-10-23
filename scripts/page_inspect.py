@@ -882,7 +882,7 @@ def count_shadow_roots(root: dict, *, limit: int = HARD_CAP * 10) -> dict:
 
     Walks children and shadowRoots of the main document only; child frame documents are not descended.
     """
-    opened = closed = visited = 0
+    opened = closed = user_agent = visited = 0
     truncated = False
     stack = [root]
     while stack:
@@ -892,13 +892,16 @@ def count_shadow_roots(root: dict, *, limit: int = HARD_CAP * 10) -> dict:
             truncated = True
             break
         for shadow in node.get("shadowRoots") or []:
-            if shadow.get("shadowRootType") == "closed":
+            kind = shadow.get("shadowRootType")
+            if kind == "user-agent":
+                user_agent += 1
+            elif kind == "closed":
                 closed += 1
             else:
                 opened += 1
             stack.append(shadow)
         stack.extend(node.get("children") or [])
-    return {"open": opened, "closed": closed, "count": opened + closed, "truncated": truncated}
+    return {"open": opened, "closed": closed, "count": opened + closed, "user_agent": user_agent, "truncated": truncated}
 
 
 def _controls_from_cdp(dom_nodes, ax_nodes, *, include_hidden: bool, role: str) -> tuple[list, dict]:
@@ -1090,40 +1093,43 @@ def observe_page(*, url: str, browser_name: str, profile: str, headed: bool, cha
                 limits=limits,
             ))
             return _finish(playwright, browser, None, results)
-        requests: dict[str, str] = {}
-
-        def on_request(event):
-            request = event.get("request") or {}
-            requests[event.get("requestId")] = request.get("method") or ""
-
-        def on_response(event):
+        # Network and console come from Playwright events, which exist in every engine. Listeners
+        # are attached before navigation; the page itself is not called for them.
+        def on_response(response):
             if len(network) >= 100:
                 state["network_truncated"] = True
                 return
-            response = event.get("response") or {}
+            request = response.request
             network.append({
-                "method": requests.get(event.get("requestId"), ""),
-                "status": response.get("status"),
-                "mime": response.get("mimeType") or "",
-                "type": event.get("type") or "",
-                "url": strip_userinfo(response.get("url") or ""),
+                "method": request.method or "",
+                "status": response.status,
+                "mime": (response.headers.get("content-type") or "").split(";")[0].strip(),
+                "type": request.resource_type or "",
+                "url": strip_userinfo(response.url or ""),
             })
 
-        def on_console(event):
+        def on_request_failed(request):
+            if len(network) >= 100:
+                state["network_truncated"] = True
+                return
+            network.append({
+                "method": request.method or "",
+                "status": None,
+                "mime": "",
+                "type": request.resource_type or "",
+                "url": strip_userinfo(request.url or ""),
+                "failure": clip(request.failure or "", 200),
+            })
+
+        def on_console(message):
             if len(console) >= 50:
                 state["console_truncated"] = True
                 return
-            args = event.get("args") or []
-            console.append({
-                "type": event.get("type") or "",
-                "argument_types": [arg.get("type") if isinstance(arg, dict) else "unknown" for arg in args],
-            })
+            console.append({"type": message.type or "", "argument_count": len(message.args)})
 
-        client.on("Network.requestWillBeSent", on_request)
-        client.on("Network.responseReceived", on_response)
-        client.on("Runtime.consoleAPICalled", on_console)
-        _cdp_send(client, "Network.enable", {}, sent)
-        _cdp_send(client, "Runtime.enable", {}, sent)
+        page.on("response", on_response)
+        page.on("requestfailed", on_request_failed)
+        page.on("console", on_console)
         try:
             page.goto(url, wait_until="load", timeout=30000)
         except Exception as exc:
@@ -1186,10 +1192,10 @@ def observe_page(*, url: str, browser_name: str, profile: str, headed: bool, cha
                 "resources": _section("cdp:Page.getResourceTree", "complete", {
                     "items": resource_rows, "document_url": document_url,
                 }),
-                "network": _section("cdp:Network", network_coverage, {
+                "network": _section("playwright:page.response", network_coverage, {
                     "prior_activity_available": False, "bodies": "not_requested", "items": network,
                 }),
-                "console": _section("cdp:Runtime.consoleAPICalled", console_coverage, {
+                "console": _section("playwright:page.console", console_coverage, {
                     "text": "not_requested", "prior_activity_available": False, "items": console,
                 }),
                 "storage": storage,
@@ -1198,14 +1204,15 @@ def observe_page(*, url: str, browser_name: str, profile: str, headed: bool, cha
                 }),
                 "shadow_roots": _section("cdp:DOM.getDocument pierce", "truncated" if shadow["truncated"] else "complete", {
                     "open": shadow["open"], "closed": shadow["closed"], "count": shadow["count"],
-                    "contents": "not_entered",
+                    "user_agent": shadow["user_agent"], "contents": "not_entered",
                 }),
             }
             viewport = page.viewport_size or {}
             limits = {
                 "page_js_called": page_js,
                 "navigation_runs_page_scripts": True,
-                "runtime_domain": "console events only",
+                "network_source": "playwright events",
+                "console_source": "playwright events; argument values are not read",
                 "service_workers": "blocked",
                 "redirects": "blocked",
                 "non_loopback": "blocked",
@@ -1245,7 +1252,6 @@ def observe_page(*, url: str, browser_name: str, profile: str, headed: bool, cha
                 ) from exc
             network.clear()
             console.clear()
-            requests.clear()
             state["network_truncated"] = False
             state["console_truncated"] = False
             results.append(capture({

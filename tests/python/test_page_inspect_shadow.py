@@ -35,7 +35,7 @@ def test_counts_open_closed_and_nested_roots_without_frames():
         {"nodeType": 1, "contentDocument": {"nodeType": 9, "shadowRoots": [{"shadowRootType": "open"}]}},
     ]}
     counts = page_inspect.count_shadow_roots(tree)
-    assert counts == {"open": 1, "closed": 1, "count": 2, "truncated": False}
+    assert counts == {"open": 1, "closed": 1, "count": 2, "user_agent": 0, "truncated": False}
 
 
 def test_truncation_is_reported_not_silent():
