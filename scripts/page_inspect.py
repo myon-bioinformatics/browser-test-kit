@@ -1238,7 +1238,11 @@ def observe_page(*, url: str, browser_name: str, profile: str, headed: bool, cha
             collector.attach()
             try:
                 step_part, page_js, step_limits = run_playwright_step(
-                    page, action, cdp_client=client, cdp_sent=sent,
+                    page,
+                    action,
+                    cdp_client=client,
+                    cdp_sent=sent,
+                    value_fingerprints=include_storage_fingerprints,
                 )
             except InspectError:
                 raise
@@ -1339,9 +1343,9 @@ def _post_step_settle_plan(action: dict) -> tuple[int, str]:
     return STEP_SETTLE_MS_DEFAULT, "default_settle"
 
 
-def _typed_value_meta(text: str) -> dict:
+def _typed_value_meta(text: str, *, fingerprints: bool = False) -> dict:
     payload = {"length": len(text)}
-    if text:
+    if fingerprints and text:
         payload.update(storage_fingerprint(text))
     return payload
 
@@ -1357,7 +1361,9 @@ class StepEventCollector:
         self.failed_requests: list[dict] = []
         self.navigations: list[dict] = []
         self.truncated = False
-        self._failed_by_loader: dict[str, dict] = {}
+        self._failed_by_request: dict[str, dict] = {}
+        self._request_urls: dict[str, str] = {}
+        self._console_keys: dict[tuple, int] = {}
         self._handlers: dict[str, object] = {}
         self._domains_enabled = False
 
@@ -1368,35 +1374,67 @@ class StepEventCollector:
             return True
         return False
 
-    def _note_failed(self, loader_id: str | None, url: str, status: int | None) -> None:
+    def _record_console_row(self, row: dict) -> None:
         if self._over_cap():
             return
-        key = loader_id or url or f"anon:{len(self._failed_by_loader)}"
-        row = self._failed_by_loader.get(key)
+        key = (
+            row.get("level"),
+            row.get("source"),
+            tuple(row.get("argument_types") or ()),
+        )
+        index = self._console_keys.get(key)
+        if index is None:
+            row["count"] = 1
+            self._console_keys[key] = len(self.console)
+            self.console.append(row)
+        else:
+            self.console[index]["count"] += 1
+
+    def _note_failed(self, request_id: str | None, status: int | None, url: str = "") -> None:
+        if self._over_cap():
+            return
+        rid = request_id or f"anon:{len(self._failed_by_request)}"
+        resolved_url = strip_userinfo(url) if url else self._request_urls.get(rid, "")
+        row = self._failed_by_request.get(rid)
         if row is None:
-            row = {"url": strip_userinfo(url), "status": status}
-            self._failed_by_loader[key] = row
+            row = {"url": resolved_url, "status": status}
+            self._failed_by_request[rid] = row
             self.failed_requests.append(row)
-        elif status is not None and row.get("status") is None:
-            row["status"] = status
-        elif url and not row.get("url"):
-            row["url"] = strip_userinfo(url)
+        else:
+            if status is not None and row.get("status") is None:
+                row["status"] = status
+            if resolved_url and not row.get("url"):
+                row["url"] = resolved_url
 
     def attach(self) -> None:
+        self._failed_by_request = {}
+        self._request_urls = {}
+        self._console_keys = {}
+        self.console = []
+        self.failed_requests = []
+        self.navigations = []
         if not self._domains_enabled:
             _cdp_send(self.client, "Page.enable", {}, self.sent)
             _cdp_send(self.client, "Log.enable", {}, self.sent)
             self._domains_enabled = True
 
+        def on_request_will_be_sent(event):
+            try:
+                request_id = event.get("requestId")
+                if not request_id:
+                    return
+                request = event.get("request") or {}
+                self._request_urls[request_id] = strip_userinfo(request.get("url") or "")
+            except Exception:
+                return
+
         def on_console(event):
             try:
-                if self._over_cap():
-                    return
                 level = event.get("type") or ""
                 if level not in ("error", "warning"):
                     return
                 args = event.get("args") or []
-                self.console.append({
+                self._record_console_row({
                     "level": level,
                     "source": "console",
                     "argument_types": [arg.get("type") if isinstance(arg, dict) else "unknown" for arg in args],
@@ -1406,20 +1444,16 @@ class StepEventCollector:
 
         def on_exception(_event):
             try:
-                if self._over_cap():
-                    return
-                self.console.append({"level": "error", "source": "exception"})
+                self._record_console_row({"level": "error", "source": "exception"})
             except Exception:
                 return
 
         def on_log(event):
             try:
-                if self._over_cap():
-                    return
                 entry = event.get("entry") or {}
                 level = entry.get("level") or ""
                 if level in ("error", "warning"):
-                    self.console.append({"level": level, "source": "log"})
+                    self._record_console_row({"level": level, "source": "log"})
             except Exception:
                 return
 
@@ -1429,20 +1463,16 @@ class StepEventCollector:
                 status = response.get("status")
                 if isinstance(status, int) and status >= 400:
                     self._note_failed(
-                        event.get("loaderId") or event.get("requestId"),
-                        response.get("url") or "",
+                        event.get("requestId"),
                         status,
+                        response.get("url") or "",
                     )
             except Exception:
                 return
 
         def on_loading_failed(event):
             try:
-                self._note_failed(
-                    event.get("loaderId") or event.get("requestId"),
-                    event.get("url") or event.get("documentURL") or "",
-                    None,
-                )
+                self._note_failed(event.get("requestId"), None, "")
             except Exception:
                 return
 
@@ -1461,6 +1491,7 @@ class StepEventCollector:
             "Runtime.consoleAPICalled": on_console,
             "Runtime.exceptionThrown": on_exception,
             "Log.entryAdded": on_log,
+            "Network.requestWillBeSent": on_request_will_be_sent,
             "Network.responseReceived": on_response,
             "Network.loadingFailed": on_loading_failed,
             "Page.frameNavigated": on_frame_navigated,
@@ -1576,6 +1607,7 @@ def run_playwright_step(
     timeout_ms: int = DEFAULT_STEP_TIMEOUT_MS,
     cdp_client=None,
     cdp_sent: list[str] | None = None,
+    value_fingerprints: bool = False,
 ) -> tuple[dict, bool, dict]:
     """Run one Playwright step for observe or act. Returns (step fields, page_js_called, extra limits)."""
     from interaction import press as pointer_press
@@ -1627,7 +1659,7 @@ def run_playwright_step(
             step_fields = {
                 "action": "type",
                 "target": action["locator"],
-                "value_meta": _typed_value_meta(action["text"]),
+                "value_meta": _typed_value_meta(action["text"], fingerprints=value_fingerprints),
             }
         elif kind == "select":
             target, page_js = _action_locator(page, action["locator"])
@@ -1636,7 +1668,7 @@ def run_playwright_step(
             step_fields = {
                 "action": "select",
                 "target": action["locator"],
-                "value_meta": _typed_value_meta(action["value"]),
+                "value_meta": _typed_value_meta(action["value"], fingerprints=value_fingerprints),
             }
         elif kind == "check":
             target, page_js = _action_locator(page, action["locator"])
@@ -2085,7 +2117,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--step",
         action="append",
         metavar="SPEC",
-        help="repeatable Playwright step before each post-step snapshot (click, hover, type, press, focus, wait, scroll)",
+        help="repeatable Playwright step before each post-step snapshot (click, hover, type, select, check, uncheck, press, focus, wait, scroll, scroll-into)",
     )
     observe.add_argument(
         "--after-action",

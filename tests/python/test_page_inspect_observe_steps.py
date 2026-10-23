@@ -91,6 +91,7 @@ def test_multi_step_writes_indexed_snapshots(tmp_path):
     assert three["step"]["index"] == 4 and three["step"]["action"] == "click"
     console = three["step"]["events"]["console"]
     assert console and console[0]["level"] == "warning" and console[0]["source"] == "console"
+    assert console[0].get("count", 1) == 1
     assert "clicked" not in json.dumps(console)
 
 
@@ -159,3 +160,120 @@ def test_compare_reports_step_event_deltas(tmp_path):
     report = json.loads(compared.stdout)
     assert report["step_events"]["relation"] == "different"
     assert report["step_events"]["counts"]["console"]["delta"] == 1
+
+
+FAILURES = """<!doctype html><meta charset="utf-8"><title>failures</title>
+<button id="go">Go</button>
+<script>
+  document.getElementById('go').addEventListener('click', () => {
+    fetch('/a404');
+    fetch('/b404');
+    fetch('/c404');
+  });
+</script>
+"""
+
+CONSOLE_DUP = """<!doctype html><meta charset="utf-8"><title>dup</title>
+<button id="go">Go</button>
+<script>
+  document.getElementById('go').addEventListener('click', () => {
+    console.warn('same');
+    console.warn('same');
+  });
+</script>
+"""
+
+
+@pytest.mark.browser
+def test_step_events_record_distinct_failed_requests(tmp_path):
+    (tmp_path / "index.html").write_text(FAILURES, encoding="utf-8")
+    handler = functools.partial(SimpleHTTPRequestHandler, directory=str(tmp_path))
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        url = f"http://127.0.0.1:{server.server_port}/index.html"
+        steps_dir = tmp_path / "steps"
+        steps_dir.mkdir()
+        done = run([
+            url, "--out", str(tmp_path / "passive.json"),
+            "--steps-dir", str(steps_dir),
+            "--step", "click:id:go",
+            "--step", "wait:400",
+            "--json",
+        ], tmp_path)
+    finally:
+        server.shutdown()
+    assert done.returncode == 0, done.stderr
+    failed = json.loads((steps_dir / "step-001.json").read_text(encoding="utf-8"))["step"]["events"]["failed_requests"]
+    urls = [row["url"] for row in failed]
+    assert any(url.endswith("/a404") for url in urls)
+    assert any(url.endswith("/b404") for url in urls)
+    assert any(url.endswith("/c404") for url in urls)
+    assert len({row["url"] for row in failed}) == 3
+
+
+def test_step_collector_strips_userinfo_from_request_url():
+    class FakeClient:
+        def on(self, *_args, **_kwargs):
+            return None
+
+        def remove_listener(self, *_args, **_kwargs):
+            return None
+
+    collector = page_inspect.StepEventCollector(FakeClient(), None, [])
+    collector._request_urls["req-1"] = page_inspect.strip_userinfo("http://user:secret@127.0.0.1:1/x")
+    collector._note_failed("req-1", 404, "")
+    assert collector.failed_requests[0]["url"] == "http://127.0.0.1:1/x"
+
+
+@pytest.mark.browser
+def test_step_events_dedupe_console_rows_with_count(tmp_path):
+    (tmp_path / "index.html").write_text(CONSOLE_DUP, encoding="utf-8")
+    handler = functools.partial(SimpleHTTPRequestHandler, directory=str(tmp_path))
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        url = f"http://127.0.0.1:{server.server_port}/index.html"
+        done = run([
+            url, "--out", str(tmp_path / "passive.json"),
+            "--after-out", str(tmp_path / "after.json"),
+            "--step", "click:id:go",
+            "--json",
+        ], tmp_path)
+    finally:
+        server.shutdown()
+    assert done.returncode == 0, done.stderr
+    console = json.loads((tmp_path / "after.json").read_text(encoding="utf-8"))["step"]["events"]["console"]
+    assert len(console) == 1
+    assert console[0]["level"] == "warning" and console[0]["count"] == 2
+
+
+@pytest.mark.browser
+def test_value_meta_length_only_unless_storage_fingerprints(tmp_path):
+    (tmp_path / "index.html").write_text(MULTI, encoding="utf-8")
+    handler = functools.partial(SimpleHTTPRequestHandler, directory=str(tmp_path))
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        url = f"http://127.0.0.1:{server.server_port}/index.html"
+        plain = run([
+            url, "--out", str(tmp_path / "passive.json"),
+            "--after-out", str(tmp_path / "plain.json"),
+            "--step", "type:id:q=secret",
+            "--json",
+        ], tmp_path)
+        flagged = run([
+            url, "--out", str(tmp_path / "passive2.json"),
+            "--after-out", str(tmp_path / "finger.json"),
+            "--include-storage-keys",
+            "--include-storage-fingerprints",
+            "--step", "type:id:q=secret",
+            "--json",
+        ], tmp_path)
+    finally:
+        server.shutdown()
+    assert plain.returncode == 0 and flagged.returncode == 0, plain.stderr + flagged.stderr
+    plain_meta = json.loads((tmp_path / "plain.json").read_text(encoding="utf-8"))["step"]["value_meta"]
+    finger_meta = json.loads((tmp_path / "finger.json").read_text(encoding="utf-8"))["step"]["value_meta"]
+    assert plain_meta == {"length": 6}
+    assert finger_meta["length"] == 6 and "sha256" in finger_meta
