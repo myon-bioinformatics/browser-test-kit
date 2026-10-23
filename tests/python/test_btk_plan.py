@@ -72,8 +72,10 @@ def test_headed_and_headless_chromium_keep_both_builds(tmp_path):
 
 def test_platform_matrix_keeps_the_unflagged_install(capsys):
     workflow = (ROOT / ".github" / "workflows" / "platform-matrix.yml").read_text()
-    install = "python -m playwright install --with-deps chromium firefox webkit"
+    install = "python -m playwright install chromium firefox webkit"
     assert install in workflow
+    assert "--with-deps" not in workflow
+    assert workflow.index("playwright install-deps chromium firefox webkit") < workflow.index(install)
     assert "--no-shell" not in workflow
     probe = (ROOT / "tools" / "platform_probe.py").read_text()
     assert "headed: bool = False" in probe
@@ -82,7 +84,7 @@ def test_platform_matrix_keeps_the_unflagged_install(capsys):
     assert 'collect --browser "$browser" --profile "$profile"' in workflow
     assert pip.plan_cli([str(ROOT)]) == 0
     out = capsys.readouterr().out
-    assert "platform-matrix.yml:40 full + shell (job uses both the full build and the shell)" in out
+    assert "platform-matrix.yml:48 full + shell (job uses both the full build and the shell)" in out
     assert "suggest" not in out
 
 

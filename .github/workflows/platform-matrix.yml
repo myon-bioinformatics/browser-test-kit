@@ -37,7 +37,15 @@ jobs:
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           python-version: "3.13"
-      - run: uv run --locked --group browser python -m playwright install --with-deps chromium firefox webkit
+      - name: System libraries (apt on Linux, bounded; installed before the browsers)
+        if: runner.os == 'Linux'
+        timeout-minutes: 8
+        run: |
+          sudo DEBIAN_FRONTEND=noninteractive dpkg --configure -a
+          uv run --locked --group browser python -m playwright install-deps chromium firefox webkit
+      - name: Install browsers
+        timeout-minutes: 10
+        run: uv run --locked --group browser python -m playwright install chromium firefox webkit
       - name: Collect every engine, profile and mode
         shell: bash
         run: |

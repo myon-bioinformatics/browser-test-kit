@@ -92,7 +92,15 @@ jobs:
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           python-version: '3.13'
-      - run: uv run --locked --group browser python -m playwright install --with-deps --only-shell ${{ matrix.browser }}
+      - name: System libraries (apt on Linux, bounded; installed before the browser)
+        if: runner.os == 'Linux'
+        timeout-minutes: 8
+        run: |
+          sudo DEBIAN_FRONTEND=noninteractive dpkg --configure -a
+          uv run --locked --group browser python -m playwright install-deps ${{ matrix.browser }}
+      - name: Install browser
+        timeout-minutes: 8
+        run: uv run --locked --group browser python -m playwright install --only-shell ${{ matrix.browser }}
       - name: Measure representative published pages
         env:
           BROWSER: ${{ matrix.browser }}
