@@ -1262,7 +1262,8 @@ def _secret_values(step: dict) -> list[str]:
     return values
 
 
-def perform_action(page, step: dict, *, timeout_ms: int, has_touch: bool, browser_name: str) -> dict:
+def perform_action(page, step: dict, *, timeout_ms: int, has_touch: bool, browser_name: str,
+                   cdp_client=None, cdp_sent: list | None = None) -> dict:
     """Run one step with Playwright's own methods. Unsupported actions are not imitated."""
     action = step["action"]
     support, reason = action_support(action, has_touch=has_touch)
@@ -1299,7 +1300,7 @@ def perform_action(page, step: dict, *, timeout_ms: int, has_touch: bool, browse
             page.mouse.wheel(step["dx"], step["dy"])
             page.wait_for_timeout(SCROLL_SETTLE_MS)
             extra = {}
-            offsets = _css_visual_offsets(page)
+            offsets = _read_visual_offsets(page, cdp_client, cdp_sent)
             if offsets is not None and offsets.get("pageY") is not None:
                 extra["scroll_y"] = offsets["pageY"]
             return _done(support, "scroll", False, **extra)
@@ -1875,6 +1876,19 @@ def _offsets_from_metrics(metrics) -> dict | None:
     return offsets or None
 
 
+def _read_visual_offsets(page, client, sent: list | None) -> dict | None:
+    """Read cssVisualViewport from the observe session when that session exists."""
+    if client is not None and sent is not None:
+        try:
+            metrics = _cdp_send(client, "Page.getLayoutMetrics", {}, sent)
+        except InspectError:
+            raise
+        except Exception:
+            return None
+        return _offsets_from_metrics(metrics)
+    return _css_visual_offsets(page)
+
+
 def _css_visual_offsets(page) -> dict | None:
     """CSS visual viewport offsets from Page.getLayoutMetrics. No page JavaScript."""
     client = None
@@ -2370,6 +2384,7 @@ def observe_page(*, url: str, browser_name: str, profile: str, headed: bool, cha
             try:
                 outcome = perform_action(
                     page, step, timeout_ms=timeout_ms, has_touch=has_touch, browser_name=browser_name,
+                    cdp_client=client, cdp_sent=sent,
                 )
                 if outcome.get("status") == "done" and page.url != raw_before:
                     page.wait_for_load_state("load", timeout=NAVIGATION_TIMEOUT_MS)

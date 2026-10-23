@@ -48,7 +48,7 @@ Service workers are blocked and redirects are aborted. Those are bounds on the s
 
 ## Snapshot compare
 
-`observe --step` repeats that snapshot once before the steps and once after each step, in the same browser, and writes one `btk-page-observe-run/1` file. Each observation is still `btk-page-observe/1`. Each pair is `btk-page-compare/1` from the same `compare` function. `--after-action` (and `--after-click`, an alias for `click:`) is one step from that same performer, written to two snapshot files. `scroll:DX,DY` is one `mouse.wheel` of that delta. `limits.scroll_y` is the CSS visual viewport `pageY` from `Page.getLayoutMetrics` after the wheel settles. `scroll:LOCATOR` and `scroll-into:LOCATOR` are `scroll_into_view_if_needed`.
+`observe --step` repeats that snapshot once before the steps and once after each step, in the same browser, and writes one `btk-page-observe-run/1` file. Each observation is still `btk-page-observe/1`. Each pair is `btk-page-compare/1` from the same `compare` function. `--after-action` (and `--after-click`, an alias for `click:`) is one step from that same performer, written to two snapshot files. `scroll:DX,DY` is one `mouse.wheel` of that delta. `limits.scroll_y` is the CSS visual viewport `pageY` from `Page.getLayoutMetrics` after the wheel settles, sent on the observe CDP session. `scroll:LOCATOR` and `scroll-into:LOCATOR` are `scroll_into_view_if_needed`.
 
 The snapshot after a step has `step` (index, action, target, URL before and after). A click sets `limits.click_runs_page_scripts`. Hover sets `hover_may_trigger_css`. Scroll sets `scroll_may_run_page_scripts`. Network and console on a later snapshot are the events since the previous snapshot. This is not passive observation: a locator action runs page scripts.
 
