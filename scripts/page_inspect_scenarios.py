@@ -154,7 +154,7 @@ def run_scenario(args, api):
                 started = time.monotonic()
                 page.locator("#scenario-fetch").click()
                 probe = page.locator("#scenario-result")
-                page.locator("#scenario-result[data-state='ok'], #scenario-result[data-state='error']").wait_for()
+                page.locator("#scenario-result[data-state='ok'], #scenario-result[data-state='error']").wait_for(state="attached")
                 outcome["fetch_result"] = probe.get_attribute("data-state")
                 if args.case == "latency":
                     outcome["delay_at_least_requested"] = (time.monotonic() - started) * 1000 >= args.latency_ms
@@ -171,7 +171,7 @@ def run_scenario(args, api):
                         context.clear_permissions()
                     page.locator("#scenario-permission").click()
                     probe_id = "#scenario-permission-result" if args.permission == "notifications" else "#scenario-geolocation-result"
-                    page.locator(probe_id + "[data-state]").wait_for()
+                    page.locator(probe_id + "[data-state]").wait_for(state="attached")
                     outcome["permission"] = args.permission
                     outcome["configured_state"] = args.permission_state
                     outcome["reported_state"] = page.locator(probe_id).get_attribute("data-state")
