@@ -34,7 +34,9 @@ INTERACTIVE_ROLES = {
     "button", "link", "textbox", "searchbox", "checkbox", "radio", "combobox",
     "slider", "spinbutton", "switch", "tab", "menuitem",
 }
-ACT_ACTIONS = {"click", "fill", "wait_for_timeout"}
+ACT_ACTIONS = {"click", "dblclick", "hover", "focus", "check", "uncheck", "fill", "press", "select", "wait_for_timeout"}
+# Each action maps to the Playwright method of the same meaning. press without a locator sends the key to the page.
+ACT_TEXT_ACTIONS = {"fill", "press", "select"}
 HARD_CAP = 500
 SURVEY_LIMIT_DEFAULT = 50
 SURVEY_LIMIT_MAX = 200
@@ -1310,11 +1312,12 @@ def act_page(*, url: str, browser_name: str, profile: str, headed: bool, channel
     if action not in ACT_ACTIONS:
         raise InspectError(
             f"unknown action {action}",
-            "use click, fill, or wait_for_timeout",
+            "use one of " + ", ".join(sorted(ACT_ACTIONS)),
         )
-    if action == "fill" and text is None:
-        raise InspectError("fill needs --text", "pass the literal text to enter")
-    if action != "wait_for_timeout":
+    if action in ACT_TEXT_ACTIONS and text is None:
+        raise InspectError(f"{action} needs --text", "pass the literal text, key name, or option value")
+    keyboard_only = action == "press" and not (locator or "").strip()
+    if action != "wait_for_timeout" and not keyboard_only:
         if not locator or locator.strip().startswith("h:"):
             raise InspectError(
                 "act does not accept a snapshot ordinal",
@@ -1341,12 +1344,29 @@ def act_page(*, url: str, browser_name: str, profile: str, headed: bool, channel
         try:
             if action == "wait_for_timeout":
                 page.wait_for_timeout(timeout_ms)
+            elif keyboard_only:
+                page_js = True
+                page.keyboard.press(text, timeout=timeout_ms)
             else:
                 target, page_js = _action_locator(page, locator)
                 if action == "click":
                     target.click(timeout=timeout_ms)
-                else:
+                elif action == "fill":
                     target.fill(text, timeout=timeout_ms)
+                elif action == "press":
+                    target.press(text, timeout=timeout_ms)
+                elif action == "select":
+                    target.select_option(text, timeout=timeout_ms)
+                elif action == "dblclick":
+                    target.dblclick(timeout=timeout_ms)
+                elif action == "hover":
+                    target.hover(timeout=timeout_ms)
+                elif action == "focus":
+                    target.focus(timeout=timeout_ms)
+                elif action == "check":
+                    target.check(timeout=timeout_ms)
+                elif action == "uncheck":
+                    target.uncheck(timeout=timeout_ms)
         except InspectError:
             raise
         except Exception as exc:
@@ -1614,7 +1634,7 @@ def build_parser() -> argparse.ArgumentParser:
     act.add_argument("target", help="loopback URL; a snapshot ordinal is not accepted")
     act.add_argument("--action", required=True, choices=tuple(sorted(ACT_ACTIONS)))
     act.add_argument("--locator", default="", help="id:, testid:, role:, or css: from observe")
-    act.add_argument("--text", default=None, help="literal text for fill")
+    act.add_argument("--text", default=None, help="literal text for fill, key name for press (Playwright names, for example Enter or ControlOrMeta+A), option value for select")
     act.add_argument("--timeout-ms", type=_bounded(120000), default=5000)
     act.add_argument("--browser", choices=("chromium", "firefox", "webkit"), default="chromium")
     act.add_argument("--profile", choices=tuple(PROFILES), default="desktop")
