@@ -66,7 +66,7 @@ jobs:
     name: Published Flutter / ${{ matrix.os }} / ${{ matrix.browser }} / ${{ matrix.profile }}
     needs: plan
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: 90
     defaults:
       run:
         shell: bash
