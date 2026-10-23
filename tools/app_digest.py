@@ -9,7 +9,7 @@ It also writes a short Markdown summary for a pull-request comment.
 
 Uses the same trusted, pinned Ironmate checkout as app_comparison.py for PNG work.
 
-    python -S scripts/app_digest.py app-results --ironmate .ironmate --runners-json '["ubuntu-24.04"]' \
+    python -S tools/app_digest.py app-results --ironmate .ironmate --runners-json '["ubuntu-24.04"]' \
         --out app-digest [--run-url URL] [--max-bytes 1000000]
 """
 from __future__ import annotations

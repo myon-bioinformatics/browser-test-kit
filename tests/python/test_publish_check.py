@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-spec = importlib.util.spec_from_file_location("publish_check", ROOT / "scripts" / "publish_check.py")
+spec = importlib.util.spec_from_file_location("publish_check", ROOT / "tools" / "publish_check.py")
 pc = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(pc)
 

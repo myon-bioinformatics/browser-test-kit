@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = ROOT / "scripts" / "page_text.py"
+SCRIPT = ROOT / "tools" / "page_text.py"
 SAMPLE = ROOT / "fixtures" / "page_text" / "sample.html"
 GOLDEN = ROOT / "fixtures" / "page_text" / "sample.expected.txt"
 SAMPLE_URL = "https://example.test/docs/page.html"

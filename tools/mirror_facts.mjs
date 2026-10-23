@@ -1,15 +1,15 @@
 #!/usr/bin/env node
 // Facts about a document as read by independent JS libraries, without a browser.
 //
-//   node scripts/mirror_facts.mjs markdown README.md [--reader markdown-it|marked]
-//   node scripts/mirror_facts.mjs html page.html                     (linkedom)
-//   node scripts/mirror_facts.mjs xlsx book.xlsx [--reader exceljs|sheetjs]
+//   node tools/mirror_facts.mjs markdown README.md [--reader markdown-it|marked]
+//   node tools/mirror_facts.mjs html page.html                     (linkedom)
+//   node tools/mirror_facts.mjs xlsx book.xlsx [--reader exceljs|sheetjs]
 //
 // Prints one `mirror-facts/1` JSON line. markdown/html: headings [level, text], links [href],
 // images [src, alt], code [language, text]. xlsx: sheets [name], cells [sheet, ref, value]
 // (formula cells give their cached result; dates as Excel serial numbers),
 // formulas [sheet, ref, formula], merges [sheet, range].
-// Compare two or more fact files with `python -S scripts/mirror_check.py A.json B.json ...`.
+// Compare two or more fact files with `python -S tools/mirror_check.py A.json B.json ...`.
 // Libraries resolve from this kit first, then from the current directory; none needs a browser.
 import {readFileSync} from 'node:fs';
 import {createRequire} from 'node:module';

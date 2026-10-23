@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-spec = importlib.util.spec_from_file_location('platform_probe', ROOT / 'scripts/platform_probe.py')
+spec = importlib.util.spec_from_file_location('platform_probe', ROOT / 'tools/platform_probe.py')
 pp = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(pp)
 pa = pp.adapters
@@ -97,7 +97,7 @@ def test_facts_probe_is_isolated_from_target_css_and_bindings_observe_null_trans
         try:
             page = browser.new_page()
             page.goto(url)
-            page.add_script_tag(path=str(ROOT/'scripts/platform_facts.js'))
+            page.add_script_tag(path=str(ROOT/'tools/platform_facts.js'))
             before = page.locator('#increment').evaluate('(e) => window.__btkPlatformFacts(e)')
             page.add_style_tag(content='div {border:10px solid red!important; padding:30px!important; box-sizing:border-box!important}')
             after = page.locator('#increment').evaluate('(e) => window.__btkPlatformFacts(e)')

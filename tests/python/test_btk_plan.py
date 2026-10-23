@@ -49,15 +49,15 @@ jobs:
           for browser in chromium firefox webkit; do
             collect --browser "$browser" --profile desktop
           done
-          xvfb-run -a python scripts/platform_probe.py collect --browser "$browser" --headed
+          xvfb-run -a python tools/platform_probe.py collect --browser "$browser" --headed
   headed_only:
     steps:
       - run: python -m playwright install --with-deps chromium firefox webkit
-      - run: xvfb-run -a python scripts/platform_probe.py collect --browser chromium --headed
+      - run: xvfb-run -a python tools/platform_probe.py collect --browser chromium --headed
   branded:
     steps:
       - run: python -m playwright install --with-deps --no-shell chromium
-      - run: python scripts/platform_probe.py collect --browser chromium --channel chrome --headed
+      - run: python tools/platform_probe.py collect --browser chromium --channel chrome --headed
 """
 
 
@@ -75,7 +75,7 @@ def test_platform_matrix_keeps_the_unflagged_install(capsys):
     install = "python -m playwright install --with-deps chromium firefox webkit"
     assert install in workflow
     assert "--no-shell" not in workflow
-    probe = (ROOT / "scripts" / "platform_probe.py").read_text()
+    probe = (ROOT / "tools" / "platform_probe.py").read_text()
     assert "headed: bool = False" in probe
     assert "headless=not headed" in probe
     assert 'for browser in chromium firefox webkit; do' in workflow

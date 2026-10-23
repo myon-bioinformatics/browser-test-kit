@@ -29,8 +29,8 @@ commit. `browser_version` is always recorded.
 python examples/capture_browser_dom.py http://127.0.0.1:8000/index.html --aria-snapshot --same-origin-only --output page.json
 ```
 
-Use existing `scripts/page_text.py` for static extraction without a browser.
-`python scripts/page_text.py <URL> --compare-rendered page.json` compares that static
+Use existing `tools/page_text.py` for static extraction without a browser.
+`python tools/page_text.py <URL> --compare-rendered page.json` compares that static
 text with this capture's `visible` (`innerText`); capture the same element
 (`--selector main` when the page has a `<main>`) so the scopes match.
 GHI's selected-body HTML reader remains a separate downstream consumer. No GHI

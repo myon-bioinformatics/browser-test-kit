@@ -14,8 +14,8 @@ Replaces the re-typed one-liner
 
 Stdlib only; runs under ``python -S`` (the child pytest runs without ``-S``)::
 
-    python -S scripts/pytest_brief.py -- --cov=xprobe --cov-branch --cov-report=term --cov-fail-under=90
-    python -S scripts/pytest_brief.py --requirements tool/python/requirements.txt -- tool/python/tests
+    python -S tools/pytest_brief.py -- --cov=xprobe --cov-branch --cov-report=term --cov-fail-under=90
+    python -S tools/pytest_brief.py --requirements tool/python/requirements.txt -- tool/python/tests
 
 Exit code: pytest's own (0 passed, 1 failed, ...); 3 = installing a requirement failed.
 """

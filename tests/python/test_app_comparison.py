@@ -6,8 +6,8 @@ import sys
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / 'scripts'))
-spec = importlib.util.spec_from_file_location('app_comparison', ROOT / 'scripts/app_comparison.py')
+sys.path.insert(0, str(ROOT / 'tools'))
+spec = importlib.util.spec_from_file_location('app_comparison', ROOT / 'tools/app_comparison.py')
 app = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(app)
 

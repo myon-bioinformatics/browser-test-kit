@@ -99,4 +99,4 @@ def test_module_smoke_still_checks_noneditable_install_outside_checkout():
     for name in ('python', 'test-locked'):
         step = next(s for s in jobs[name]['steps'] if s.get('name') == 'Scripts install and run as modules (python -m)')
         assert 'cd "$RUNNER_TEMP"' in step['run']
-        assert 'uv run --locked --no-dev --no-editable --project "$GITHUB_WORKSPACE" python -m check_png --help' in step['run']
+        assert 'uv run --locked --no-dev --no-editable --project "$GITHUB_WORKSPACE" python -m btk --help' in step['run']

@@ -16,7 +16,7 @@ Replaces ``sleep 60; curl -s -o /dev/null -w '%{http_code}' URL``, which only sa
 blind ``sleep``. PATHs are joined to ``--site``; full URLs are used as given. Stdlib only;
 runs under ``python -S``::
 
-    python -S scripts/publish_check.py --site https://OWNER.github.io/ \\
+    python -S tools/publish_check.py --site https://OWNER.github.io/ \\
         tools/lab/pixiv-panel.js tools/lab/index.html --local-root . \\
         --contains 'pixiv-panel.js' --repo OWNER/OWNER.github.io --wait 600
 

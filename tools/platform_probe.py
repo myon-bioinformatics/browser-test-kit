@@ -1,9 +1,9 @@
 """Measure how one OS x browser x device sees the same page, and compare them in tabs (platform-matrix).
 
-    python scripts/platform_probe.py collect --browser chromium --profile desktop --out DIR [--headed] [--channel chrome]
-    python -S scripts/platform_probe.py merge DIR... --out dataset.json      # one dataset from many runs
-    python -S scripts/platform_probe.py summary dataset.json                 # one line per environment; exit 1 if any fail
-    python -S scripts/platform_probe.py render dataset.json --out matrix.html  # tabs: OS / browser / device / mode
+    python tools/platform_probe.py collect --browser chromium --profile desktop --out DIR [--headed] [--channel chrome]
+    python -S tools/platform_probe.py merge DIR... --out dataset.json      # one dataset from many runs
+    python -S tools/platform_probe.py summary dataset.json                 # one line per environment; exit 1 if any fail
+    python -S tools/platform_probe.py render dataset.json --out matrix.html  # tabs: OS / browser / device / mode
 
 collect defaults to fixtures/platform_probe.html; --adapter JSON selects an app. It records `btk-platform-facts/1`:
 screen, window outer/inner (frame = outer - inner; real only when headed), scrollbar
@@ -175,7 +175,7 @@ def _collect(browser_name: str, profile: str, *, headed: bool, channel: str | No
             provenance = adapters.read_provenance(page, config, url) if config else None
             if config:
                 adapters.prepare(page, config)
-                page.add_script_tag(path=str(ROOT / 'scripts' / 'platform_facts.js'))
+                page.add_script_tag(path=str(ROOT / 'tools' / 'platform_facts.js'))
                 facts = page.locator(config['click']['target']).evaluate('(e) => window.__btkPlatformFacts(e)')
                 layout = adapters.layout(page, config)
             else:

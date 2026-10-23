@@ -7,7 +7,7 @@ import sys
 import pytest
 from test_check_capture_evidence import png, SHA
 
-SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
+SCRIPTS = Path(__file__).resolve().parents[2] / "tools"
 
 
 @pytest.mark.parametrize("names", [

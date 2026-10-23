@@ -10,8 +10,8 @@ prints its last ``--tail`` lines.
 
 Stdlib only; runs under ``python -S``::
 
-    python -S scripts/py_matrix.py 3.9 3.13 -- tests/python/test_browser_test_kit_gh_ops.py
-    python -S scripts/py_matrix.py 3.9 3.12 3.13 --with 'pytest>=8' --timeout 300
+    python -S tools/py_matrix.py 3.9 3.13 -- tests/python/test_browser_test_kit_gh_ops.py
+    python -S tools/py_matrix.py 3.9 3.12 3.13 --with 'pytest>=8' --timeout 300
 
 Exit codes: 0 = every version passed; 1 = a version failed or timed out;
 2 = uv not found or usage error.

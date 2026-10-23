@@ -12,7 +12,7 @@ from unittest.mock import patch
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = ROOT / "scripts" / "pytest_brief.py"
+SCRIPT = ROOT / "tools" / "pytest_brief.py"
 spec = importlib.util.spec_from_file_location("pytest_brief", SCRIPT)
 pb = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(pb)

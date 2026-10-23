@@ -5,11 +5,11 @@ A mirror test asks two or more implementations the same question about one artif
 and checks that they agree, e.g. ExcelJS, SheetJS and a stdlib OOXML reader reading
 the cells of one workbook, or your own Markdown helper vs markdown-it vs marked. No
 side is the oracle; agreement is evidence, disagreement is a lead. Facts come from
-``scripts/mirror_facts.mjs`` (JS readers), ``facts xlsx`` below (stdlib reader) or
+``tools/mirror_facts.mjs`` (JS readers), ``facts xlsx`` below (stdlib reader) or
 your own code, as ``mirror-facts/1`` JSON::
 
-    python -S scripts/mirror_check.py compare ours.json markdown-it.json marked.json
-    python -S scripts/mirror_check.py facts xlsx book.xlsx > stdlib.json
+    python -S tools/mirror_check.py compare ours.json markdown-it.json marked.json
+    python -S tools/mirror_check.py facts xlsx book.xlsx > stdlib.json
 
 ``compare`` reduces values to what every side can state (heading/alt text loses
 inline Markdown and tags; ``<url>`` loses brackets; numbers are rounded to 9 digits,

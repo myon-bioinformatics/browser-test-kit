@@ -12,8 +12,8 @@ sub-step, e.g. pytest's ``setup``/``call``/``teardown``); and several other
 optional fields consumers must tolerate even when unrecognized.
 
 This module is a library, not a CLI: it is imported by
-``scripts/terminal_browser.py``, ``scripts/pytest_btk_events.py``, and
-``scripts/evidence_board.py``. Nothing here is loaded implicitly -- there is
+``tools/terminal_browser.py``, ``tools/pytest_btk_events.py``, and
+``tools/evidence_board.py``. Nothing here is loaded implicitly -- there is
 no ``conftest.py`` and no import-time side effect beyond defining names.
 
 Stdlib only; runs under ``python -S``.
@@ -136,9 +136,9 @@ def read(path_or_lines: Union[str, Path, Iterable[str], TextIO]) -> ReadResult:
 
 
 def classify_terminal_browser(event: dict) -> Union[str, None]:
-    """Map a ``scripts/terminal_browser.py`` event to a btk-event/1 ``status``.
+    """Map a ``tools/terminal_browser.py`` event to a btk-event/1 ``status``.
 
-    See "Mapping scripts/terminal_browser.py exits to status" in
+    See "Mapping tools/terminal_browser.py exits to status" in
     ``docs/evidence-events.md``. Returns ``None`` for terminal-browser events
     that carry no status of their own (``terminal_browser_found``,
     ``terminal_browser_start``).
@@ -163,7 +163,7 @@ def main(argv: Union[list, None] = None) -> int:
         description=(
             "btk-event/1 library: emit(), read(), classify_terminal_browser(). "
             "This module has no standalone behavior; import it from a producer "
-            "or consumer script, such as scripts/evidence_board.py."
+            "or consumer script, such as tools/evidence_board.py."
         ),
     )
     parser.parse_args(argv)

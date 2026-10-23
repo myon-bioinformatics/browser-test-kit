@@ -17,8 +17,8 @@ only network-looking failures after 2s/4s/8s/16s; it never forces.
 
 Stdlib only; runs under ``python -S``::
 
-    python -S scripts/git_commit.py --message-file /tmp/msg.txt src/app.py
-    python -S scripts/git_commit.py --message-file msg.txt a.py b.py \
+    python -S tools/git_commit.py --message-file /tmp/msg.txt src/app.py
+    python -S tools/git_commit.py --message-file msg.txt a.py b.py \
         --trailer "Co-Authored-By: Claude <noreply@anthropic.com>" --push
 
 Exit codes: 0 = committed (and pushed, if asked); 1 = a git command failed
@@ -41,7 +41,7 @@ Runner = Callable[..., "subprocess.CompletedProcess[str]"]
 
 def _canonical_ops():
     """Load the adjacent locked parent implementation without a sys.path fallback."""
-    path = Path(__file__).with_name("gh_ops.py")
+    path = Path(__file__).resolve().parents[1] / "scripts" / "gh_ops.py"
     spec = importlib.util.spec_from_file_location("_git_commit_parent_ops", path)
     if spec is None or spec.loader is None:
         raise ImportError(f"cannot load canonical gh_ops from {path}")

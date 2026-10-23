@@ -22,7 +22,7 @@ the contract) and reports:
 
 A pytest test can emit more than one ``test_result`` event for the same
 ``test_id`` -- one per report phase (``phase``: ``setup``/``call``/
-``teardown``; see ``scripts/pytest_btk_events.py``). Counting every event
+``teardown``; see ``tools/pytest_btk_events.py``). Counting every event
 would double count a test whose ``call`` phase reports a status and whose
 ``teardown`` phase *also* reports one (a teardown that raises after the test
 body already ran). Events that carry a ``test_id`` are therefore buffered

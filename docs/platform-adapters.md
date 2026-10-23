@@ -28,7 +28,7 @@ Routes and emojis follow flutter_navigation_basic's generated page identities
 it asks for geolocation permission. Screenshots are stored per page and environment
 (`app-results/<adapter>/<OS>-<browser>-<profile>/`).
 
-After the screenshot comparison (`scripts/app_comparison.py` with the pinned Ironmate),
+After the screenshot comparison (`tools/app_comparison.py` with the pinned Ironmate),
 the report job adds web-ui's `tool/capture_matrix.py` at a pinned merged commit:
 `screenshots/viewer.html` shows one section per page, opened from its emoji, with each
 environment's tile, pass/fail and deployed build. Update the web-ui SHA together with its
@@ -55,11 +55,11 @@ satisfy the app-specific postcondition. Flutter bypasses the ordinary DOM
 real-input postcondition still fails when an overlay blocks the action.
 
 ```sh
-python scripts/platform_probe.py collect --browser chromium --profile desktop \
+python tools/platform_probe.py collect --browser chromium --profile desktop \
   --adapter adapters/flutter-counter.json --widths 320 384 \
   --out app-results --evidence-dir app-results/counter/screenshots
-python -S scripts/platform_probe.py merge app-results --out app-matrix/dataset.json
-python -S scripts/platform_probe.py render app-matrix/dataset.json --out app-matrix/index.html
+python -S tools/platform_probe.py merge app-results --out app-matrix/dataset.json
+python -S tools/platform_probe.py render app-matrix/dataset.json --out app-matrix/index.html
 ```
 
 `--url https://.../#/route` overrides the adapter URL, for example for a locally
@@ -92,7 +92,7 @@ the Pages deployment was built from. The record keeps it as
 `build=<sha>`. It is reported, never gating: a missing file or field gives
 `value: null` with the reason. Only relative paths without `..` are accepted.
 
-Browser/OS facts live in `scripts/platform_facts.js` and are used by both lanes:
+Browser/OS facts live in `tools/platform_facts.js` and are used by both lanes:
 screen, window, viewport, DPR, safe areas, input/media preferences, platform and font
 widths. A shadow-isolated measuring probe avoids application CSS contaminating the
 classic scrollbar measurement. Fixture-only library/SRI checks stay in the fixture.
@@ -156,13 +156,13 @@ occlusion and missing elements. They use a loopback server and no public network
 ## Screenshot comparison artifact
 
 The report job also checks out a full-commit-pinned Ironmate and calls
-`scripts/app_comparison.py`. `platform-app-matrix/screenshots/` contains `sheet.png`,
+`tools/app_comparison.py`. `platform-app-matrix/screenshots/` contains `sheet.png`,
 a labeled `index.html`, `tiles/` and `report.json`. Open `screenshots/index.html` for
 the grid and independent capture evidence, or the parent `index.html` for all
 platform facts and per-width layout/click details. Capture job failures remain failures.
 
 ```sh
-python -S scripts/app_comparison.py app-results --ironmate ../Ironmate \
+python -S tools/app_comparison.py app-results --ironmate ../Ironmate \
   --runners-json '["ubuntu-24.04","macos-latest","windows-latest"]' \
   --out app-matrix/screenshots
 ```
@@ -187,8 +187,8 @@ layout/click failure before attributing a difference to an application defect.
 ## Select a comparison or digest plan
 
 ```sh
-python -S scripts/app_comparison.py app-results --runners-json '["ubuntu-24.04"]' --page 'portal-*' --env '*-chromium-*' --list
-python -S scripts/app_digest.py app-results --runners-json '["ubuntu-24.04"]' --page 'flutter-home' --env 'Linux-*' --ironmate .ironmate --out digest
+python -S tools/app_comparison.py app-results --runners-json '["ubuntu-24.04"]' --page 'portal-*' --env '*-chromium-*' --list
+python -S tools/app_digest.py app-results --runners-json '["ubuntu-24.04"]' --page 'flutter-home' --env 'Linux-*' --ironmate .ironmate --out digest
 ```
 
 Both commands accept repeatable case-sensitive `--page` adapter filename-stem

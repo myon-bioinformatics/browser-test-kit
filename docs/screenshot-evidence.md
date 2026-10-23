@@ -9,18 +9,18 @@ and framework scroll adapters in the owning application.
 
 ## Existing implementation and limits
 
-- `scripts/check_png.py`: stdlib-only PNG signature, IHDR dimensions and terminal
+- `tools/check_png.py`: stdlib-only PNG signature, IHDR dimensions and terminal
   IEND checks. This is a structural check, not a full image decoder or visual review.
-- `scripts/image_diff.py`: stdlib pixel diff for two PNGs (paths or `ZIP::member`)
+- `tools/image_diff.py`: stdlib pixel diff for two PNGs (paths or `ZIP::member`)
   using vendored `pillow_min.py`. Prints one line (`size`, `changed`, `ratio`,
   `bbox`, `max_delta`); exit `0` when identical within `--tolerance`, `1` when they
   differ, `2` on input errors (including unsupported Python). Requires Python 3.11+.
   Details: [image-diff.md](image-diff.md).
 
   ```sh
-  python scripts/image_diff.py evidence.zip::t/home-draw-header.png evidence.zip::t/returned-home-header.png --clip 0,0,390,60 --viewport-width 390
+  python tools/image_diff.py evidence.zip::t/home-draw-header.png evidence.zip::t/returned-home-header.png --clip 0,0,390,60 --viewport-width 390
   ```
-- `scripts/check_evidence.py`: requires exact project identities with at least one
+- `tools/check_evidence.py`: requires exact project identities with at least one
   `stage: "complete"` receipt and validates every complete PNG record, including
   retries. Optional recorded dimensions must match the PNG.
 - `tests/node/smoke.spec.ts`, `tests/python/test_smoke.py` and
@@ -29,7 +29,7 @@ and framework scroll adapters in the owning application.
   Its stage/status vocabulary is separate from the screenshot receipt's
   `stage: "complete"`; do not interchange those formats.
 
-`scripts/check_capture_evidence.py` separately handles multi-image `captures[]`
+`tools/check_capture_evidence.py` separately handles multi-image `captures[]`
 receipts. It requires a complete named capture set per project, validates every
 complete retry, checks checkout SHA, PNG byte counts/hashes and optional dimensions,
 and can compare canonical timestamps and run identity. The single-image validator
@@ -67,7 +67,7 @@ application assertions and visual review remain necessary.
 Use the existing single-capture validator where its receipt fits:
 
 ```sh
-python -S scripts/check_evidence.py test-results \
+python -S tools/check_evidence.py test-results \
   --pattern '**/evidence.json' \
   --expect chromium,firefox,webkit,mobile-webkit
 ```
@@ -78,7 +78,7 @@ installation, Playwright config and expected identities in parity.
 For multi-capture receipts such as Flutter's Home/Build diagnostics format:
 
 ```sh
-python -S scripts/check_capture_evidence.py test-results \
+python -S tools/check_capture_evidence.py test-results \
   --expect chromium,firefox,webkit,mobile-webkit \
   --captures home.png,build-diagnostics.png \
   --sha "$TESTED_SHA" --canonical build/metadata.json

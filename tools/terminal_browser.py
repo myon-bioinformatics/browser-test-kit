@@ -6,7 +6,7 @@ without requiring a graphical/kitty-capable terminal in every CI runner.
 
 This file stays copy-paste portable on its own: ``btk_events`` (this kit's
 shared JSONL event library, see ``docs/evidence-events.md``) is imported only
-if it happens to be importable (i.e. ``scripts/btk_events.py`` is alongside
+if it happens to be importable (i.e. ``tools/btk_events.py`` is alongside
 this file, or already on ``sys.path``). If it is not, a tiny inline fallback
 below reproduces just enough of ``btk_events.emit()``/``classify_terminal_browser()``
 to keep emitting the same btk-event/1-shaped JSONL, so copying this one file

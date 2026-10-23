@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = ROOT / "scripts" / "jsonl_digest.py"
+SCRIPT = ROOT / "tools" / "jsonl_digest.py"
 spec = importlib.util.spec_from_file_location("jsonl_digest", SCRIPT)
 jsonl_digest = importlib.util.module_from_spec(spec)
 assert spec.loader

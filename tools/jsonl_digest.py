@@ -21,11 +21,11 @@ matching records before digesting. ``--count FIELD`` and ``--num FIELD``
 n/min/median/mean/max line, for that field. Stdlib only; runs under
 ``python -S``::
 
-    python -S scripts/jsonl_digest.py run.jsonl
-    python -S scripts/jsonl_digest.py session.jsonl --key type --last 5 --show 12
-    python -S scripts/jsonl_digest.py mcp-session.jsonl --pairs
-    python -S scripts/jsonl_digest.py trace.jsonl --where event=jev/backend_answer --count kind --num answer.noul
-    some-command 2>&1 | python -S scripts/jsonl_digest.py -
+    python -S tools/jsonl_digest.py run.jsonl
+    python -S tools/jsonl_digest.py session.jsonl --key type --last 5 --show 12
+    python -S tools/jsonl_digest.py mcp-session.jsonl --pairs
+    python -S tools/jsonl_digest.py trace.jsonl --where event=jev/backend_answer --count kind --num answer.noul
+    some-command 2>&1 | python -S tools/jsonl_digest.py -
 
 Exit codes: 0 = digested (even if it contains errors); 1 = no JSON records
 (or none match ``--where``); 2 = unreadable input.

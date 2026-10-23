@@ -16,7 +16,7 @@ The kit's center is browser testing: Playwright lanes, evidence acquisition and 
 
 This supplied panel is an orientation aid, not a complete execution diagram.
 [`twin_parity.py`](scripts/twin_parity.py) checks Python/Node helper parity, not differences between browser
-engines; [`evidence_board.py`](scripts/evidence_board.py) summarizes event logs rather than validating screenshot
+engines; [`evidence_board.py`](tools/evidence_board.py) summarizes event logs rather than validating screenshot
 pixels. Screenshot validation is a separate check, and Stagehand/Replay remain
 optional lanes. [Crop provenance](docs/assets/repository-concept.json).
 
@@ -33,9 +33,10 @@ that every browser or environment has been tested.
 ## Python support
 
 - Stdlib-only modules and the base package: **Python 3.9+**, with no runtime dependencies.
-  Run a source script with `python -S scripts/check_png.py --help`, or install the
-  base package with `python -m pip install .` and use `python -m check_png --help`.
-- Image diff (`scripts/image_diff.py`): **Python 3.11+** with the vendored
+  Run a source script with `python -S tools/check_png.py --help`, or install the
+  base package with `python -m pip install .` and use `python -m btk --help`. Tools under `tools/` are
+  repository tooling and are not installed.
+- Image diff (`tools/image_diff.py`): **Python 3.11+** with the vendored
   `pillow_min.py` from `vendor.lock.json` (stdlib only, no extra pip packages).
   On Python 3.9/3.10 the CLI exits 2 before decoding any image.
 - Development, tests, browser integrations, and this repository's **uv project
@@ -45,7 +46,7 @@ that every browser or environment has been tested.
   Python 3.9/3.10 consumers should install the base package with pip, not `uv sync`.
 
 The Python support CI checks actual 3.9/3.10 stdlib execution and base wheel
-installation without test dependencies, `python -S scripts/image_diff.py --help`,
+installation without test dependencies, `python -S tools/image_diff.py --help`,
 and the complete browserless test suite at the 3.11 floor. Existing browser CI
 continues on 3.13. `py_matrix.py` can still probe older interpreters for independent
 stdlib consumers; that does not extend this repository's development support.
@@ -150,17 +151,17 @@ Notable portable lessons include WebKit producing a PNG before a non-zero shutdo
 
 When a new repository teaches a reusable lesson, record: repository/PR, runtime (Node/Python/Stagehand/Replay), browser, device/profile, failure stage, observed symptom, root cause, fix, regression guard, and portable lesson.
 
-### Page text without a browser (`scripts/page_text.py`)
+### Page text without a browser (`tools/page_text.py`)
 
 Stdlib-only static extraction (runs under `python -S`) in the shape of a browser `get_page_text`: `Title:`, `URL:` (after redirects), `Source element:`, then the text.
 
 ```bash
-python scripts/page_text.py https://example.com/ --max-chars 20000
-python scripts/page_text.py fixtures/index.html --json
-curl -sL https://example.com/ | python scripts/page_text.py - --url https://example.com/
-python scripts/page_text.py <URL> --find "status page"
-python scripts/page_text.py <URL> --compare-rendered rendered.txt
-python scripts/page_text.py <URL> --compare-rendered page.json   # capture_browser_dom.py output
+python tools/page_text.py https://example.com/ --max-chars 20000
+python tools/page_text.py fixtures/index.html --json
+curl -sL https://example.com/ | python tools/page_text.py - --url https://example.com/
+python tools/page_text.py <URL> --find "status page"
+python tools/page_text.py <URL> --compare-rendered rendered.txt
+python tools/page_text.py <URL> --compare-rendered page.json   # capture_browser_dom.py output
 ```
 
 - The text comes from the first `<main>`, else the first `<article>`, else `<body>`; `script`, `style`, `noscript`, `template`, `svg`, and `textarea` are dropped with their contents, as is the never-rendered fallback content of `iframe`, `noembed`, and `noframes`.
@@ -216,21 +217,21 @@ Execution APIs and CLI (`--run`) are documented in [route trail execution](docs/
 
 Measured mouse/touch `press` for canvas-painted UIs (Flutter Web) and a `watch` that records requests, dialogs, errors and storage while untrusted input is handled: [interaction](docs/interaction.md) (`scripts/interaction.mjs` / `scripts/interaction.py`).
 
-Browserless mirror tests — several independent implementations (markdown-it / marked, ExcelJS / SheetJS / a stdlib OOXML reader, your own code) must agree on one artifact: [mirror tests](docs/mirror-tests.md) (`scripts/mirror_facts.mjs` / `scripts/mirror_check.py`).
+Browserless mirror tests — several independent implementations (markdown-it / marked, ExcelJS / SheetJS / a stdlib OOXML reader, your own code) must agree on one artifact: [mirror tests](docs/mirror-tests.md) (`tools/mirror_facts.mjs` / `tools/mirror_check.py`).
 
 Run these existing comparisons without downloading browsers: `npm ci --ignore-scripts && npm run test:browserless`. Python rules use `uv run --locked pytest -m "not browser"` (3.11+ uv environment; see **Python support** above); real browser tests use `uv run --locked --group browser pytest -m browser`. See [separate execution](docs/mirror-tests.md#separate-browserless-execution).
 The same JSON catalog supports stable `@id` names and readiness markers; Python
 sync/async and dependency-light Node execution reuse one Page for the whole trail.
 
-### OS × browser × device comparison (`scripts/platform_probe.py`, `platform-matrix`)
+### OS × browser × device comparison (`tools/platform_probe.py`, `platform-matrix`)
 
 Opens `fixtures/platform_probe.html` in one environment and records `btk-platform-facts/1`: screen and available area, window outer/inner size (the difference is the window frame, real only with `--headed`), scrollbar width (page and an always-scrolling probe, so overlay scrollbars show as 0), `devicePixelRatio`, `visualViewport`, safe-area insets, pointer/hover/touch, measured font widths, platform and browser version. An environment **passes** when the layout holds (no horizontal overflow, no overlap, nothing clipped) and a real click — a tap on touch profiles — at the integer centre of the button registers. `min_ok_width` is the narrowest viewport width where the layout still holds, found by binary search (≤ 13 probes).
 
 ```bash
-python scripts/platform_probe.py collect --browser webkit --profile iphone --out platform-results
-xvfb-run -a python scripts/platform_probe.py collect --browser chromium --headed --out platform-results
-python -S scripts/platform_probe.py summary platform-results            # one line each; exit 1 if any fail
-python -S scripts/platform_probe.py render platform-results --out matrix.html
+python tools/platform_probe.py collect --browser webkit --profile iphone --out platform-results
+xvfb-run -a python tools/platform_probe.py collect --browser chromium --headed --out platform-results
+python -S tools/platform_probe.py summary platform-results            # one line each; exit 1 if any fail
+python -S tools/platform_probe.py render platform-results --out matrix.html
 ```
 
 - `matrix.html` is self-contained: tab rows for OS, browser (engine or channel), device and mode. Switching a tab highlights every value that changed from the previous selection; `*` marks values that differ anywhere in the dataset; a scaled diagram shows screen, available area, window, viewport and scrollbar.
@@ -289,11 +290,11 @@ python scripts/btk.py observe http://127.0.0.1:8765/page --out before.json --aft
 Implemented:
 
 1. Documentation and evidence contract (`docs/`, `docs/evidence-events.md`).
-2. Shared local deterministic fixtures and artifact validators (`fixtures/`, `scripts/evidence_board.py`).
+2. Shared local deterministic fixtures and artifact validators (`fixtures/`, `tools/evidence_board.py`).
 3. Playwright Node matrix (`.github/workflows/playwright.yml`, `platform-matrix.yml`).
-4. Playwright Python API and CLI matrix (`scripts/platform_probe.py`).
+4. Playwright Python API and CLI matrix (`tools/platform_probe.py`).
 5. Cross-runtime and browser parity guards (`scripts/twin_parity.py`).
-7. terminal-browser quick CLI/TUI lane (`scripts/terminal_browser.py`).
+7. terminal-browser quick CLI/TUI lane (`tools/terminal_browser.py`).
 10. Passive page observe, locate, and a fixed act vocabulary (`scripts/btk.py`). Stagehand is still a separate, unimplemented lane.
 
 Not yet implemented in this repository:
@@ -307,8 +308,8 @@ Not yet implemented in this repository:
 See [`docs/terminal-browser.md`](docs/terminal-browser.md). The dependency-free wrapper keeps missing-tool failures explicit and passes upstream CLI arguments through unchanged:
 
 ```sh
-python scripts/terminal_browser.py --check        # verified: discovery + JSONL events
-python scripts/terminal_browser.py -- <args...>   # passes args through unchanged
+python tools/terminal_browser.py --check        # verified: discovery + JSONL events
+python tools/terminal_browser.py -- <args...>   # passes args through unchanged
 ```
 
 Upstream [zenbu-labs/terminal-browser](https://github.com/zenbu-labs/terminal-browser) documents `open <url>`, `action`, `ls`, and `upgrade`, installed via its own install script or Homebrew -- not the npm `terminal-browser@1.0.2` package, which is an unrelated same-name project. This repo's CI does not exercise the real upstream tool, so the wrappers here remain unverified against it. Arguments are forwarded as-is; see "Non-interactive subcommand wrappers" in docs/terminal-browser.md.
@@ -316,9 +317,9 @@ Upstream [zenbu-labs/terminal-browser](https://github.com/zenbu-labs/terminal-br
 ### Evidence events (btk-event/1)
 
 See [`docs/evidence-events.md`](docs/evidence-events.md) for the shared JSONL
-event contract (schema `btk-event/1`) that `scripts/terminal_browser.py`
-emits, that the opt-in `scripts/pytest_btk_events.py` pytest plugin writes
-per test, and that `scripts/evidence_board.py` aggregates into a Markdown
+event contract (schema `btk-event/1`) that `tools/terminal_browser.py`
+emits, that the opt-in `tools/pytest_btk_events.py` pytest plugin writes
+per test, and that `tools/evidence_board.py` aggregates into a Markdown
 table, `--json`, or a GitHub Step Summary. Nothing here loads implicitly:
 there is no `conftest.py`, and the plugin only runs when a project opts in
 with `pytest -p pytest_btk_events --btk-events PATH`.
@@ -336,8 +337,7 @@ order. Missing Git or a failed Git observation retains the directory-walk
 fallback (which does not interpret `.gitignore`). A truncated successful
 observation raises an explicit error rather than publishing a partial list or
 walking ignored files: the shared bounds are 10,000 paths and 1,000,000 bytes.
-Direct invocation and installed `python -m repo_overview` still work with
-`python -S`.
+Direct invocation (`python -S tools/repo_overview.py`) still works with `python -S`.
 
 `repo_overview.churn()` delegates Git execution and numstat parsing to
 `git_log_numstat()`. Commit scanned counts include empty/merge/binary-only commits;
@@ -379,7 +379,7 @@ Application adapters for the platform matrix (including published Flutter Home a
 ## Discover production entry points
 
 ```sh
-python -S scripts/repo_overview.py . --paths-only --match 'scripts/*probe*' --match '*.toml' --json
+python -S tools/repo_overview.py . --paths-only --match 'scripts/*probe*' --match '*.toml' --json
 ```
 
 Select paths from the existing Git-aware inventory without rendering file contents. [Discovery usage and optional source inspection](docs/convention-discovery.md).

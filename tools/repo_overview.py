@@ -23,11 +23,11 @@ files: a file edited in many tiny commits ranks above one rewritten once.
 
 Stdlib only; runs under ``python -S``::
 
-    python -S scripts/repo_overview.py
-    python -S scripts/repo_overview.py ../other-repo --max-lines 40 --no-files
-    python -S scripts/repo_overview.py --include 'docs/*.md'
-    python -S scripts/repo_overview.py --stats --churn 10 --since '3 months ago'
-    python -S scripts/repo_overview.py --paths-only --match 'scripts/*probe*' --match '*.toml' --json
+    python -S tools/repo_overview.py
+    python -S tools/repo_overview.py ../other-repo --max-lines 40 --no-files
+    python -S tools/repo_overview.py --include 'docs/*.md'
+    python -S tools/repo_overview.py --stats --churn 10 --since '3 months ago'
+    python -S tools/repo_overview.py --paths-only --match 'scripts/*probe*' --match '*.toml' --json
 
 ``--paths-only`` filters the existing Git-aware inventory without rendering
 file contents. Repeat ``--match`` for OR and ``--exclude`` to remove paths;
@@ -48,7 +48,7 @@ from pathlib import Path
 
 # Load the vendored sibling independently of site-packages/sys.path. This also
 # supports direct file imports and the installed top-level module entry point.
-_spec = importlib.util.spec_from_file_location("_btk_gh_identity", Path(__file__).with_name("gh_identity.py"))
+_spec = importlib.util.spec_from_file_location("_btk_gh_identity", Path(__file__).resolve().parents[1] / "scripts" / "gh_identity.py")
 gh_identity = importlib.util.module_from_spec(_spec)
 assert _spec.loader
 _spec.loader.exec_module(gh_identity)

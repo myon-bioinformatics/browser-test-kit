@@ -20,8 +20,8 @@ with a UTF-8 meta charset.
 
 Stdlib only; runs under ``python -S``::
 
-    python -S scripts/html_builder.py h1:Title "p:Hello world" br li:a li:b
-    python -S scripts/html_builder.py h1:Title p:Body --page "My Page"
+    python -S tools/html_builder.py h1:Title "p:Hello world" br li:a li:b
+    python -S tools/html_builder.py h1:Title p:Body --page "My Page"
 
 Each CLI argument is ``TAG[:TEXT]``; consecutive ``li`` arguments are
 wrapped in a single ``<ul>``. ``--page TITLE`` wraps the rendered elements
