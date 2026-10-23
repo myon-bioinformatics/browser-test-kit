@@ -27,6 +27,8 @@ from pathlib import Path
 
 SCHEMA_INSPECT = "btk-page-inspect/1"
 SCHEMA_OBSERVE = "btk-page-observe/1"
+SCHEMA_COMPARE = "btk-page-compare/1"
+COMPARE_ENVIRONMENT_KEYS = ("os", "browser", "profile", "headless")
 COMPLETE_COVERAGE = {"complete", "complete_within_window"}
 INTERACTIVE_ROLES = {
     "button", "link", "textbox", "searchbox", "checkbox", "radio", "combobox",
@@ -666,6 +668,8 @@ def operations() -> dict:
          "limit_default": PAGE_LIMIT_DEFAULT, "limit_max": PAGE_LIMIT_MAX},
         {"name": "describe", "needs": "snapshot", "summary": "Return one control, its locators, and a few neighbor lines",
          "limit_default": CONTEXT_DEFAULT, "limit_max": CONTEXT_MAX},
+        {"name": "compare", "needs": "snapshot", "summary": "Compare two observe snapshots by section relation and counts",
+         "limit_default": None, "limit_max": None},
         {"name": "operations", "needs": "none", "summary": "List these commands",
          "limit_default": None, "limit_max": None},
     ]
@@ -804,6 +808,7 @@ def _unavailable_sections(reason: str) -> dict:
         "console": _section(None, "unavailable", body),
         "storage": _section(None, "not_requested"),
         "frames": _section(None, "unavailable", body),
+        "shadow_roots": _section(None, "unavailable", body),
     }
 
 
@@ -845,6 +850,30 @@ def _walk_dom(node, found: list) -> bool:
 
 def _frame_count(node) -> int:
     return 1 + sum(_frame_count(child) for child in node.get("childFrames") or [])
+
+
+def count_shadow_roots(root: dict, *, limit: int = HARD_CAP * 10) -> dict:
+    """Count open and closed shadow roots in a pierced DOM tree. Roots are counted, never entered.
+
+    Walks children and shadowRoots of the main document only; child frame documents are not descended.
+    """
+    opened = closed = visited = 0
+    truncated = False
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        visited += 1
+        if visited > limit:
+            truncated = True
+            break
+        for shadow in node.get("shadowRoots") or []:
+            if shadow.get("shadowRootType") == "closed":
+                closed += 1
+            else:
+                opened += 1
+            stack.append(shadow)
+        stack.extend(node.get("children") or [])
+    return {"open": opened, "closed": closed, "count": opened + closed, "truncated": truncated}
 
 
 def _controls_from_cdp(dom_nodes, ax_nodes, *, include_hidden: bool, role: str) -> tuple[list, dict]:
@@ -1081,6 +1110,8 @@ def observe_page(*, url: str, browser_name: str, profile: str, headed: bool, cha
                 stage="navigate",
             ) from exc
         document = _cdp_send(client, "DOM.getDocument", {"depth": -1, "pierce": False}, sent)
+        pierced = _cdp_send(client, "DOM.getDocument", {"depth": -1, "pierce": True}, sent)
+        shadow = count_shadow_roots(pierced.get("root") or {})
         ax = _cdp_send(client, "Accessibility.getFullAXTree", {}, sent)
         resources = _cdp_send(client, "Page.getResourceTree", {}, sent)
         frames = _cdp_send(client, "Page.getFrameTree", {}, sent)
@@ -1125,6 +1156,10 @@ def observe_page(*, url: str, browser_name: str, profile: str, headed: bool, cha
             "storage": storage,
             "frames": _section("cdp:Page.getFrameTree", "complete", {
                 "child_frames": child_frames, "contents": "not_entered",
+            }),
+            "shadow_roots": _section("cdp:DOM.getDocument pierce", "truncated" if shadow["truncated"] else "complete", {
+                "open": shadow["open"], "closed": shadow["closed"], "count": shadow["count"],
+                "contents": "not_entered",
             }),
         }
         viewport = page.viewport_size or {}
@@ -1303,6 +1338,72 @@ def read_snapshot(path: str) -> dict:
     return data
 
 
+def _shadow_counts(snapshot: dict) -> dict | None:
+    section = (snapshot.get("sections") or {}).get("shadow_roots")
+    if not isinstance(section, dict) or section.get("coverage") not in COMPLETE_COVERAGE:
+        return None
+    counts = {}
+    for key in ("open", "closed", "count"):
+        value = section.get(key)
+        if isinstance(value, bool) or not isinstance(value, int):
+            return None
+        counts[key] = value
+    return counts
+
+
+def _count_pair(left, right) -> dict:
+    delta = right - left if isinstance(left, int) and isinstance(right, int) else None
+    return {"left": left, "right": right, "delta": delta}
+
+
+def compare_snapshots(left: dict, right: dict) -> dict:
+    """Section relations and counts for two observe snapshots. A missing side is never same."""
+    left_sections = left.get("sections") or {}
+    right_sections = right.get("sections") or {}
+    sections = {}
+    for name in sorted(set(left_sections) | set(right_sections)):
+        left_part = left_sections.get(name)
+        right_part = right_sections.get(name)
+        sections[name] = {
+            "relation": evidence_relation(left_part, right_part),
+            "left": left_part.get("coverage") if isinstance(left_part, dict) else None,
+            "right": right_part.get("coverage") if isinstance(right_part, dict) else None,
+        }
+    left_shadow = _shadow_counts(left)
+    right_shadow = _shadow_counts(right)
+    shadow = {key: _count_pair(*_side(left_shadow, right_shadow, key)) for key in ("open", "closed", "count")}
+    left_env = left.get("environment") if isinstance(left.get("environment"), dict) else {}
+    right_env = right.get("environment") if isinstance(right.get("environment"), dict) else {}
+    environment = {key: [left_env.get(key), right_env.get(key)] for key in COMPARE_ENVIRONMENT_KEYS}
+    same_environment = all(pair[0] == pair[1] for pair in environment.values())
+    hints = [
+        "same, different, and unknown are section relations; a missing or truncated section is never same",
+        "shadow_roots counts are null when that section was not complete on one side",
+    ]
+    if not same_environment:
+        hints.append("environments differ; section differences may come from the browser or profile, not the page")
+    return {
+        "schema": SCHEMA_COMPARE,
+        "ok": True,
+        "left_url": left.get("url"),
+        "right_url": right.get("url"),
+        "same_environment": same_environment,
+        "environment": environment,
+        "sections": sections,
+        "shadow_roots": shadow,
+        "child_frames": _count_pair(left.get("child_frames"), right.get("child_frames")),
+        "elements": _count_pair(left.get("total"), right.get("total")),
+        "hint": ". ".join(hints),
+    }
+
+
+def _side(left_shadow, right_shadow, key):
+    return (
+        left_shadow[key] if left_shadow else None,
+        right_shadow[key] if right_shadow else None,
+    )
+
+
 def dumps(payload: dict) -> str:
     return json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
 
@@ -1360,6 +1461,20 @@ def describe_text(payload: dict) -> str:
     if not payload.get("ok"):
         return error_text(payload)
     lines = [f"resolved_as={payload['resolved_as']}", *payload["context"], f"hint: {payload['hint']}"]
+    return "\n".join(lines) + "\n"
+
+
+def compare_text(payload: dict) -> str:
+    lines = [f"btk-page-compare/1 same_environment={str(payload['same_environment']).lower()}"]
+    for name, item in payload["sections"].items():
+        lines.append(f"section {name}={item['relation']} left={item['left']} right={item['right']}")
+    for key in ("open", "closed", "count"):
+        pair = payload["shadow_roots"][key]
+        lines.append(f"shadow_roots {key} left={pair['left']} right={pair['right']} delta={pair['delta']}")
+    for key in ("elements", "child_frames"):
+        pair = payload[key]
+        lines.append(f"{key} left={pair['left']} right={pair['right']} delta={pair['delta']}")
+    lines.append(f"hint: {payload['hint']}")
     return "\n".join(lines) + "\n"
 
 
@@ -1435,6 +1550,9 @@ def build_parser() -> argparse.ArgumentParser:
     describe_parser.add_argument("snapshot")
     describe_parser.add_argument("--target", required=True)
     describe_parser.add_argument("--context", type=_bounded(CONTEXT_MAX), default=CONTEXT_DEFAULT)
+    compare_parser = sub.add_parser("compare", parents=[common], help="compare two observe snapshots", allow_abbrev=False)
+    compare_parser.add_argument("left")
+    compare_parser.add_argument("right")
     sub.add_parser("operations", parents=[common], help="list commands", allow_abbrev=False)
     return parser
 
@@ -1464,6 +1582,9 @@ def dispatch(args: argparse.Namespace) -> tuple[dict, str, int]:
         )
         text_out = f"action={payload['action']} url={payload['url']}\nhint: {payload['hint']}\n"
         return payload, text_out, 0
+    if args.command == "compare":
+        payload = compare_snapshots(read_snapshot(args.left), read_snapshot(args.right))
+        return payload, compare_text(payload), 0
     snapshot = read_snapshot(args.snapshot)
     elements = snapshot["elements"]
     if args.command == "count":
