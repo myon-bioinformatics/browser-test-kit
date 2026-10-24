@@ -2184,7 +2184,7 @@ def count_shadow_roots(root: dict, *, limit: int = HARD_CAP * 10) -> dict:
     return {"open": opened, "closed": closed, "count": opened + closed, "user_agent": user_agent, "truncated": truncated}
 
 
-def _controls_from_cdp(dom_nodes, ax_nodes, *, include_hidden: bool, role: str) -> tuple[list, dict]:
+def _controls_from_cdp(dom_nodes, ax_nodes, *, include_hidden: bool, role: str, document_url: str = "") -> tuple[list, dict]:
     by_backend = {node["backend_id"]: node for node in dom_nodes if node.get("backend_id") is not None}
     id_counts: dict[str, int] = {}
     testid_counts: dict[str, int] = {}
@@ -2237,7 +2237,10 @@ def _controls_from_cdp(dom_nodes, ax_nodes, *, include_hidden: bool, role: str) 
         if node["tag"] != "script":
             continue
         if node["script_src"]:
-            scripts.append({"kind": "external", "url": strip_userinfo(node["script_src"])})
+            # CDP exposes the literal src attribute (often relative); publish
+            # a canonical URL without exposing the document's query/fragment.
+            script_url = urllib.parse.urljoin(document_url, node["script_src"])
+            scripts.append({"kind": "external", "url": strip_userinfo(script_url)})
         elif node["inline_script"]:
             scripts.append({"kind": "inline"})
     return elements, {"scripts": scripts, "dom_nodes": len(dom_nodes), "ax_nodes": len(ax_nodes)}
@@ -2731,7 +2734,10 @@ def observe_page(*, url: str, browser_name: str, profile: str, headed: bool, cha
             frames = _cdp_send(client, "Page.getFrameTree", {}, sent)
             dom_nodes: list[dict] = []
             dom_truncated = _walk_dom(document.get("root") or {}, dom_nodes)
-            elements, meta = _controls_from_cdp(dom_nodes, ax.get("nodes") or [], include_hidden=include_hidden, role=role)
+            elements, meta = _controls_from_cdp(
+                dom_nodes, ax.get("nodes") or [], include_hidden=include_hidden, role=role,
+                document_url=page.url,
+            )
             title = ""
             for ax_node in ax.get("nodes") or []:
                 if _ax_text(ax_node.get("role")) == "RootWebArea":
