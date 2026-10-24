@@ -789,6 +789,8 @@ def operations() -> dict:
     items = [
         {"name": "observe", "needs": "playwright", "summary": "Passive CDP snapshot, or that snapshot before and after each --step",
          "limit_default": SURVEY_LIMIT_DEFAULT, "limit_max": SURVEY_LIMIT_MAX},
+        {"name": "scenario", "needs": "playwright", "summary": "Bounded OS/browser environment and fault probes",
+         "limit_default": None, "limit_max": None},
         {"name": "act", "needs": "playwright", "summary": "One declared Playwright action that re-queries a locator",
          "limit_default": None, "limit_max": None},
         {"name": "count", "needs": "snapshot", "summary": "Count matches and roles without element bodies",
@@ -2988,6 +2990,22 @@ def build_parser() -> argparse.ArgumentParser:
     act.add_argument("--profile", choices=tuple(PROFILES), default="desktop")
     act.add_argument("--channel", help="branded browser channel, for example chrome")
     act.add_argument("--headed", action="store_true")
+    scenario = sub.add_parser("scenario", parents=[common], help="bounded platform and fault observation", allow_abbrev=False)
+    scenario.add_argument("target", help="loopback scenario fixture URL")
+    scenario.add_argument("--case", required=True, choices=("display", "shortcut", "offline", "http-error", "latency", "permission", "upload", "download"))
+    scenario.add_argument("--browser", choices=("chromium", "firefox", "webkit"), default="chromium")
+    scenario.add_argument("--profile", choices=tuple(PROFILES), default="desktop")
+    scenario.add_argument("--channel", default=None, help="chromium only: chrome or msedge")
+    scenario.add_argument("--headed", action="store_true")
+    scenario.add_argument("--viewport", default=None, help="WIDTHxHEIGHT, each 200..4096")
+    scenario.add_argument("--color-scheme", choices=("light", "dark", "no-preference"), default="light")
+    scenario.add_argument("--reduced-motion", choices=("reduce", "no-preference"), default="no-preference")
+    scenario.add_argument("--locale", default="en-US")
+    scenario.add_argument("--timezone", default="UTC")
+    scenario.add_argument("--device-scale-factor", type=float, default=1.0)
+    scenario.add_argument("--latency-ms", type=int, default=100)
+    scenario.add_argument("--permission", choices=("notifications", "geolocation"), default="notifications")
+    scenario.add_argument("--permission-state", choices=("grant", "clear"), default="grant")
     locate_parser = sub.add_parser("locate", parents=[common], help="rank controls in a snapshot", allow_abbrev=False)
     locate_parser.add_argument("snapshot")
     locate_parser.add_argument("--query", default="")
@@ -3143,6 +3161,10 @@ def dispatch(args: argparse.Namespace) -> tuple[dict, str, int]:
             label = f"{step.get('action', 'step')}:{step.get('target', '')}"
             text_out += f"after-action {label}: second snapshot written to {args.after_out}\n"
         return payload, text_out, 0
+    if args.command == "scenario":
+        from page_inspect_scenarios import run_scenario
+        payload = run_scenario(args, sys.modules[__name__])
+        return payload, observe_text(payload), 0
     if args.command == "act":
         if args.timeout_ms < 1:
             raise InspectError("timeout-ms must be at least 1", "use 1..120000")

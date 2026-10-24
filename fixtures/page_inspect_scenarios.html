@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="btk-scenario" content="btk-platform-fixture/2">
+<title>page_inspect bounded scenarios</title>
+<input id="scenario-shortcut" value="keyboard probe" aria-label="Shortcut input">
+<div id="scenario-display"></div>
+<button id="scenario-fetch">Fetch local response</button>
+<div id="scenario-result" data-turn="0" data-state="ready"></div>
+<button id="scenario-permission">Query notification permission</button>
+<div id="scenario-permission-result" data-turn="0" data-state="ready"></div>
+<button id="scenario-geolocation">Query geolocation permission</button>
+<div id="scenario-geolocation-result" data-turn="0" data-state="ready"></div>
+<input type="file" id="scenario-upload" aria-label="Upload fixture">
+<div id="scenario-upload-result" data-state="cleared"></div>
+<a id="scenario-download" href="/scenario.txt" download="scenario.txt">Download fixture</a>
+<script>
+const display = document.querySelector("#scenario-display");
+display.dataset.scheme = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+display.dataset.motion = matchMedia("(prefers-reduced-motion: reduce)").matches ? "reduce" : "no-preference";
+display.dataset.locale = navigator.language;
+display.dataset.timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+display.dataset.dpr = String(devicePixelRatio);
+function begin(output) {
+  const turn = Number(output.dataset.turn) + 1;
+  output.dataset.turn = String(turn);
+  output.dataset.state = "pending";
+  delete output.dataset.completed;
+  return turn;
+}
+function finish(output, turn, state) {
+  output.dataset.state = state;
+  output.dataset.completed = String(turn);
+}
+document.querySelector("#scenario-fetch").addEventListener("click", async () => {
+  const output = document.querySelector("#scenario-result");
+  const turn = begin(output);
+  try {
+    const response = await fetch("/api/probe", {cache: "no-store"});
+    finish(output, turn, response.ok ? "ok" : "error");
+  } catch (_) {
+    finish(output, turn, "error");
+  }
+});
+function permissionProbe(button, outputId, name) {
+  document.querySelector(button).addEventListener("click", async () => {
+    const output = document.querySelector(outputId);
+    const turn = begin(output);
+    if (!navigator.permissions || typeof navigator.permissions.query !== "function") {
+      finish(output, turn, "unsupported");
+      return;
+    }
+    try {
+      const permission = await navigator.permissions.query({name});
+      const value = ["granted", "denied", "prompt"].includes(permission.state) ? permission.state : "invalid";
+      finish(output, turn, value);
+    } catch (error) {
+      // Only capability errors mean unsupported; unrelated errors must not become success.
+      const state = ["TypeError", "NotSupportedError"].includes(error.name) ? "unsupported" : "invalid";
+      finish(output, turn, state);
+    }
+  });
+}
+permissionProbe("#scenario-permission", "#scenario-permission-result", "notifications");
+permissionProbe("#scenario-geolocation", "#scenario-geolocation-result", "geolocation");
+document.querySelector("#scenario-upload").addEventListener("change", event => {
+  const files = event.target.files;
+  document.querySelector("#scenario-upload-result").dataset.state = !files.length ? "cleared" :
+    files.length === 1 && files[0].size === 5 && files[0].type === "text/plain" ? "accepted" : "rejected";
+});
+</script>
+</html>

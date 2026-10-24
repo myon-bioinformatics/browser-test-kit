@@ -93,3 +93,16 @@ Typed `env:NAME` and `file:PATH` values are still removed in full, including per
 Child frames and shadow roots as their own address spaces. Observe counts child frames and author open plus closed shadow roots (pierced DOM, `shadow_roots` section, `contents: not_entered`, `user_agent` for Chromium built-in roots); it does not enter either and does not read shadow attributes. macOS, Windows, Linux, and Android Chrome or WebView as a recorded matrix. Branded channels as a matrix. A Stagehand caller. A headed lane in CI. An agent transport after these envelopes stay stable. Screenshot comparison and full scenario diffs.
 
 Stages 3 and 4 of human input stay on issue 117: an OS shortcut behavior matrix beyond `ControlOrMeta`, display settings (`color-scheme`, `reduced-motion`, locale, timezone), and offline, throttling, and permissions.
+
+## Platform and fault scenarios (PR #123)
+
+The `page_inspect.py scenario` command is a bounded, **active** Playwright fixture
+experiment that exercises OS/browser display options, platform shortcuts, offline →
+recovery, HTTP error/latency → recovery, permission grant/clear and file upload/download
+cleanup. It uses `assemble_observe` and `_section` from the same CLI and emits
+`btk-page-observe/1`; DOM, AX, and storage not measured here remain `not_requested`.
+The existing `compare` reads two scenario snapshots and applies `evidence_relation` to
+`scenario`, `environment_settings`, and `network` sections. A missing or truncated
+section is `unknown`, not `same`. See [detailed contract](page-inspect-platform-scenarios.md)
+for loopback/origin controls, event caps, short-circuit behaviors and privacy limits.
+Node 24 is selected by `.nvmrc`, but existing CI workflows are not modified.
