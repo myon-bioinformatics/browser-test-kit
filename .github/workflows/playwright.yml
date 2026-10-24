@@ -44,11 +44,29 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: { node-version: '26' }
       - run: npm ci
-      - run: npx playwright install --with-deps --only-shell chromium firefox webkit
+      - name: Check system libraries (dry run, no changes)
+        id: deps_check
+        continue-on-error: true
+        run: npx playwright install-deps --dry-run chromium firefox webkit
+      - name: System libraries (apt, bounded; runs only when the dry run reports missing packages)
+        if: steps.deps_check.outcome == 'failure'
+        timeout-minutes: 8
+        run: |
+          sudo DEBIAN_FRONTEND=noninteractive dpkg --configure -a
+          npx playwright install-deps chromium firefox webkit
+      - name: Install browsers (first attempt)
+        id: install_first
+        continue-on-error: true
+        timeout-minutes: 6
+        run: npx playwright install --only-shell chromium firefox webkit
+      - name: Install browsers (retry a stalled first attempt)
+        if: steps.install_first.outcome == 'failure'
+        timeout-minutes: 6
+        run: npx playwright install --only-shell chromium firefox webkit
       - run: npm run test:node
       - name: Validate Node screenshots
         if: always()
-        run: python3 scripts/check_evidence.py test-results --pattern '**/evidence.json' --expect chromium,firefox,webkit,mobile-chromium,mobile-webkit
+        run: python3 tools/check_evidence.py test-results --pattern '**/evidence.json' --expect chromium,firefox,webkit,mobile-chromium,mobile-webkit
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with: { name: node-browser-evidence, path: test-results, if-no-files-found: error }
@@ -59,6 +77,8 @@ jobs:
     if: needs.changes.outputs.product_changed == 'true'
     runs-on: ubuntu-24.04
     steps:
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with: { node-version: '24' }
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -97,17 +117,17 @@ jobs:
           retention-days: 14
       - name: Wrapper tests with btk-events plugin enabled
         run: |
-          PYTHONPATH=scripts uv run --locked python -m pytest tests/python/test_terminal_browser_wrapper.py -p pytest_btk_events --btk-events test-results/btk-events.jsonl --btk-events-run-id "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          PYTHONPATH=tools uv run --locked python -m pytest tests/python/test_terminal_browser_wrapper.py -p pytest_btk_events --btk-events test-results/btk-events.jsonl --btk-events-run-id "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
       - name: Evidence board
         if: always()
-        run: python scripts/evidence_board.py test-results/btk-events.jsonl --step-summary
+        run: python tools/evidence_board.py test-results/btk-events.jsonl --step-summary
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with: { name: btk-events, path: test-results/btk-events.jsonl }
       - name: Scripts install and run as modules (python -m)
         run: |
           cd "$RUNNER_TEMP"
-          uv run --locked --no-dev --no-editable --project "$GITHUB_WORKSPACE" python -m check_png --help
+          uv run --locked --no-dev --no-editable --project "$GITHUB_WORKSPACE" python -m btk --help
 
       - name: Stage canonical vendor evidence
         if: always()
@@ -124,7 +144,72 @@ jobs:
           retention-days: 14
 
   python-browser:
-    name: Python browser integration
+    name: Python browser integration (Chromium)
+    needs: [changes, python, node-browserless, test-locked]
+    if: needs.changes.outputs.product_changed == 'true'
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with: { node-version: '24' }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with: { python-version: '3.13' }
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with: { python-version: '3.13' }
+      - name: Install browsers (first attempt)
+        id: install_first
+        continue-on-error: true
+        timeout-minutes: 6
+        run: uv run --locked --group browser python -m playwright install --only-shell chromium
+      - name: Install browsers (retry a stalled first attempt)
+        if: steps.install_first.outcome == 'failure'
+        timeout-minutes: 6
+        run: uv run --locked --group browser python -m playwright install --only-shell chromium
+      - name: System libraries for the headless shell (apt only when ldd reports missing ones)
+        run: |
+          shell=$(find "$HOME/.cache/ms-playwright" -name chrome-headless-shell -print -quit)
+          test -n "$shell"
+          libs=$(for f in "$(dirname "$shell")"/*; do ldd "$f" 2>/dev/null || true; done)
+          if ! grep -q '=>' <<<"$libs" || grep -q 'not found' <<<"$libs"; then
+            uv run --locked --group browser python -m playwright install-deps --only-shell chromium
+          else
+            echo 'headless shell libraries are present; skipping apt'
+          fi
+      - name: Run Python browser tests with JUnit (Chromium only)
+        env:
+          BTK_BROWSER_ENGINES: chromium
+        run: uv run --locked --group browser python -m pytest tests/python -q -m browser --junitxml=test-results/junit/python-browser-3.13.xml
+      - name: Preserve browser JUnit
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: junit-python-browser-3.13
+          path: test-results/junit/python-browser-3.13.xml
+          if-no-files-found: error
+          retention-days: 14
+      - name: Validate Python API screenshots (Chromium)
+        if: always()
+        run: python tools/check_evidence.py test-results/python --pattern '*.json' --expect chromium-desktop,chromium-mobile
+      - name: Python Playwright CLI screenshot (Chromium)
+        run: |
+          uv run --locked --group browser python -m playwright screenshot --browser=chromium --device="Desktop Chrome" --full-page "file://$GITHUB_WORKSPACE/fixtures/index.html" test-results/python-cli-chromium.png
+          python tools/check_png.py test-results/python-cli-chromium.png
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: python-browser-evidence
+          path: |
+            test-results
+            !test-results/junit/**
+            !test-results/controlled-failure/**
+          if-no-files-found: error
+
+  python-browser-optional:
+    name: Python browser integration (Firefox and WebKit)
     needs: [changes, python, node-browserless, test-locked]
     if: needs.changes.outputs.product_changed == 'true'
     permissions:
@@ -138,29 +223,48 @@ jobs:
         with: { python-version: '3.13' }
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with: { python-version: '3.13' }
-      - run: uv run --locked --group browser python -m playwright install --with-deps --only-shell chromium firefox webkit
-      - name: Run Python browser tests with JUnit
-        run: uv run --locked --group browser python -m pytest tests/python -q -m browser --junitxml=test-results/junit/python-browser-3.13.xml
-      - name: Preserve browser JUnit
+      - name: Check system libraries (dry run, no changes)
+        id: deps_check
+        continue-on-error: true
+        run: uv run --locked --group browser python -m playwright install-deps --dry-run firefox webkit
+      - name: System libraries (apt, bounded; runs only when the dry run reports missing packages)
+        if: steps.deps_check.outcome == 'failure'
+        timeout-minutes: 8
+        run: |
+          sudo DEBIAN_FRONTEND=noninteractive dpkg --configure -a
+          uv run --locked --group browser python -m playwright install-deps firefox webkit
+      - name: Install browsers (first attempt)
+        id: install_first
+        continue-on-error: true
+        timeout-minutes: 6
+        run: uv run --locked --group browser python -m playwright install firefox webkit
+      - name: Install browsers (retry a stalled first attempt)
+        if: steps.install_first.outcome == 'failure'
+        timeout-minutes: 6
+        run: uv run --locked --group browser python -m playwright install firefox webkit
+      - name: Run Firefox and WebKit browser tests with JUnit
+        env:
+          BTK_BROWSER_ENGINES: firefox,webkit
+        run: uv run --locked --group browser python -m pytest tests/python -q -m browser -k "firefox or webkit" --junitxml=test-results/junit/python-browser-optional-3.13.xml
+      - name: Preserve Firefox and WebKit JUnit
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: junit-python-browser-3.13
-          path: test-results/junit/python-browser-3.13.xml
+          name: junit-python-browser-optional-3.13
+          path: test-results/junit/python-browser-optional-3.13.xml
           if-no-files-found: error
           retention-days: 14
-      - name: Validate Python API screenshots
+      - name: Validate Python API screenshots (Firefox and WebKit)
         if: always()
-        run: python scripts/check_evidence.py test-results/python --pattern '*.json' --expect chromium-desktop,chromium-mobile,firefox-desktop,firefox-mobile,webkit-desktop,webkit-mobile
-      - name: Python Playwright CLI screenshot
+        run: python tools/check_evidence.py test-results/python --pattern '*.json' --expect firefox-desktop,firefox-mobile,webkit-desktop,webkit-mobile
+      - name: Python Playwright CLI screenshot (WebKit)
         run: |
-          uv run --locked --group browser python -m playwright screenshot --browser=chromium --device="Desktop Chrome" --full-page "file://$GITHUB_WORKSPACE/fixtures/index.html" test-results/python-cli-chromium.png
           uv run --locked --group browser python -m playwright screenshot --browser=webkit --device="iPhone 13" --full-page "file://$GITHUB_WORKSPACE/fixtures/index.html" test-results/python-cli-webkit-mobile.png
-          python scripts/check_png.py test-results/python-cli-chromium.png test-results/python-cli-webkit-mobile.png
+          python tools/check_png.py test-results/python-cli-webkit-mobile.png
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
-          name: python-browser-evidence
+          name: python-browser-optional-evidence
           path: |
             test-results
             !test-results/junit/**
@@ -177,6 +281,8 @@ jobs:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         persist-credentials: false
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with: { node-version: '24' }
     - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
       with:
         python-version: '3.13'
@@ -206,10 +312,10 @@ jobs:
     - run: uv run --locked python -m pytest tests/python -q -m "not browser"
     - name: Wrapper tests with btk-events plugin enabled
       run: |
-        PYTHONPATH=scripts uv run --locked python -m pytest tests/python/test_terminal_browser_wrapper.py -p pytest_btk_events --btk-events test-results/btk-events.jsonl --btk-events-run-id "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+        PYTHONPATH=tools uv run --locked python -m pytest tests/python/test_terminal_browser_wrapper.py -p pytest_btk_events --btk-events test-results/btk-events.jsonl --btk-events-run-id "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
     - name: Evidence board
       if: always()
-      run: python scripts/evidence_board.py test-results/btk-events.jsonl --step-summary
+      run: python tools/evidence_board.py test-results/btk-events.jsonl --step-summary
     - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       if: always()
       with:
@@ -219,7 +325,7 @@ jobs:
     - name: Scripts install and run as modules (python -m)
       run: |
         cd "$RUNNER_TEMP"
-        uv run --locked --no-dev --no-editable --project "$GITHUB_WORKSPACE" python -m check_png --help
+        uv run --locked --no-dev --no-editable --project "$GITHUB_WORKSPACE" python -m btk --help
     - name: Stage canonical vendor evidence
       if: always()
       run: >-
@@ -238,7 +344,7 @@ jobs:
 
 
   junit-identity:
-    needs: [changes, python, node-browserless, python-browser]
+    needs: [changes, python, node-browserless, python-browser, python-browser-optional]
     if: always() && needs.changes.outputs.product_changed == 'true'
     permissions:
       contents: read
@@ -246,4 +352,4 @@ jobs:
     uses: myon-bioinformatics/myon-bioinformatics/.github/workflows/reusable-junit-identity.yml@2192ff22acafdd09e80ac722df91ee937aaedd5e
     with:
       commit-sha: ${{ github.event.pull_request.head.sha || github.sha }}
-      expected-reports: '["junit-python-3.13/python-3.13.xml", "junit-controlled-python-3.13/junit.xml", "junit-node-browserless/browserless-node.xml", "junit-python-browser-3.13/python-browser-3.13.xml"]'
+      expected-reports: '["junit-python-3.13/python-3.13.xml", "junit-controlled-python-3.13/junit.xml", "junit-node-browserless/browserless-node.xml", "junit-python-browser-3.13/python-browser-3.13.xml", "junit-python-browser-optional-3.13/python-browser-optional-3.13.xml"]'

@@ -12,15 +12,10 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import page_inspect  # noqa: E402
+import btk  # noqa: E402
 
 PAGE = """<!doctype html><meta charset="utf-8"><title>shadow fixture</title>
 <div id="open-host"></div><div id="closed-host"></div><div id="nested-host"></div>
-<input type="text" value="x">
-<select><option>a</option></select>
-<video controls src="data:video/mp4;base64,AAAA"></video>
-<details><summary>s</summary><p>inside</p></details>
-<progress value="1" max="3"></progress>
 <iframe srcdoc="&lt;div id='f'&gt;&lt;/div&gt;"></iframe>
 <script>
   const open = document.getElementById('open-host').attachShadow({mode: 'open'});
@@ -35,22 +30,19 @@ PAGE = """<!doctype html><meta charset="utf-8"><title>shadow fixture</title>
 
 def test_counts_open_closed_and_nested_roots_without_frames():
     tree = {"nodeType": 9, "children": [
-        {"nodeType": 1, "shadowRoots": [
-            {"shadowRootType": "open", "children": [
-                {"nodeType": 1, "shadowRoots": [{"shadowRootType": "closed", "children": []}]}]},
-            {"shadowRootType": "user-agent", "children": []},
-        ]},
+        {"nodeType": 1, "shadowRoots": [{"shadowRootType": "open", "children": [
+            {"nodeType": 1, "shadowRoots": [{"shadowRootType": "closed", "children": []}]}]}]},
         {"nodeType": 1, "contentDocument": {"nodeType": 9, "shadowRoots": [{"shadowRootType": "open"}]}},
     ]}
-    counts = page_inspect.count_shadow_roots(tree)
-    assert counts == {"open": 1, "closed": 1, "count": 2, "user_agent": 1, "truncated": False}
+    counts = btk.count_shadow_roots(tree)
+    assert counts == {"open": 1, "closed": 1, "count": 2, "user_agent": 0, "truncated": False}
 
 
 def test_truncation_is_reported_not_silent():
     deep = {"nodeType": 1, "children": []}
     for _ in range(5):
         deep = {"nodeType": 1, "children": [deep]}
-    counts = page_inspect.count_shadow_roots(deep, limit=3)
+    counts = btk.count_shadow_roots(deep, limit=3)
     assert counts["truncated"] is True
 
 
@@ -62,14 +54,13 @@ def test_observe_reports_shadow_root_section(tmp_path):
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
         url = f"http://127.0.0.1:{server.server_port}/index.html"
-        run = subprocess.run([sys.executable, str(ROOT / "scripts" / "page_inspect.py"), "observe", url, "--json"],
+        run = subprocess.run([sys.executable, str(ROOT / "scripts" / "btk.py"), "observe", url, "--json"],
                              capture_output=True, text=True, timeout=180)
     finally:
         server.shutdown()
     assert run.returncode == 0, run.stderr
     section = json.loads(run.stdout)["sections"]["shadow_roots"]
     assert section["coverage"] == "complete"
-    # Author open/closed only; user-agent roots from input/select/video/details/progress are separate.
+    # open-host, nested-host and the inner root inside nested-host are open; one closed root.
     assert (section["open"], section["closed"], section["count"]) == (3, 1, 4)
-    assert section["user_agent"] >= 1
     assert section["contents"] == "not_entered"

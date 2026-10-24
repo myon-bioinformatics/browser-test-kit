@@ -12,7 +12,7 @@ import re
 import sys
 from types import SimpleNamespace
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
 from page_text import find_elements
 
 

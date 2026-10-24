@@ -53,19 +53,20 @@ def _assert_contract(workflow):
         assert upload["with"]["if-no-files-found"] == "error"
         assert upload["with"]["retention-days"] == 14
     collector = workflow["jobs"]["junit-identity"]
-    assert collector["needs"] == ["changes", "python", "node-browserless", "python-browser"]
+    assert collector["needs"] == ["changes", "python", "node-browserless", "python-browser", "python-browser-optional"]
     assert collector["if"] == (
         "always() && needs.changes.outputs.product_changed == 'true'"
     )
     assert collector.get("continue-on-error", False) is False
     assert collector["uses"] == COLLECTOR
     reports = json.loads(collector["with"]["expected-reports"])
-    assert isinstance(reports, list) and len(reports) == 4
+    assert isinstance(reports, list) and len(reports) == 5
     assert set(reports) == {
         "junit-python-3.13/python-3.13.xml",
         "junit-controlled-python-3.13/junit.xml",
         "junit-node-browserless/browserless-node.xml",
         "junit-python-browser-3.13/python-browser-3.13.xml",
+        "junit-python-browser-optional-3.13/python-browser-optional-3.13.xml",
     }
     browser = _upload(workflow["jobs"]["python-browser"], "python-browser-evidence")
     assert browser["with"]["path"].splitlines() == [

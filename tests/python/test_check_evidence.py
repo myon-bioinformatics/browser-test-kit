@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = ROOT / "scripts" / "check_evidence.py"
+SCRIPT = ROOT / "tools" / "check_evidence.py"
 spec = importlib.util.spec_from_file_location("check_evidence", SCRIPT)
 check_evidence = importlib.util.module_from_spec(spec)
 assert spec.loader

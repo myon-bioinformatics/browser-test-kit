@@ -5,8 +5,8 @@ import {createRequire} from 'node:module';
 import {resolve} from 'node:path';
 
 // No page/browser fixture: this suite runs once without installing a browser engine.
-const node = (...args: string[]) => spawnSync(process.execPath, [resolve('scripts/mirror_facts.mjs'), ...args], {encoding: 'utf8'});
-const check = (...files: string[]) => spawnSync('python', ['-S', 'scripts/mirror_check.py', 'compare', ...files], {encoding: 'utf8'});
+const node = (...args: string[]) => spawnSync(process.execPath, [resolve('tools/mirror_facts.mjs'), ...args], {encoding: 'utf8'});
+const check = (...files: string[]) => spawnSync('python', ['-S', 'tools/mirror_check.py', 'compare', ...files], {encoding: 'utf8'});
 
 test('markdown-it and marked agree on the CommonMark fixture', async ({}, testInfo) => {
   const files = ['markdown-it', 'marked'].map((reader) => {
@@ -55,7 +55,7 @@ test('ExcelJS writes, ExcelJS and the stdlib OOXML reader read the same cells', 
   const js = testInfo.outputPath('exceljs.json');
   writeFileSync(js, node('xlsx', xlsx, '--reader', 'exceljs').stdout);
   const py = testInfo.outputPath('stdlib.json');
-  const facts = spawnSync('python', ['-S', 'scripts/mirror_check.py', 'facts', 'xlsx', xlsx], {encoding: 'utf8'});
+  const facts = spawnSync('python', ['-S', 'tools/mirror_check.py', 'facts', 'xlsx', xlsx], {encoding: 'utf8'});
   expect(facts.status, facts.stderr).toBe(0);
   writeFileSync(py, facts.stdout);
   const result = check(js, py);

@@ -9,7 +9,7 @@ import zlib
 
 import pytest
 
-SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "check_capture_evidence.py"
+SCRIPT = Path(__file__).resolve().parents[2] / "tools" / "check_capture_evidence.py"
 spec = importlib.util.spec_from_file_location("check_capture_evidence", SCRIPT)
 validator = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(validator)

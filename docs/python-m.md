@@ -1,23 +1,20 @@
 # Running the scripts with `python -m`
 
-Every `scripts/*.py` is stdlib-only at runtime; `image_diff` loads the vendored
-`pillow_min.py` recorded in `vendor.lock.json` for PNG pixel diffs. `pyproject.toml`
-installs each one as a top-level module, so after installation it runs from any directory, like `python -m zipfile`, with no clone or file path:
+Every `scripts/*.py` is stdlib-only at runtime. `pyproject.toml` installs each one as a top-level module, so after installation it runs from any directory, like `python -m zipfile`, with no clone or file path. The in-repo tools under `tools/` are not installed: run them from a checkout with `python -S tools/NAME.py`.
 
 ```sh
 # one-off: nothing cloned, uv caches the build
-uv run --no-project --with "git+https://github.com/myon-bioinformatics/browser-test-kit" python -m check_png shot.png
+uv run --no-project --with "git+https://github.com/myon-bioinformatics/browser-test-kit" python -m btk --help
 
-# or install once, then use it anywhere (also from Python one-liners)
+# or install once, then use it anywhere
 python -m pip install "git+https://github.com/myon-bioinformatics/browser-test-kit"
-python -m check_png shot.png
-python -c "import check_png; print(check_png.dimensions(open('shot.png', 'rb').read()))"
+python -m btk --help
 
 # inside a clone, without installing
-PYTHONPATH=scripts python -S -m check_png shot.png
+PYTHONPATH=scripts python -S -m btk --help
 ```
 
-Module names are the file names (`check_png`, and each script added later), so install into an environment without other modules of the same names, such as a uv run or a virtualenv. `tests/python/test_python_m.py` runs `python -S -m NAME --help` for every script, and CI installs the repository and runs one module from outside the checkout.
+Module names are the file names (`btk`, `gh_ops`, `route_trail`, ...), so install into an environment without other modules of the same names, such as a uv run or a virtualenv. `tests/python/test_python_m.py` runs `python -S -m NAME --help` for every script, and CI installs the repository and runs one module from outside the checkout.
 
 ## Standard-library one-liners
 

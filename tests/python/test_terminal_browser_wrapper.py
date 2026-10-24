@@ -10,9 +10,9 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-WRAPPER = ROOT / "scripts" / "terminal_browser.py"
+WRAPPER = ROOT / "tools" / "terminal_browser.py"
 
-sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT / "tools"))
 import btk_events  # noqa: E402
 
 
@@ -222,8 +222,8 @@ def test_signal_exit_is_normalized(tmp_path):
 
 
 def test_fallback_without_btk_events(monkeypatch):
-    """scripts/terminal_browser.py must stay usable copied alone, without
-    scripts/btk_events.py alongside it (its module docstring's "dependency-
+    """tools/terminal_browser.py must stay usable copied alone, without
+    tools/btk_events.py alongside it (its module docstring's "dependency-
     free" promise). Simulate that by making `import btk_events` fail inside
     a fresh load of the module, then check its inline classify/emit fallback
     still produces the same btk-event/1-shaped JSONL."""

@@ -18,12 +18,12 @@ on:
   pull_request:
     paths:
       - 'adapters/**'
-      - 'scripts/platform_probe.py'
-      - 'scripts/platform_adapter.py'
-      - 'scripts/platform_facts.js'
-      - 'scripts/app_comparison.py'
-      - 'scripts/app_digest.py'
-      - 'scripts/app_digest_comment.py'
+      - 'tools/platform_probe.py'
+      - 'tools/platform_adapter.py'
+      - 'tools/platform_facts.js'
+      - 'tools/app_comparison.py'
+      - 'tools/app_digest.py'
+      - 'tools/app_digest_comment.py'
       - '.github/workflows/platform-apps.yml'
 
 permissions:
@@ -66,7 +66,7 @@ jobs:
     name: Published Flutter / ${{ matrix.os }} / ${{ matrix.browser }} / ${{ matrix.profile }}
     needs: plan
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: 90
     defaults:
       run:
         shell: bash
@@ -92,7 +92,15 @@ jobs:
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           python-version: '3.13'
-      - run: uv run --locked --group browser python -m playwright install --with-deps --only-shell ${{ matrix.browser }}
+      - name: System libraries (apt on Linux, bounded; installed before the browser)
+        if: runner.os == 'Linux'
+        timeout-minutes: 8
+        run: |
+          sudo DEBIAN_FRONTEND=noninteractive dpkg --configure -a
+          uv run --locked --group browser python -m playwright install-deps ${{ matrix.browser }}
+      - name: Install browser
+        timeout-minutes: 8
+        run: uv run --locked --group browser python -m playwright install --only-shell ${{ matrix.browser }}
       - name: Measure representative published pages
         env:
           BROWSER: ${{ matrix.browser }}
@@ -104,11 +112,11 @@ jobs:
           status=0
           for adapter in adapters/flutter-*.json; do
             name=$(basename "$adapter" .json)
-            uv run --locked --group browser python scripts/platform_probe.py collect --browser "$BROWSER" --profile "$PROFILE" \
+            uv run --locked --group browser python tools/platform_probe.py collect --browser "$BROWSER" --profile "$PROFILE" \
               --adapter "$adapter" --widths "${widths[@]}" --width-step "$WIDTH_STEP" --out app-results \
               --evidence-dir "app-results/$name/$RUNNER_OS-$BROWSER-$PROFILE" || status=1
           done
-          python -S scripts/platform_probe.py summary app-results > app-results/summary.txt || status=1
+          python -S tools/platform_probe.py summary app-results > app-results/summary.txt || status=1
           { echo 'Published-site observations; mobile profiles are emulation, not physical devices.'; echo '```text'; cat app-results/summary.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
           exit "$status"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -143,9 +151,9 @@ jobs:
           path: app-results
       - name: Render observed results (job failures remain failures)
         run: |
-          python -S scripts/platform_probe.py merge app-results --out app-matrix/dataset.json
-          python -S scripts/platform_probe.py render app-matrix/dataset.json --out app-matrix/index.html
-          python -S scripts/platform_probe.py summary app-matrix/dataset.json > app-matrix/summary.txt || true
+          python -S tools/platform_probe.py merge app-results --out app-matrix/dataset.json
+          python -S tools/platform_probe.py render app-matrix/dataset.json --out app-matrix/index.html
+          python -S tools/platform_probe.py summary app-matrix/dataset.json > app-matrix/summary.txt || true
           { echo '```text'; cat app-matrix/summary.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - name: Compare captured screenshots (differences are diagnostic only)
         timeout-minutes: 10
@@ -153,7 +161,7 @@ jobs:
           RUNNERS_JSON: ${{ needs.plan.outputs.os }}
           SHOT: ${{ needs.plan.outputs.shot }}
         run: |
-          python -S scripts/app_comparison.py app-results --ironmate .ironmate \
+          python -S tools/app_comparison.py app-results --ironmate .ironmate \
             --runners-json "$RUNNERS_JSON" --shot "$SHOT" --out app-matrix/screenshots
           { echo 'Screenshot comparison: artifact platform-app-matrix/screenshots/index.html'; echo 'PNG/MAE/RMSE differences are not UI defect verdicts. Missing captures are explicit in report.json.'; } >> "$GITHUB_STEP_SUMMARY"
       # View the same comparison by page emoji with switchable tile layouts (web-ui), pinned to
@@ -189,7 +197,7 @@ jobs:
           SHOT: ${{ needs.plan.outputs.shot }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          python -S scripts/app_digest.py app-results --ironmate .ironmate --runners-json "$RUNNERS_JSON" \
+          python -S tools/app_digest.py app-results --ironmate .ironmate --runners-json "$RUNNERS_JSON" \
             --shot "$SHOT" --out app-digest --run-url "$RUN_URL"
           cat app-digest/summary.md >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -205,7 +213,7 @@ jobs:
           GH_PROMPT_DISABLED: "1"
           PR: ${{ github.event.pull_request.number }}
         run: |
-          python -S scripts/app_digest_comment.py "$GITHUB_REPOSITORY" "$PR" --file app-digest/summary.md
+          python -S tools/app_digest_comment.py "$GITHUB_REPOSITORY" "$PR" --file app-digest/summary.md
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:

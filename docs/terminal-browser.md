@@ -24,14 +24,14 @@ README -- not the same-named `terminal-browser` package on npm (see
 "Non-interactive subcommand wrappers" below). Then verify discovery:
 
 ```sh
-python scripts/terminal_browser.py --check
+python tools/terminal_browser.py --check
 ```
 
 For interactive use, run through the wrapper so the child inherits the real
 terminal stdin/stdout/stderr:
 
 ```sh
-python scripts/terminal_browser.py open http://127.0.0.1:8000
+python tools/terminal_browser.py open http://127.0.0.1:8000
 ```
 
 Start the repository's local server first. Keep Playwright for deterministic
@@ -46,14 +46,14 @@ stdout/stderr to a file. It is intended for **non-interactive commands** such as
 `action --help`; do not use capture mode as proof of TUI rendering:
 
 ```sh
-python scripts/terminal_browser.py --log test-results/terminal-browser/action.log action --help
+python tools/terminal_browser.py --log test-results/terminal-browser/action.log action --help
 ```
 
 When a terminal-browser top-level argument starts with `-`, use the explicit
 wrapper delimiter so argparse cannot consume it:
 
 ```sh
-python scripts/terminal_browser.py -- --version
+python tools/terminal_browser.py -- --version
 ```
 
 ## Exit and event contract
@@ -112,7 +112,7 @@ to add thin exact-argv wrappers around, the way `--check` wraps discovery.
   `render(<App />)` an Ink TUI -- no argument parsing at all (no `--help`, no
   `--version`, no subcommands) -- and it fails immediately outside a real TTY
   (`Raw mode is not supported on the current process.stdin`). It does not
-  match the interface `scripts/terminal_browser.py` targets, and this repo
+  match the interface `tools/terminal_browser.py` targets, and this repo
   does not install it.
 - We did not install the real upstream tool (via its install script or
   Homebrew) in this environment, and CI here still does not exercise it. So
@@ -121,7 +121,7 @@ to add thin exact-argv wrappers around, the way `--check` wraps discovery.
 
 Because we have not exercised the real tool's non-interactive subcommands in
 this environment or in CI, no subcommand-specific wrappers were added here.
-`scripts/terminal_browser.py` continues to pass whatever argv the caller
+`tools/terminal_browser.py` continues to pass whatever argv the caller
 gives it straight through (`open ...`, `action --help`, `-- --version`, ...)
 rather than inventing flags; that generic passthrough already covers
 upstream's documented `open`/`action`/`ls`/`upgrade` interface once the real

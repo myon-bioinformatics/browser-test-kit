@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts'))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools'))
 import app_digest_comment as comment
 
 BODY = '<!-- platform-apps-digest -->\n1/1 passed; [Run](https://example.test/run/1)'

@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-spec = importlib.util.spec_from_file_location('platform_probe', ROOT / 'scripts/platform_probe.py')
+spec = importlib.util.spec_from_file_location('platform_probe', ROOT / 'tools/platform_probe.py')
 pp = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(pp)
 pa = pp.adapters
@@ -207,8 +207,8 @@ def test_manual_runs_can_switch_grid_and_widths_while_schedule_keeps_defaults():
 
 def test_report_publishes_a_small_digest_and_a_pr_summary():
     apps = (ROOT / '.github/workflows/platform-apps.yml').read_text()
-    assert 'scripts/app_digest.py app-results --ironmate .ironmate' in apps and 'name: platform-app-digest' in apps
-    assert 'pull-requests: write' in apps and 'scripts/app_digest_comment.py' in apps
+    assert 'tools/app_digest.py app-results --ironmate .ironmate' in apps and 'name: platform-app-digest' in apps
+    assert 'pull-requests: write' in apps and 'tools/app_digest_comment.py' in apps
     assert 'gh api' not in apps
     assert "github.event.pull_request.head.repo.full_name == github.repository" in apps
 
@@ -220,7 +220,7 @@ def test_workflow_checks_inputs_before_fanout_and_matches_capture_width():
     assert '10#$width >= 250 && 10#$width <= 3840' in plan
     assert 'shot=width-$((10#$width))' in plan
     assert apps.count('--shot "$SHOT"') == 2
-    assert "- 'scripts/app_digest.py'" in apps and "- 'scripts/app_digest_comment.py'" in apps
+    assert "- 'tools/app_digest.py'" in apps and "- 'tools/app_digest_comment.py'" in apps
     import re
     assert all(re.fullmatch(r'[0-9a-f]{40} # v[0-9]+(?:\.[0-9]+){0,2}', pin) for pin in re.findall(r'uses: actions/[^@]+@([^\n]+)', apps))
 

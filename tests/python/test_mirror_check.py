@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = ROOT / "scripts" / "mirror_check.py"
+SCRIPT = ROOT / "tools" / "mirror_check.py"
 spec = importlib.util.spec_from_file_location("mirror_check", SCRIPT)
 mc = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mc)

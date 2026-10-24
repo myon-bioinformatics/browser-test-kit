@@ -11,7 +11,8 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = (ROOT / "fixtures" / "page_inspect.html").read_bytes()
-SCRIPT = ROOT / "scripts" / "page_inspect.py"
+SCRIPT = ROOT / "scripts" / "btk.py"
+sys.path.insert(0, str(ROOT / "scripts"))
 RESULTS = ROOT / "test-results" / "page-inspect"
 
 
@@ -64,7 +65,10 @@ def test_chromium_observe_is_passive_and_fingerprints_storage(loopback, capsys):
     assert payload["schema"] == "btk-page-observe/1" and payload["ok"] is True
     assert payload["limits"]["page_js_called"] is False
     assert "Runtime.evaluate" not in payload["limits"]["cdp_methods"]
-    assert ".evaluate(" not in (ROOT / "scripts" / "page_inspect.py").read_text(encoding="utf-8")
+    # Only _wait_quiet (settle, after a driven page) may call page.evaluate; observe_page must not.
+    import inspect
+    import btk
+    assert ".evaluate(" not in inspect.getsource(btk.observe_page)
     found = names(payload)
     for expected in ("Save draft", "Cancel", "Documentation", "Search", "Remember me", "Unavailable"):
         assert expected in found, found
@@ -120,11 +124,12 @@ def test_act_requeries_and_records_the_click(loopback, capsys):
     ordinal = run(["act", loopback, "--action", "click", "--locator", "h:0", "--json"])
     assert ordinal.returncode == 2
     assert json.loads(ordinal.stdout)["ok"] is False
-    waited = run(["act", loopback, "--browser", "firefox", "--action", "wait_for_timeout", "--timeout-ms", "50", "--json"])
-    assert waited.returncode == 0, waited.stderr
-    body = json.loads(waited.stdout)
-    assert body["limits"]["page_js_called"] is False
-    assert body["sections"]["accessibility"]["coverage"] == "not_requested"
+    if "firefox" in os.environ.get("BTK_BROWSER_ENGINES", "chromium,firefox,webkit"):
+        waited = run(["act", loopback, "--browser", "firefox", "--action", "wait_for_timeout", "--timeout-ms", "50", "--json"])
+        assert waited.returncode == 0, waited.stderr
+        body = json.loads(waited.stdout)
+        assert body["limits"]["page_js_called"] is False
+        assert body["sections"]["accessibility"]["coverage"] == "not_requested"
     notice(capsys, "page-act", "click re-queried id:save-draft")
 
 

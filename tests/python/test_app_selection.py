@@ -7,7 +7,7 @@ import sys
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / 'scripts'))
+sys.path.insert(0, str(ROOT / 'tools'))
 import app_comparison as comparison
 import app_digest as digest
 
@@ -68,7 +68,7 @@ def test_list_needs_no_ironmate_records_or_images(tmp_path, monkeypatch, capsys,
 @pytest.mark.parametrize('script', ['app_comparison.py', 'app_digest.py'])
 def test_list_runs_without_site_packages(tmp_path, script):
     directory = adapters(tmp_path / 'adapters')
-    result = subprocess.run([sys.executable, '-S', str(ROOT / 'scripts' / script), str(tmp_path),
+    result = subprocess.run([sys.executable, '-S', str(ROOT / 'tools' / script), str(tmp_path),
                              '--adapters', str(directory), '--runners-json', '["ubuntu-24.04"]', '--list'],
                             capture_output=True, text=True, encoding='utf-8')
     assert result.returncode == 0, result.stderr
