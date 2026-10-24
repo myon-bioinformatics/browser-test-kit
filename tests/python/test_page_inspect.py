@@ -285,7 +285,7 @@ def test_observe_cdp_never_sends_runtime_evaluate_with_after_action(tmp_path, mo
     monkeypatch.setattr(BrowserContext, "new_cdp_session", tracking_new_cdp_session)
     try:
         url = f"http://127.0.0.1:{server.server_port}/page.html"
-        session = page_inspect.observe_page(
+        session = btk.observe_page(
             url=url,
             browser_name="chromium",
             profile="desktop",
@@ -297,7 +297,7 @@ def test_observe_cdp_never_sends_runtime_evaluate_with_after_action(tmp_path, mo
             role="",
             start=0,
             limit=50,
-            steps=[page_inspect.parse_step("scroll:0,800")],
+            steps=[btk.parse_step("scroll:0,800")],
         )
     finally:
         server.shutdown()
