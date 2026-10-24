@@ -49,3 +49,24 @@ def test_coverage_relations_and_cli_bad_flags():
     proc = subprocess.run(cmd, capture_output=True, text=True)
     assert proc.returncode == 2
     assert json.loads(proc.stdout)["stage"] == "input"
+
+
+@pytest.mark.parametrize("profile", ["desktop", "iphone", "pixel"])
+@pytest.mark.parametrize("headed", [False, True])
+@pytest.mark.parametrize("viewport", [None, {"width": 800, "height": 600}])
+@pytest.mark.parametrize("browser", ["chromium", "firefox", "webkit"])
+def test_context_configuration(profile, headed, viewport, browser):
+    devices = {name: {"viewport": {"width": 390, "height": 844},
+                      "has_touch": True, "is_mobile": True, "device_scale_factor": 3,
+                      "default_browser_type": "webkit"} for name in api.PROFILES.values() if name}
+    args = options(profile=profile, headed=headed, browser=browser)
+    config = scenario.context_configuration(args, api, devices, viewport)
+    native = profile == "desktop" and headed and viewport is None
+    assert bool(config.get("no_viewport")) == native
+    assert ("device_scale_factor" not in config) if native else config["device_scale_factor"] == 2
+    assert bool(config.get("has_touch")) == (profile != "desktop")
+    assert "default_browser_type" not in config
+    if browser == "firefox":
+        assert "is_mobile" not in config
+    if viewport is not None:
+        assert config["viewport"] == viewport
