@@ -120,6 +120,7 @@ def test_profile_environment_matches_context(url, profile, explicit):
         assert environment["viewport"] == {"width": 800, "height": 600}
 
 
+@pytest.mark.browser
 @pytest.mark.parametrize("explicit", [False, True])
 def test_native_window_configuration_is_accepted(explicit):
     # Headless launch also validates the headed context kwargs without an X server.
