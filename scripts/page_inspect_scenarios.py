@@ -96,12 +96,12 @@ class EventWindow:
 
 
 def context_configuration(args, api, devices, viewport):
-    config = api.context_options(devices, args.browser, args.profile, args.headed)
+    config = api.context_options(devices, args.browser, args.profile, args.headed, viewport=viewport)
     config.update(color_scheme=args.color_scheme, reduced_motion=args.reduced_motion,
-                  locale=args.locale, timezone_id=args.timezone, device_scale_factor=args.device_scale_factor)
-    if viewport:
-        config.pop("no_viewport", None)
-        config["viewport"] = viewport
+                  locale=args.locale, timezone_id=args.timezone)
+    # Playwright forbids a scale override when using the native window viewport.
+    if not config.get("no_viewport"):
+        config["device_scale_factor"] = args.device_scale_factor
     return config
 
 
@@ -278,14 +278,17 @@ def run_scenario(args, api):
             download.delete()
             outcome.update(body="not_read", temporary_artifact="deleted")
         effective_viewport = page.viewport_size or {}
-        environment = api._environment(browser, args.browser, args.channel, args.headed, args.profile, effective_viewport)
+        environment = api._environment(browser, args.browser, args.channel, args.headed, args.profile, effective_viewport,
+                                       has_touch=bool(options.get("has_touch")),
+                                       viewport_source=api.viewport_source_for(args.profile, args.headed, viewport))
         environment.update(device_profile_emulated=args.profile != "desktop", actual_host_os=api.os_name(),
                            color_scheme=args.color_scheme, reduced_motion=args.reduced_motion,
-                           locale=args.locale, timezone=args.timezone, device_scale_factor=args.device_scale_factor,
+                           locale=args.locale, timezone=args.timezone, device_scale_factor=options.get("device_scale_factor"),
                            environment_source="playwright:browser.new_context", device_claim="emulation_only")
         settings = {key: environment[key] for key in (
             "os", "browser", "version", "channel", "headless", "profile", "viewport", "color_scheme",
-            "reduced_motion", "locale", "timezone", "device_scale_factor", "device_profile_emulated")}
+            "reduced_motion", "locale", "timezone", "device_scale_factor", "device_profile_emulated",
+            "has_touch", "viewport_source")}
         sections = {
             "scenario": api._section("playwright:bounded-scenario", scenario_coverage, outcome),
             "environment_settings": api._section("playwright:browser.new_context", "complete", settings),
