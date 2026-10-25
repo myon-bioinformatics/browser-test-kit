@@ -138,3 +138,64 @@ def test_pages_then_trail_and_emoji_goto_drive_the_same_routes(site):
                      "--routes", str(routes_file), "--json"])
     assert acted.returncode == 0, acted.stderr
     assert json.loads(acted.stdout)["url"].endswith("/form.html")
+
+
+@pytest.mark.browser
+def test_pages_many_links_cli_is_bounded(site):
+    base, work = site
+    fixture = ROOT / "tests/fixtures/pages/many-links.html"
+    (work / "many.html").write_bytes(fixture.read_bytes())
+    result = run_btk(["pages", f"{base}/many.html", "--max-pages", "1", "--json"])
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["routes"] == {"/many.html": "🏠"}
+    assert payload["links_inspected"] == btk.PAGE_LINK_LIMIT
+    assert payload["queue_peak"] == 1
+    assert payload["truncated"] is True
+    assert "secret" not in result.stdout and "hidden" not in result.stdout
+
+
+@pytest.mark.parametrize("max_pages", [1, 30])
+def test_pages_link_and_queue_budgets_without_bulk_locators(monkeypatch, max_pages):
+    class Anchor:
+        def get_attribute(self, name):
+            page.reads += 1
+            return f"/p{page.reads}?private=secret#hidden"
+
+    class Anchors:
+        def count(self):
+            return 5000
+
+        def nth(self, index):
+            assert index < btk.PAGE_LINK_LIMIT
+            return Anchor()
+
+        def all(self):
+            pytest.fail("must not allocate all locators")
+
+    class Page:
+        reads = 0
+        visits = []
+        url = "http://127.0.0.1:8000/"
+
+        def goto(self, url, **kwargs):
+            self.url = url
+            self.visits.append(url)
+
+        def locator(self, selector):
+            return Anchors()
+
+    page = Page()
+    monkeypatch.setattr(btk, "_with_browser", lambda *args: (None, None, page, False))
+    monkeypatch.setattr(btk, "_finish", lambda pw, browser, failure, result: result)
+    payload = btk.discover_pages(url=page.url, browser_name="chromium", profile="desktop",
+                                 headed=False, channel=None, max_pages=max_pages)
+    assert payload["links_inspected"] == min(max_pages * btk.PAGE_LINK_LIMIT, btk.TOTAL_LINK_LIMIT)
+    assert page.reads == payload["links_inspected"]
+    assert payload["queue_peak"] <= max_pages
+    assert len(payload["routes"]) == max_pages
+    assert payload["truncated"] is True
+    assert list(payload["routes"])[0] == "/"
+    assert "secret" not in json.dumps(payload)
+    assert page.visits == ["http://127.0.0.1:8000/"] + [
+        f"http://127.0.0.1:8000/p{i}" for i in range(1, max_pages)]

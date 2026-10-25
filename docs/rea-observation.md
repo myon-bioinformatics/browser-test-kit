@@ -123,3 +123,19 @@ The existing `compare` reads two scenario snapshots and applies `evidence_relati
 section is `unknown`, not `same`. See [detailed contract](page-inspect-platform-scenarios.md)
 for loopback/origin controls, event caps, short-circuit behaviors and privacy limits.
 Node 24 is selected by `.nvmrc`, but existing CI workflows are not modified.
+
+### Page discovery limits
+
+`btk.py pages` walks same-origin routes in breadth-first DOM link order and
+assigns emoji in visit order. It reads at most 256 href attributes per page and
+2,048 across the entire exploration, using indexed locators rather than
+materializing every anchor. The queue and seen-route set contain at most
+`--max-pages` routes (including already visited routes). External links and
+repeated routes consume the inspection budget too. Queries, fragments and link
+text are not recorded.
+
+The `btk-page-routes/1` result reports `links_inspected`, `link_limits` and
+`queue_peak` (total retained queue entries, including visited entries).
+`truncated` is true when a link budget omits links, a new route cannot be queued,
+or queued routes remain unvisited. Counts and routes describe only the inspected
+prefix when truncated; they do not claim a complete site inventory.

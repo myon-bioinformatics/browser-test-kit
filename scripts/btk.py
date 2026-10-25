@@ -3505,6 +3505,10 @@ def trail_urls(trail: str, origin: str, routes: dict) -> list:
     return [route_url(key, origin, routes) for key in parse_trail(trail)]
 
 
+PAGE_LINK_LIMIT = 256
+TOTAL_LINK_LIMIT = 2048
+
+
 def discover_pages(*, url: str, browser_name: str, profile: str, headed: bool, channel: str | None, max_pages: int) -> dict:
     """Breadth-first walk of same-origin links from a loopback start page; emoji are assigned afterwards."""
     start = loopback_target(url)
@@ -3518,6 +3522,9 @@ def discover_pages(*, url: str, browser_name: str, profile: str, headed: bool, c
         seen = {start_route}
         found: list = []
         skipped = 0
+        inspected = 0
+        limited = False
+        queue_peak = 1
         index = 0
         while index < len(queue) and len(found) < max_pages:
             route = queue[index]
@@ -3531,7 +3538,14 @@ def discover_pages(*, url: str, browser_name: str, profile: str, headed: bool, c
                     stage="navigate",
                 ) from exc
             found.append(route)
-            for anchor in page.locator("a[href]").all():
+            anchors = page.locator("a[href]")
+            link_count = anchors.count()
+            budget = min(PAGE_LINK_LIMIT, TOTAL_LINK_LIMIT - inspected)
+            if link_count > budget:
+                limited = True
+            for number in range(min(link_count, budget)):
+                anchor = anchors.nth(number)
+                inspected += 1
                 # Attribute reads only: pages never runs page script, so observe's one-evaluate rule holds.
                 link = urllib.parse.urlsplit(urllib.parse.urljoin(page.url, anchor.get_attribute("href") or ""))
                 if f"{link.scheme}://{link.netloc}" != origin:
@@ -3539,8 +3553,12 @@ def discover_pages(*, url: str, browser_name: str, profile: str, headed: bool, c
                     continue
                 path = link.path or "/"
                 if path not in seen:
+                    if len(queue) >= max_pages:
+                        limited = True
+                        continue
                     seen.add(path)
                     queue.append(path)
+                    queue_peak = max(queue_peak, len(queue))
         routes = {route: ROUTE_POOL[number] for number, route in enumerate(found)}
         result = {
             "schema": "btk-page-routes/1",
@@ -3548,7 +3566,10 @@ def discover_pages(*, url: str, browser_name: str, profile: str, headed: bool, c
             "origin": origin,
             "routes": routes,
             "pages": [{"route": route, "emoji": routes[route]} for route in found],
-            "truncated": index < len(queue),
+            "truncated": limited or index < len(queue),
+            "links_inspected": inspected,
+            "link_limits": {"per_page": PAGE_LINK_LIMIT, "total": TOTAL_LINK_LIMIT},
+            "queue_peak": queue_peak,
             "skipped_external_links": skipped,
             "hint": "pass the routes file to observe --trail or act --action goto; link text is not recorded; query strings and fragments are ignored",
         }
