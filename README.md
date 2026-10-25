@@ -286,6 +286,27 @@ python scripts/btk.py observe http://127.0.0.1:8765/page --out before.json --aft
 - Whitespace steps (`--step "fill id:q TEXT"`) and `--trail` retain the previous per-file envelope; colon steps use `btk-page-observe-run/1`. Emoji routes from `pages --routes-out` work with `observe --routes --trail` and `act --action goto --routes --text`. Both syntaxes use the same action performer and URL evidence privacy rules.
 - Exit codes: `0` success; `1` no match or a shared top score; `2` usage, a bad snapshot, or launch/navigate/inspect/cleanup failure. Headless is the default.
 
+### Platform and fault scenarios (PR #123)
+
+The **active** `scenario` subcommand verifies OS-dependent shortcuts, display settings,
+browser-context offline/HTTP errors/latency, permissions and bounded file interactions.
+It uses the same `btk-page-observe/1` envelope and existing Node `btk.cjs`
+→ `py_launch.cjs` bridge without replacing `observe --step`, `act`, or `compare`.
+
+```bash
+python scripts/btk.py scenario http://127.0.0.1:8765/scenarios --case display --viewport 390x844 --color-scheme dark --reduced-motion reduce --locale ja-JP --timezone Asia/Tokyo --json
+python scripts/btk.py scenario http://127.0.0.1:8765/scenarios --case offline --json
+python scripts/btk.py scenario http://127.0.0.1:8765/scenarios --case permission --permission geolocation --permission-state grant --json
+node scripts/btk.cjs scenario http://127.0.0.1:8765/scenarios --case shortcut --json
+```
+
+The local test fixture is `fixtures/page_inspect_scenarios.html`, served with the
+`/api/probe` and `/scenario.txt` fixture routes. `scenario` can also test
+`http-error`, `latency`, `upload`, and `download`; see
+[platform scenario contract](docs/page-inspect-platform-scenarios.md).
+`.nvmrc` selects **Node 24**. Emulated phone profiles are not real devices.
+Only a complete section with an eligible digest can compare as `same`.
+
 ### Sequence status
 
 Implemented:
