@@ -95,6 +95,13 @@ values and secret attributes are not emitted.
 
 `environment_settings` now includes actual host OS, browser version, channel,
 headless mode and device profile in its digest, in addition to display settings.
+`has_touch` and `viewport_source` are recorded in both environment outputs from
+the context configuration and viewport selection used for the run. Desktop
+headed mode without `--viewport` uses the native window (`headed_window`): no
+scale override is sent, and `device_scale_factor` is null (not configured).
+With `--viewport`, viewport emulation and the requested scale are enabled, and
+the source is `flag`. Phone defaults use `device_descriptor` and retain touch
+emulation even when the viewport is overridden. These are emulated profiles.
 Thus section comparison cannot imply identical environments merely because
 the viewport matches. This does not modify the generic compare command.
 
