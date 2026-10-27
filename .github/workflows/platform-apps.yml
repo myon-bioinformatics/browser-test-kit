@@ -94,7 +94,9 @@ jobs:
           python-version: '3.13'
       - name: System libraries (apt on Linux, bounded; installed before the browser)
         if: runner.os == 'Linux'
-        timeout-minutes: 8
+        # WebKit downloads ~117 MB of system packages; a slow apt mirror exceeded 8 minutes.
+        # Each isolated profile runner needs its own libraries; install-deps runs only once.
+        timeout-minutes: ${{ matrix.browser == 'webkit' && 20 || 8 }}
         run: |
           sudo DEBIAN_FRONTEND=noninteractive dpkg --configure -a
           uv run --locked --group browser python -m playwright install-deps ${{ matrix.browser }}
