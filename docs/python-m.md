@@ -1,6 +1,6 @@
 # Running the scripts with `python -m`
 
-Every `scripts/*.py` is stdlib-only at runtime. `pyproject.toml` installs each one as a top-level module, so after installation it runs from any directory, like `python -m zipfile`, with no clone or file path. The in-repo tools under `tools/` are not installed: run them from a checkout with `python -S tools/NAME.py`.
+Every `scripts/*.py` is stdlib-only at runtime. `pyproject.toml` installs each one as a top-level module, so after installation it runs from any directory, like `python -m zipfile`, with no clone or file path. The in-repo tools under `tools/` can also be run from a checkout. The original `scripts/` entries and installed modules remain available for compatibility, including `page_inspect`, `pw_install_plan`, `repo_overview`, and `image_diff`. `page_inspect` delegates to the current BTK implementation in both Python and Node; the image-diff backend remains vendored and packaged.
 
 ```sh
 # one-off: nothing cloned, uv caches the build
