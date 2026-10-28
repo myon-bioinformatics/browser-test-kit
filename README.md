@@ -35,7 +35,8 @@ that every browser or environment has been tested.
 - Stdlib-only modules and the base package: **Python 3.9+**, with no runtime dependencies.
   Run a source script with `python -S tools/check_png.py --help`, or install the
   base package with `python -m pip install .` and use `python -m btk --help`. Tools under `tools/` are
-  repository tooling and are not installed.
+  repository tooling; original `scripts/` entries and installed modules remain supported.
+- Image diff (`scripts/image_diff.py` / `python -m image_diff`): **Python 3.11+**, using the vendored stdlib-only `pillow_min.py` backend. Python 3.9/3.10 exit 2 before decoding images. See [image comparison](docs/image-diff.md).
 - Development, tests, browser integrations, and this repository's **uv project
   environment/lockfile: Python 3.11+**. Use
   `uv run --locked --python 3.11 python -m pytest tests/python -q -m "not browser"`. Add `--group browser` for browser

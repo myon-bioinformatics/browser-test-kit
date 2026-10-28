@@ -44,10 +44,18 @@ Only these derivative files were resampled when the artwork was prepared. The
 Pillow instructions above document that authoring procedure, not a runtime or
 development dependency. Do not regenerate the reviewed PNGs during tests.
 
-`tests/python/test_brand_assets.py` checks encoded file hashes, PNG header dimensions and color type, the manifest's crop and derivative records, documentation references, and fixture icon links. It does not decode pixels, so it cannot confirm that the crops or derivatives match the source pixels. Review the artwork by eye before intentionally updating hashes.
+`tests/python/test_brand_assets.py` uses the stdlib-only `pillow_min` decoder pinned
+in `vendor.lock.json`. It checks every lossless crop against the original pixels,
+and checks all four resized derivatives against frozen decoded RGB SHA-256
+baselines from the reviewed artwork. It also checks encoded file hashes,
+dimensions, source relationships, documentation references, and fixture links.
+The pinned decoder has no resize/LANCZOS API, so these tests verify derivative
+identity rather than re-executing the resampling algorithm. No asset is skipped
+when Pillow is absent. A regression test runs the asset checks under `python -S`
+and checks that Pillow was not imported.
 
-PNG encoding may vary across authoring-tool versions, so review the artwork
-before intentionally updating hashes.
+PNG encoding may vary across authoring-tool versions. Compare decoded pixels and
+review the artwork before intentionally updating hashes or pixel baselines.
 
 All fixture icon paths are relative to `fixtures/index.html`, so they work for the
 existing local-file example as well as a locally served repository. No network
