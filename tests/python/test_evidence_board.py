@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-SCRIPTS = ROOT / "scripts"
+SCRIPTS = ROOT / "tools"
 
 _be_spec = importlib.util.spec_from_file_location("btk_events", SCRIPTS / "btk_events.py")
 btk_events = importlib.util.module_from_spec(_be_spec)

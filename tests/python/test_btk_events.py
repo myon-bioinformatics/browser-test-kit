@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-MODULE_PATH = ROOT / "scripts" / "btk_events.py"
+MODULE_PATH = ROOT / "tools" / "btk_events.py"
 
 _spec = importlib.util.spec_from_file_location("btk_events", MODULE_PATH)
 btk_events = importlib.util.module_from_spec(_spec)
@@ -119,7 +119,7 @@ def test_classify_terminal_browser_mapping():
 def test_help_runs_under_dash_s():
     result = subprocess.run(
         [sys.executable, "-S", "-m", "btk_events", "--help"],
-        cwd=str(ROOT / "scripts"),
+        cwd=str(ROOT / "tools"),
         text=True,
         capture_output=True,
     )

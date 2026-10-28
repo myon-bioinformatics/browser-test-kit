@@ -47,7 +47,7 @@ def url():
 
 
 def run(url, *flags):
-    proc = subprocess.run([sys.executable, "scripts/page_inspect.py", "scenario", url,
+    proc = subprocess.run([sys.executable, "scripts/btk.py", "scenario", url,
                            "--browser", "chromium", *flags, "--json"],
                           cwd=ROOT, capture_output=True, text=True, timeout=90)
     assert proc.returncode == 0, proc.stdout + proc.stderr
@@ -127,7 +127,7 @@ def test_native_window_configuration_is_accepted(explicit):
     sys.path.insert(0, str(ROOT / "scripts"))
     from types import SimpleNamespace
     from playwright.sync_api import sync_playwright
-    import page_inspect as api
+    import btk as api
     import page_inspect_scenarios as scenario
     args = SimpleNamespace(browser="chromium", profile="desktop", headed=True,
                            color_scheme="light", reduced_motion="no-preference",

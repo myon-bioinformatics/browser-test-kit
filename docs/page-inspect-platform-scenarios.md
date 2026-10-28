@@ -3,7 +3,7 @@
 This is the continuation of PR 123. General locator actions, multi-step parsing,
 passive CDP collection and the compare command remain owned by PRs 121, 122,
 124 and 125. No action parser or comparison implementation is copied here.
-The existing `page_inspect.py scenario` adapter still returns
+The existing `btk.py scenario` adapter still returns
 `btk-page-observe/1` through `assemble_observe`, `_section` and
 `evidence_relation`. Its local page is an active, versioned **test fixture**,
 not an arbitrary application probe or a real device.
@@ -11,7 +11,7 @@ not an arbitrary application probe or a real device.
 ## Node 24
 
 The workspace `.nvmrc` selects major 24. With nvm, run `nvm install` followed
-by `nvm use`. The existing `page_inspect.cjs` to `vendor/py_launch.cjs` bridge
+by `nvm use`. The existing `btk.cjs` to `vendor/py_launch.cjs` bridge
 requires Node 24 or newer. This change does not edit workflows, change their
 existing newer Node pins, add a Node download during tests, or change permissions.
 A local Node 24 runtime can execute the dependency-free fixture contract suite:

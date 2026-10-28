@@ -1,9 +1,9 @@
-"""pw_install_plan: per-job install recommendation from configs and later commands."""
+"""btk plan: per-job install recommendation from configs and later commands."""
 import importlib.util
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-spec = importlib.util.spec_from_file_location("pw_install_plan", ROOT / "scripts" / "pw_install_plan.py")
+spec = importlib.util.spec_from_file_location("btk", ROOT / "scripts" / "btk.py")
 pip = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(pip)
 
@@ -49,15 +49,15 @@ jobs:
           for browser in chromium firefox webkit; do
             collect --browser "$browser" --profile desktop
           done
-          xvfb-run -a python scripts/platform_probe.py collect --browser "$browser" --headed
+          xvfb-run -a python tools/platform_probe.py collect --browser "$browser" --headed
   headed_only:
     steps:
       - run: python -m playwright install --with-deps chromium firefox webkit
-      - run: xvfb-run -a python scripts/platform_probe.py collect --browser chromium --headed
+      - run: xvfb-run -a python tools/platform_probe.py collect --browser chromium --headed
   branded:
     steps:
       - run: python -m playwright install --with-deps --no-shell chromium
-      - run: python scripts/platform_probe.py collect --browser chromium --channel chrome --headed
+      - run: python tools/platform_probe.py collect --browser chromium --channel chrome --headed
 """
 
 
@@ -72,17 +72,19 @@ def test_headed_and_headless_chromium_keep_both_builds(tmp_path):
 
 def test_platform_matrix_keeps_the_unflagged_install(capsys):
     workflow = (ROOT / ".github" / "workflows" / "platform-matrix.yml").read_text()
-    install = "python -m playwright install --with-deps chromium firefox webkit"
+    install = "python -m playwright install chromium firefox webkit"
     assert install in workflow
+    assert "--with-deps" not in workflow
+    assert workflow.index("playwright install-deps chromium firefox webkit") < workflow.index(install)
     assert "--no-shell" not in workflow
-    probe = (ROOT / "scripts" / "platform_probe.py").read_text()
+    probe = (ROOT / "tools" / "platform_probe.py").read_text()
     assert "headed: bool = False" in probe
     assert "headless=not headed" in probe
     assert 'for browser in chromium firefox webkit; do' in workflow
     assert 'collect --browser "$browser" --profile "$profile"' in workflow
-    assert pip.main([str(ROOT)]) == 0
+    assert pip.plan_cli([str(ROOT)]) == 0
     out = capsys.readouterr().out
-    assert "platform-matrix.yml:40 full + shell (job uses both the full build and the shell)" in out
+    assert "platform-matrix.yml:48 full + shell (job uses both the full build and the shell)" in out
     assert "suggest" not in out
 
 
@@ -90,8 +92,16 @@ def test_headless_config_suggests_only_shell_and_cli(tmp_path, capsys):
     root = repo(tmp_path, "projects: [{ name: 'chromium' }, { name: 'firefox' }]")
     rows = pip.plan(str(root))
     assert rows[0] == ("suggest", ".github/workflows/ci.yml:5", "add --only-shell (job runs headless only)")
-    assert pip.main([str(root)]) == 1
-    assert pip.main([str(tmp_path / "nope")]) == 2
+    assert pip.plan_cli([str(root)]) == 1
+    assert pip.plan_cli([str(tmp_path / "nope")]) == 2
     empty = tmp_path / "empty"
     empty.mkdir()
-    assert pip.main([str(empty)]) == 0 and "no playwright install lines" in capsys.readouterr().out
+    assert pip.plan_cli([str(empty)]) == 0 and "no playwright install lines" in capsys.readouterr().out
+
+
+def test_install_deps_is_not_a_browser_install():
+    """`playwright install-deps` installs system libraries; it must not be planned as a browser install."""
+    assert pip.INSTALL.search("npx playwright install-deps --dry-run chromium firefox webkit") is None
+    assert pip.INSTALL.search("npx playwright install-deps chromium firefox webkit") is None
+    match = pip.INSTALL.search("npx playwright install --only-shell chromium")
+    assert match is not None and match.group(1).split() == ["--only-shell", "chromium"]

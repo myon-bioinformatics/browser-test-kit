@@ -3,8 +3,8 @@
 ## Built-in Git-aware path selection
 
 ```sh
-python -S scripts/repo_overview.py . --paths-only --match 'scripts/*probe*' --match '*.toml' --json
-python -S scripts/repo_overview.py . --paths-only --match '*.py' --exclude 'tests/*'
+python -S tools/repo_overview.py . --paths-only --match 'scripts/*probe*' --match '*.toml' --json
+python -S tools/repo_overview.py . --paths-only --match '*.py' --exclude 'tests/*'
 ```
 
 `repo_overview.select_files(root, patterns=('*.py',), exclude=('tests/*',))`
@@ -83,7 +83,7 @@ On 2026-10-21 at `75d736d26f6752ff7bc1436ae414f6578e321f43`, the first command p
 31 files and found 7 definitions with no errors, skips or
 truncation. Examples:
 
-- `scripts/btk_events.py`: `validate`
+- `tools/btk_events.py`: `validate`
 - `scripts/gh_identity.py`: `validate_repository_metadata_v1`
 - `scripts/gh_ops.py`: `_validate_branch_name`
 - `scripts/gh_ops.py`: `_validate_branch_segment`

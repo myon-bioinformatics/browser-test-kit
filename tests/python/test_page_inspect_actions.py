@@ -15,9 +15,9 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import page_inspect  # noqa: E402
+import btk as page_inspect  # noqa: E402
 
-SCRIPT = ROOT / "scripts" / "page_inspect.py"
+SCRIPT = ROOT / "scripts" / "btk.py"
 BROWSERS = ("chromium", "firefox", "webkit")
 
 PAGE = """<!doctype html>
@@ -299,7 +299,8 @@ def test_settle_is_chromium_only_and_step_files_are_observe_slices():
     assert names == ["00-initial.json", "01-settle.json", "02-click.json"]
     source = Path(page_inspect.__file__).read_text(encoding="utf-8")
     assert ".evaluate(" not in source
-    assert "btk-page-observe-steps/1" not in source
+    # Whitespace steps retain their older envelope; colon steps use SCHEMA_RUN.
+    assert page_inspect.SCHEMA_RUN == "btk-page-observe-run/1"
     assert "page.keyboard.press(resolved)" in source
     assert "keyboard.press(resolved, timeout" not in source
 
@@ -749,7 +750,7 @@ def test_chromium_settle_is_quiet_without_page_script_and_busy_pages_time_out(tm
     busy_step = busy_payload["steps"][0]
     assert busy_step["status"] == "done" and busy_step["quiet"] is False
     assert busy_payload["ok"] is True
-    assert ".evaluate(" not in (ROOT / "scripts" / "page_inspect.py").read_text(encoding="utf-8")
+    assert ".evaluate(" not in (ROOT / "scripts" / "btk.py").read_text(encoding="utf-8")
 
 
 @pytest.mark.browser

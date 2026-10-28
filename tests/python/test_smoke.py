@@ -10,7 +10,7 @@ RESULTS = ROOT / "test-results" / "python"
 BROWSERS = ("chromium", "firefox", "webkit")
 PROFILES = (("desktop", None), ("mobile", "iPhone 13"))
 
-_spec = importlib.util.spec_from_file_location("check_png", ROOT / "scripts" / "check_png.py")
+_spec = importlib.util.spec_from_file_location("check_png", ROOT / "tools" / "check_png.py")
 _check_png = importlib.util.module_from_spec(_spec)
 assert _spec.loader
 _spec.loader.exec_module(_check_png)
@@ -75,7 +75,7 @@ def test_shared_fixture(browser_name: str, profile: str, device_name: str | None
             page.screenshot(path=png, full_page=True)
             stage = "artifact"
             width, height = _check_png.dimensions(png.read_bytes())
-            # "artifact" is relative to the metadata file, as in the Node lane; see scripts/check_evidence.py.
+            # "artifact" is relative to the metadata file, as in the Node lane; see tools/check_evidence.py.
             meta.write_text(json.dumps({"runtime":"python","project":f"{browser_name}-{profile}","browser":browser_name,"profile":profile,"emulation":"partial" if browser_name=="firefox" and profile=="mobile" else "full","stage":"complete","artifact":png.name,"width":width,"height":height})+"\n", encoding="utf-8")
         except Exception as exc:
             failed = True

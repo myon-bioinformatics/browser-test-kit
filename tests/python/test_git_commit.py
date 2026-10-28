@@ -10,7 +10,7 @@ from pathlib import Path
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 
 ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = ROOT / "scripts" / "git_commit.py"
+SCRIPT = ROOT / "tools" / "git_commit.py"
 spec = importlib.util.spec_from_file_location("git_commit", SCRIPT)
 git_commit = importlib.util.module_from_spec(spec)
 assert spec.loader

@@ -7,8 +7,8 @@ import sys
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / 'scripts'))
-spec = importlib.util.spec_from_file_location('app_digest', ROOT / 'scripts/app_digest.py')
+sys.path.insert(0, str(ROOT / 'tools'))
+spec = importlib.util.spec_from_file_location('app_digest', ROOT / 'tools/app_digest.py')
 digest = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(digest)
 

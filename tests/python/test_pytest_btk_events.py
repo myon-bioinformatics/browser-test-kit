@@ -1,4 +1,4 @@
-"""Exercise scripts/pytest_btk_events.py the way a project actually loads it:
+"""Exercise tools/pytest_btk_events.py the way a project actually loads it:
 as a real, separate `pytest -p pytest_btk_events` subprocess against a tiny
 temp test file. No pytester plugin is used or required.
 """
@@ -14,7 +14,7 @@ from pathlib import Path
 import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[2]
-SCRIPTS = ROOT / "scripts"
+SCRIPTS = ROOT / "tools"
 
 FIXTURE_TESTS = '''
 import pytest

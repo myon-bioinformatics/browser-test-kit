@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = ROOT / "scripts" / "html_builder.py"
+SCRIPT = ROOT / "tools" / "html_builder.py"
 spec = importlib.util.spec_from_file_location("html_builder", SCRIPT)
 html_builder = importlib.util.module_from_spec(spec)
 assert spec.loader

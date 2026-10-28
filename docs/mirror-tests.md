@@ -8,13 +8,13 @@ It needs Node and a few npm packages (megabytes), not a browser download.
 
 ```sh
 npm ci                                   # markdown-it, marked, linkedom, exceljs (devDependencies)
-node scripts/mirror_facts.mjs markdown README.md                    > it.json
-node scripts/mirror_facts.mjs markdown README.md --reader marked    > marked.json
-python -S scripts/mirror_check.py compare ours.json it.json marked.json
+node tools/mirror_facts.mjs markdown README.md                    > it.json
+node tools/mirror_facts.mjs markdown README.md --reader marked    > marked.json
+python -S tools/mirror_check.py compare ours.json it.json marked.json
 
-node scripts/mirror_facts.mjs xlsx book.xlsx --reader exceljs       > exceljs.json
-python -S scripts/mirror_check.py facts xlsx book.xlsx              > stdlib.json
-python -S scripts/mirror_check.py compare exceljs.json stdlib.json
+node tools/mirror_facts.mjs xlsx book.xlsx --reader exceljs       > exceljs.json
+python -S tools/mirror_check.py facts xlsx book.xlsx              > stdlib.json
+python -S tools/mirror_check.py compare exceljs.json stdlib.json
 ```
 
 `compare` prints one `diff KEY READER vs CONSENSUS` line per deviating reader (what only

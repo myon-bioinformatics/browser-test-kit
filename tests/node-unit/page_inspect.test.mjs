@@ -31,14 +31,14 @@ test("Node and Python agree on score, loopback, fingerprints, and evidence", () 
   ];
   for (const [pythonName, nodeName, cases] of pairs) {
     const done = spawnSync(python, [
-      "-S", "scripts/twin_parity.py", `scripts/page_inspect.py:${pythonName}`, `scripts/page_inspect.cjs:${nodeName}`,
+      "-S", "scripts/twin_parity.py", `scripts/btk.py:${pythonName}`, `scripts/btk.cjs:${nodeName}`,
     ], {input: JSON.stringify(cases), encoding: "utf8"});
     assert.equal(done.status, 0, done.stdout + done.stderr);
   }
 });
 
 test("the Node CLI help stays local and live commands use the vendored launcher", () => {
-  const help = spawnSync(process.execPath, ["scripts/page_inspect.cjs", "--help"], {encoding: "utf8"});
+  const help = spawnSync(process.execPath, ["scripts/btk.cjs", "--help"], {encoding: "utf8"});
   assert.equal(help.status, 0);
   assert.match(help.stdout, /observe/);
   const major = Number(process.versions.node.split(".")[0]);
@@ -52,8 +52,8 @@ test("the Node CLI help stays local and live commands use the vendored launcher"
     }],
   };
   writeFileSync(snapshot, `${JSON.stringify(body)}\n`);
-  const node = spawnSync(process.execPath, ["scripts/page_inspect.cjs", "locate", snapshot, "--query", "Save draft", "--unique", "--json"], {encoding: "utf8"});
-  const py = spawnSync(python, ["-S", "scripts/page_inspect.py", "locate", snapshot, "--query", "Save draft", "--unique", "--json"], {encoding: "utf8"});
+  const node = spawnSync(process.execPath, ["scripts/btk.cjs", "locate", snapshot, "--query", "Save draft", "--unique", "--json"], {encoding: "utf8"});
+  const py = spawnSync(python, ["-S", "scripts/btk.py", "locate", snapshot, "--query", "Save draft", "--unique", "--json"], {encoding: "utf8"});
   assert.equal(node.status, 0, node.stderr);
   assert.equal(py.status, 0, py.stderr);
   assert.deepEqual(JSON.parse(node.stdout), JSON.parse(py.stdout));
