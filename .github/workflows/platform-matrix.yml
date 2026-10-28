@@ -39,7 +39,7 @@ jobs:
           python-version: "3.13"
       - name: System libraries (apt on Linux, bounded; installed before the browsers)
         if: runner.os == 'Linux'
-        timeout-minutes: 8
+        timeout-minutes: 20 # Match the published WebKit lane's bounded apt allowance.
         run: |
           sudo DEBIAN_FRONTEND=noninteractive dpkg --configure -a
           uv run --locked --group browser python -m playwright install-deps chromium firefox webkit

@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
+import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location('platform_probe', ROOT / 'tools/platform_probe.py')
@@ -68,6 +69,32 @@ def test_fixture_workflow_remains_42_and_published_lane_is_separate():
     assert 'for profile in desktop iphone pixel' in fixture
     assert '--adapter' not in fixture
     assert '--adapter' in apps and 'needs: [plan, published-flutter]' in apps
+
+
+def test_fixture_linux_system_setup_has_its_own_bounded_allowance():
+    workflow = yaml.safe_load((ROOT / '.github/workflows/platform-matrix.yml').read_text())
+    collect = workflow['jobs']['collect']
+    steps = collect['steps']
+    setup = next(step for step in steps if 'playwright install-deps' in step.get('run', ''))
+    browsers = next(step for step in steps if step.get('name') == 'Install browsers')
+    measure = next(step for step in steps if step.get('name') == 'Collect every engine, profile and mode')
+    upload = next(step for step in steps if step.get('uses', '').startswith('actions/upload-artifact@'))
+
+    assert setup['if'] == "runner.os == 'Linux'"
+    assert setup['timeout-minutes'] == 20
+    assert setup['run'].splitlines() == [
+        'sudo DEBIAN_FRONTEND=noninteractive dpkg --configure -a',
+        'uv run --locked --group browser python -m playwright install-deps chromium firefox webkit',
+    ]
+    assert browsers['timeout-minutes'] == 10
+    assert collect['timeout-minutes'] == 90
+    assert steps.index(setup) < steps.index(browsers) < steps.index(measure) < steps.index(upload)
+    assert all(step.get('continue-on-error', False) is False for step in [collect, setup, browsers, measure, upload])
+    assert 'exit "$status"' in measure['run']
+    assert upload['if'] == 'always()'
+    assert upload['with']['name'] == 'platform-${{ matrix.os }}'
+    assert upload['with']['path'] == 'platform-results'
+    assert upload['with']['if-no-files-found'] == 'error'
 
 
 def test_published_lane_runs_three_os_on_dispatch_and_schedule_but_linux_on_pull_requests():
