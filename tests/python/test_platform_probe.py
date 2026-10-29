@@ -148,3 +148,16 @@ def test_adopted_files_match_js_lock():
         data = (ROOT / entry["destination"]).read_bytes()
         assert hashlib.sha256(data).hexdigest() == entry["sha256"], entry["name"]
         assert "sha384-" + base64.b64encode(hashlib.sha384(data).digest()).decode() == entry["sri"]
+
+
+def test_summary_reports_whether_meiryo_renders_but_never_fails_on_it():
+    seen = {}
+    for value in (True, False, None, "absent"):
+        r = record()
+        if value != "absent":
+            r["facts"]["fonts"] = {"sans": 1, "meiryo": value}
+        r["verdict"] = pp.verdict(r)
+        seen[value] = pp.summary_lines([r])[0]
+        assert r["verdict"] == "pass"
+    assert "meiryo=yes" in seen[True] and "meiryo=no" in seen[False]
+    assert "meiryo=unknown" in seen[None] and "meiryo=-" in seen["absent"]

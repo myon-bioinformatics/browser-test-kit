@@ -8,7 +8,8 @@
 collect defaults to fixtures/platform_probe.html; --adapter JSON selects an app. It records `btk-platform-facts/1`:
 screen, window outer/inner (frame = outer - inner; real only when headed), scrollbar
 width (page / always-scrolling probe), devicePixelRatio, visualViewport, safe-area insets, pointer/hover/touch,
-measured font widths, platform and browser version. The environment passes when
+measured font widths, whether Meiryo actually renders (`fonts.meiryo`: true / false / null when the generic
+fallbacks cannot be told apart) and the body's declared font stack (`fonts.body_family`), platform and browser version. The environment passes when
 the layout holds (no horizontal overflow, no overlap, nothing clipped) and a real
 click (a tap on touch profiles) at the integer centre of the button registers.
 `min_ok_width` is the first sampled passing viewport width on the search grid (8 px
@@ -302,6 +303,12 @@ def _build_suffix(record: dict) -> str:
     return f" build={str(value)[:12]}" if value is not None else f" build=unknown({provenance.get('error')})"
 
 
+def _meiryo(record: dict) -> str:
+    """Whether Meiryo actually renders on this environment: reported, never gating (most Linux/macOS lack it)."""
+    fonts = record['facts'].get('fonts', {})
+    return {True: 'yes', False: 'no', None: 'unknown'}[fonts['meiryo']] if 'meiryo' in fonts else '-'
+
+
 def summary_lines(records: list[dict]) -> list[str]:
     out = []
     for r in records:
@@ -316,7 +323,7 @@ def summary_lines(records: list[dict]) -> list[str]:
         failed = ','.join(failures) or '-'
         out.append(f"{r['verdict']:4} {r['env']['id']:38} v{r['env']['browser_version']} "
                    f"frame={w['frame_width']}x{w['frame_height']} scrollbar={v['scrollbar_width']}/{v.get('scrollbar_classic')} "
-                   f"dpr={v['device_pixel_ratio']} sans={r['facts'].get('fonts', {}).get('sans')} "
+                   f"dpr={v['device_pixel_ratio']} sans={r['facts'].get('fonts', {}).get('sans')} meiryo={_meiryo(r)} "
                    f"min_ok_width={r['min_ok_width']} failed={failed} target={r.get('target', {}).get('adapter', 'fixture')}"
                    + _build_suffix(r))
     return out

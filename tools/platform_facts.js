@@ -16,6 +16,15 @@ window.__btkPlatformFacts = (action) => {
   host.remove();
   const ctx = document.createElement('canvas').getContext('2d');
   const width = font => { ctx.font = font; return +ctx.measureText('Hamburgefonstiv 日本語 0123').width.toFixed(2); };
+  // A font that is not installed falls back to the generic family that follows it, so Meiryo is
+  // rendering only when "Meiryo, monospace" and "Meiryo, serif" measure the same. null: the two
+  // fallbacks themselves measure the same here, so the question cannot be answered.
+  const meiryo = () => {
+    const mono = width('16px "Meiryo", monospace'), serif = width('16px "Meiryo", serif');
+    return width('16px monospace') === width('16px serif') ? null : mono === serif;
+  };
+  // What the page asks for, not what the OS has: the declared stack of the document body.
+  const bodyFamily = getComputedStyle(document.body).fontFamily.slice(0, 200);
   const r = action.getBoundingClientRect();
   return {
     screen: { width: s.width, height: s.height, avail_width: s.availWidth, avail_height: s.availHeight,
@@ -34,7 +43,7 @@ window.__btkPlatformFacts = (action) => {
              max_touch_points: navigator.maxTouchPoints },
     preference: { dark: mq('(prefers-color-scheme: dark)'), reduced_motion: mq('(prefers-reduced-motion: reduce)') },
     fonts: { sans: width('16px sans-serif'), serif: width('16px serif'), mono: width('16px monospace'),
-             system_ui: width('16px system-ui') },
+             system_ui: width('16px system-ui'), meiryo: meiryo(), body_family: bodyFamily },
     action_box: { x: +r.x.toFixed(2), y: +r.y.toFixed(2), width: +r.width.toFixed(2), height: +r.height.toFixed(2) },
     platform: { ua: navigator.userAgent, platform: navigator.userAgentData?.platform || navigator.platform,
                 mobile: navigator.userAgentData?.mobile ?? null, language: navigator.language },
