@@ -62,6 +62,36 @@ def line_of(text: str, pos: int) -> int:
 
 def scan(text: str, suffix: str) -> tuple[int, list[tuple[int, str]]]:
     """(declarations seen, [(line, problem)])."""
+    if suffix == ".json":
+        try:
+            spec = json.loads(text)
+        except ValueError:
+            pass  # Preserve the text scanner for non-JSON script fragments.
+        else:
+            seen, problems = 0, []
+
+            def visit(value):
+                nonlocal seen
+                if isinstance(value, dict):
+                    for key, child in value.items():
+                        if key == "family" and isinstance(child, str):
+                            seen += 1
+                            why = reason(child)
+                            if why:
+                                problems.append((1, f"plotly family: {child.strip()[:80]} ({why})"))
+                        visit(child)
+                elif isinstance(value, list):
+                    for child in value:
+                        visit(child)
+
+            visit(spec)
+            if isinstance(spec, dict) and isinstance(spec.get("data"), list):
+                layout = spec.get("layout")
+                font = layout.get("font") if isinstance(layout, dict) else None
+                family = font.get("family") if isinstance(font, dict) else None
+                if not isinstance(family, str) or not family.strip():
+                    problems.append((1, "Plotly spec has no layout.font.family (Plotly's default is Open Sans)"))
+            return seen, problems
     text = strip_bundles(text)
     seen, problems = 0, []
     for pattern, kind in ((CSS_FAMILY, "font-family"), (CSS_SHORTHAND, "font"), (PLOTLY_FAMILY, "plotly family")):
@@ -74,14 +104,6 @@ def scan(text: str, suffix: str) -> tuple[int, list[tuple[int, str]]]:
     plotly_families = len(PLOTLY_FAMILY.findall(text))
     if suffix in {".html", ".htm", ".js"} and PLOTLY_CALL.search(text) and not plotly_families:
         problems.append((1, "Plotly is used but no figure font family is set (Plotly's default is Open Sans)"))
-    if suffix == ".json":
-        try:
-            spec = json.loads(text)
-        except ValueError:
-            spec = None
-        if isinstance(spec, dict) and isinstance(spec.get("data"), list) and isinstance(spec.get("layout"), dict) \
-                and not plotly_families:
-            problems.append((1, "Plotly spec has no layout.font.family (Plotly's default is Open Sans)"))
     return seen, problems
 
 

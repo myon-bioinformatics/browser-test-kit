@@ -105,3 +105,43 @@ def test_nothing_declared_is_a_failure_and_bad_input_is_exit_2(tmp_path, capsys)
     assert cf.main([str(tmp_path / "missing.html")]) == 2 and "no such file" in capsys.readouterr().err
     assert cf.main([str(tmp_path / "sub")]) == 2
     assert cf.main(["--help"]) == 0
+
+
+@pytest.mark.parametrize("layout", [
+    {}, {"font": {}}, {"font": None}, {"font": []},
+    {"font": {"family": None}}, {"font": {"family": ""}},
+    {"font": {"family": "  "}}, {"font": {"family": 123}},
+    {"font": {"family": ["Meiryo"]}}, None, [],
+])
+def test_trace_family_does_not_replace_layout_family(layout, tmp_path, capsys):
+    spec = {"data": [{"type": "scatter", "textfont": {"family": "Meiryo"}}],
+            "layout": layout}
+    text = json.dumps(spec)
+    _, problems = scan(text, ".json")
+    assert any("no layout.font.family" in why for _, why in problems)
+    path = tmp_path / "figure.json"
+    path.write_text(text, encoding="utf-8")
+    assert cf.main([str(path)]) == 1
+    assert "no layout.font.family" in capsys.readouterr().out
+
+
+def test_plotly_json_without_layout_does_not_use_trace_family():
+    spec = {"data": [{"textfont": {"family": "Meiryo"}}]}
+    assert "no layout.font.family" in scan(json.dumps(spec), ".json")[1][0][1]
+
+
+def test_plotly_json_layout_and_trace_families_are_both_checked():
+    spec = {"data": [{"textfont": {"family": "Meiryo"}}],
+            "layout": {"font": {"family": MEIRYO}}}
+    assert scan(json.dumps(spec), ".json") == (2, [])
+    spec["layout"]["font"]["family"] = "Arial"
+    assert "Arial" in scan(json.dumps(spec), ".json")[1][0][1]
+    spec["layout"]["font"]["family"] = MEIRYO
+    spec["data"][0]["textfont"]["family"] = "Arial"
+    assert "Arial" in scan(json.dumps(spec), ".json")[1][0][1]
+
+
+def test_plotly_json_escaped_keys_and_values_use_decoded_family():
+    text = r'{"data":[{"textfont":{"family":"Meiryo"}}],"layout":{"font":{"fami\u006cy":"Arial"}}}'
+    assert "Arial" in scan(text, ".json")[1][0][1]
+    assert scan(text.replace("Arial", r"Meir\u0079o"), ".json") == (2, [])
