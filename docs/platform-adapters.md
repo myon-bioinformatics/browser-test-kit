@@ -94,7 +94,14 @@ the Pages deployment was built from. The record keeps it as
 
 Browser/OS facts live in `tools/platform_facts.js` and are used by both lanes:
 screen, window, viewport, DPR, safe areas, input/media preferences, platform and font
-widths. A shadow-isolated measuring probe avoids application CSS contaminating the
+widths. Two font facts answer "does this page really show Meiryo here": `fonts.body_family` is the
+stack the page declares (the body's computed `font-family`), and `fonts.meiryo` is whether the OS has
+Meiryo (`"Meiryo", monospace` and `"Meiryo", serif` measure the same only when Meiryo itself draws the text;
+`null` when the two generic fallbacks cannot be told apart). The summary prints `meiryo=yes|no|unknown`.
+It is reported, never gating: most Linux and macOS machines lack Meiryo, and no font file can be bundled.
+What the generated files ask for is checked offline, by exit code:
+`python -S tools/check_font_family.py out/` fails on a `font-family`, `font:` shorthand or Plotly `family`
+that does not start with Meiryo (or `inherit`, `var(...)`, a monospace stack) and on a Plotly figure with no family. A shadow-isolated measuring probe avoids application CSS contaminating the
 classic scrollbar measurement. Fixture-only library/SRI checks stay in the fixture.
 
 ## Width search, evidence and failures
