@@ -118,14 +118,14 @@ The normal `npm run test:node` retains the real browser projects.
 Python rules and CLI tests can run without even the Python Playwright package:
 
 ```sh
-uv run --locked python -m pytest tests/python -q -m 'not browser'
+uv run --locked pytest tests/python -q -m 'not browser'
 ```
 
 Tests that launch browsers, including CLI subprocesses, carry `@pytest.mark.browser`.
 Imports of Playwright are inside those tests, so collecting the fast lane needs no
 browser package. A regular unfiltered pytest run still collects both lanes.
 For actual browser integration, include the `browser` dependency group and the documented
-browser engines, then use `uv run --locked --group browser python -m pytest tests/python -q -m browser`.
+browser engines, then use `uv run --locked --group browser pytest tests/python -q -m browser`.
 
 CI runs the existing Python rules, reconstructed-vendor baseline and Node mirrors
 first. Only after all three pass do the Node and Python browser jobs install their

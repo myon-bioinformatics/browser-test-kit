@@ -9,7 +9,7 @@ python scripts/image_diff.py a.png b.png [--clip X,Y,W,H] [--viewport-width CSS_
 ```
 
 The installed distribution includes the same pinned backend and its Ironmate
-license as wheel data. After `python -m pip install .`, run
+license as wheel data. After `uv pip install .`, run
 `python -m image_diff a.png b.png` from any directory. No Pillow install is needed.
 Built-wheel tests install into isolated `--target` and `--prefix` directories and
 compare real PNGs with site packages disabled, checking the golden stdout and
@@ -24,7 +24,7 @@ See also [screenshot-evidence.md](screenshot-evidence.md) for how this fits next
 Install test dependencies (`uv run --locked`) and run:
 
 ```bash
-uv run --locked python -m pytest tests/python/test_browser_test_kit_image_diff.py
+uv run --locked pytest tests/python/test_browser_test_kit_image_diff.py
 ```
 
 Golden stdout lines and PNG inputs live under `tests/fixtures/image_diff/` so regressions do not depend on Pillow. The missing-backend exit-2 diagnostic is tested by pointing `image_diff` at a non-existent vendored copy.

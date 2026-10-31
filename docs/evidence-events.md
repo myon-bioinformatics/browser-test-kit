@@ -144,7 +144,7 @@ Two pytest-specific outcomes worth knowing when reading the board:
 Set `run_id` so JSONL files from several jobs or retries can be joined later, for example in GitHub Actions:
 
 ```sh
-PYTHONPATH=scripts python -m pytest -p pytest_btk_events \
+PYTHONPATH=scripts uv run pytest -p pytest_btk_events \
   --btk-events test-results/btk-events.jsonl \
   --btk-events-run-id "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
 python tools/evidence_board.py test-results/*.jsonl --allow unavailable --step-summary
@@ -205,7 +205,7 @@ requires explicit review of provenance, failure layer, fix and regression
 guard; automatic chat ingestion, reproducer linkage, downstream native
 rollout and cross-repository learning are not completed by this fixture.
 
-Run it with `python -m pytest tests/python/test_pytest_btk_events.py -q`.
+Run it with `uv run pytest tests/python/test_pytest_btk_events.py -q`.
 The existing Python CI suite collects this regression directly.
 
 - `tools/btk_events.py` -- `emit()`, `read()`, `classify_terminal_browser()`;
