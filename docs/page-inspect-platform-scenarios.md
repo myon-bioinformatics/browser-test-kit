@@ -11,7 +11,7 @@ not an arbitrary application probe or a real device.
 ## Node 24
 
 The workspace `.nvmrc` selects major 24. With nvm, run `nvm install` followed
-by `nvm use`. The existing `btk.cjs` to `vendor/py_launch.cjs` bridge
+by `nvm use`. The `vendor/py_launch.cjs --env-var BTK_PYTHON --site scripts/btk.py` launch
 requires Node 24 or newer. This change does not edit workflows, change their
 existing newer Node pins, add a Node download during tests, or change permissions.
 A local Node 24 runtime can execute the dependency-free fixture contract suite:

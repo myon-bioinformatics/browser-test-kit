@@ -70,11 +70,12 @@ def run_cli(entrypoint, args):
     if entrypoint == "node":
         node = shutil.which("node")
         assert node, "Node 24+ is required for the URL privacy parity checks"
-        command = [node, str(ROOT / "scripts" / "btk.cjs")]
+        command = [node, str(ROOT / "vendor" / "py_launch.cjs"), "--env-var", "BTK_PYTHON", "--site",
+                   str(ROOT / "scripts" / "btk.py")]
     else:
         command = [sys.executable, str(ROOT / "scripts" / "btk.py")]
     return subprocess.run(command + args, capture_output=True, text=True, timeout=120,
-                          env={**os.environ, "PYTHON": sys.executable})
+                          env={**os.environ, "PYTHON": sys.executable, "BTK_PYTHON": sys.executable})
 
 
 @pytest.fixture

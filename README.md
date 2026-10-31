@@ -15,8 +15,7 @@ The kit's center is browser testing: Playwright lanes, evidence acquisition and 
 <a href="docs/assets/repository-concept.png"><img src="docs/assets/repository-concept.png" alt="Browser Test Kit concept: local fixtures and a platform matrix feed Node/Python Playwright checks, evidence events, and CI/debugging lanes." width="498"></a>
 
 This supplied panel is an orientation aid, not a complete execution diagram.
-[`twin_parity.py`](scripts/twin_parity.py) checks Python/Node helper parity, not differences between browser
-engines; [`evidence_board.py`](tools/evidence_board.py) summarizes event logs rather than validating screenshot
+[`evidence_board.py`](tools/evidence_board.py) summarizes event logs rather than validating screenshot
 pixels. Screenshot validation is a separate check, and Stagehand/Replay remain
 optional lanes. [Crop provenance](docs/assets/repository-concept.json).
 
@@ -25,8 +24,7 @@ optional lanes. [Crop provenance](docs/assets/repository-concept.json).
 <a href="docs/assets/repository-concept-v2.png"><img src="docs/assets/repository-concept-v2.png" alt="Browser Test Kit challenges, roles, and outcomes: compare repeated browser checks, divide test execution, parity checking, and evidence collection, and reuse CI templates and test examples." width="507"></a>
 
 This additional supplied panel complements the workflow view above; it does not
-replace it. Its `twin_parity.py` role compares Python/Node helper behavior, not
-browser engines. The outcomes describe the kit's intended uses, not a guarantee
+replace it. The outcomes describe the kit's intended uses, not a guarantee
 that every browser or environment has been tested.
 [Additional panel provenance](docs/assets/repository-concept-v2.json).
 
@@ -248,19 +246,7 @@ python -S scripts/element_overlay.py --file elements.json --assert-role button -
 python -m element_overlay --file elements.json --format css
 ```
 
-### Python / Node twin parity (`scripts/twin_parity.py`)
-
-Twins (`interaction.py` / `interaction.mjs`, `route_trail.py` / `route_trail_node.mjs`, `element_overlay.py` / `element_overlay.mjs`) promise the same records for the same inputs. `twin_parity.py` checks that promise without files: Node runs once, every case goes in on stdin and every result comes back on stdout, and the Python twin's results are compared in memory. Twins must agree on accept/reject and on each accepted value (as JSON); error wording may differ unless `--messages` is given.
-
-```bash
-python -S scripts/twin_parity.py scripts/interaction.py:press_point scripts/interaction.mjs:pressPoint < cases.json
-```
-
-- `tests/python/test_twin_parity.py` runs both twin pairs on hundreds of generated inputs plus every divergence found so far, and checks that the shared URL regex is the same source in both files.
-- The first run found two real drifts, now fixed and recorded: `TWIN_PARSER_DRIFT` (27 of 250 URLs) and `ROUNDING_TIE_DRIFT` (0.562 vs 0.563).
-- Library: `node_calls(module, export, cases)`, `python_calls(fn, cases)`, `mismatches(a, b)`. Exit codes: 0 agree; 1 mismatch; 2 input error.
-
-### Page observe, locate, and act (`scripts/btk.py`, `scripts/btk.cjs`)
+### Page observe, locate, and act (`scripts/btk.py`)
 
 Separate commands for a loopback page: passive observe, offline locate, and one declared action. The design follows REA's browser observation notes (morluto/rea, MIT), not that project's server. See [REA observation](docs/rea-observation.md). Later phases stay on [issue 117](https://github.com/myon-bioinformatics/browser-test-kit/issues/117).
 
@@ -268,7 +254,7 @@ Separate commands for a loopback page: passive observe, offline locate, and one 
 python scripts/btk.py observe http://127.0.0.1:8765/page --json --out observe.json
 python -S scripts/btk.py locate observe.json --query "Save draft" --unique --json
 python scripts/btk.py act http://127.0.0.1:8765/page --action click --locator id:save-draft --json
-node scripts/btk.cjs locate observe.json --query "Save draft" --unique --json
+node vendor/py_launch.cjs --env-var BTK_PYTHON --site scripts/btk.py locate observe.json --query "Save draft" --unique --json
 python -S scripts/btk.py compare before.json after.json --json
 python scripts/btk.py observe http://127.0.0.1:8765/page --viewport 390x844 \
   --step focus:id:search --step type:id:search=env:SEARCH --step press:Enter \
@@ -283,7 +269,7 @@ python scripts/btk.py observe http://127.0.0.1:8765/page --out before.json --aft
 - `observe` on Chromium reads CDP and does not call the page. It counts author open and closed shadow roots in a pierced DOM (`shadow_roots` section) without entering them; Chromium user-agent shadow roots are reported separately as `user_agent`. Child frames are listed by name, URL, and origin in document order (`frames.items`) and their documents are not entered. Firefox and WebKit report CDP unavailable instead of inventing a DOM. Storage is keys and SHA-256 fingerprints, never values. A missing section is not a claim that two captures match. `python -S scripts/fetch_member.py --lock parts.lock.json --part node --dest DIR` checks one archive's integrity and extracts the named member. Playwright there is `>=1.64.1`, a lower bound with no upper bound. The Node package `@playwright/test` uses the same lower bound.
 - iPhone and Pixel profiles are Playwright device emulation (`real_device: false`). `--viewport` is only a size. `--touch` sets `hasTouch` without naming a phone.
 - `act` runs one action from the same vocabulary. It re-queries the locator and rejects `h:N`. Dialogs are recorded and dismissed unless `--dialog-policy accept`.
-- The Node CLI is `.cjs` and calls Python through the vendored `vendor/py_launch.cjs` launcher, which requires Node 24 or later with no upper bound. Score, loopback, fingerprint, and evidence comparison are checked with `scripts/twin_parity.py`.
+- From Node, run `btk.py` through the vendored `vendor/py_launch.cjs` CLI (Node 24 or later, no upper bound): `node vendor/py_launch.cjs --env-var BTK_PYTHON --site scripts/btk.py ...`. `--site` keeps site-packages so Playwright is importable. `BTK_PYTHON` picks the interpreter; when it is set there is no fallback, and an interpreter that cannot run fails the launch with exit 2. Without it the launcher tries `PYTHON`, `python3`, then `python`. `scripts/page_inspect.cjs` is a thin compatibility entry that does the same. The former `scripts/btk.cjs` and the `twin_parity.py` helper-parity design were removed; Python is the single implementation of score, loopback, fingerprint, and evidence comparison.
 - Whitespace steps (`--step "fill id:q TEXT"`) and `--trail` retain the previous per-file envelope; colon steps use `btk-page-observe-run/1`. Emoji routes from `pages --routes-out` work with `observe --routes --trail` and `act --action goto --routes --text`. Both syntaxes use the same action performer and URL evidence privacy rules.
 - Exit codes: `0` success; `1` no match or a shared top score; `2` usage, a bad snapshot, or launch/navigate/inspect/cleanup failure. Headless is the default.
 
@@ -291,14 +277,14 @@ python scripts/btk.py observe http://127.0.0.1:8765/page --out before.json --aft
 
 The **active** `scenario` subcommand verifies OS-dependent shortcuts, display settings,
 browser-context offline/HTTP errors/latency, permissions and bounded file interactions.
-It uses the same `btk-page-observe/1` envelope and existing Node `btk.cjs`
-→ `py_launch.cjs` bridge without replacing `observe --step`, `act`, or `compare`.
+It uses the same `btk-page-observe/1` envelope and Node `vendor/py_launch.cjs --env-var BTK_PYTHON --site`
+launch without replacing `observe --step`, `act`, or `compare`.
 
 ```bash
 python scripts/btk.py scenario http://127.0.0.1:8765/scenarios --case display --viewport 390x844 --color-scheme dark --reduced-motion reduce --locale ja-JP --timezone Asia/Tokyo --json
 python scripts/btk.py scenario http://127.0.0.1:8765/scenarios --case offline --json
 python scripts/btk.py scenario http://127.0.0.1:8765/scenarios --case permission --permission geolocation --permission-state grant --json
-node scripts/btk.cjs scenario http://127.0.0.1:8765/scenarios --case shortcut --json
+node vendor/py_launch.cjs --env-var BTK_PYTHON --site scripts/btk.py scenario http://127.0.0.1:8765/scenarios --case shortcut --json
 ```
 
 The local test fixture is `fixtures/page_inspect_scenarios.html`, served with the
@@ -316,7 +302,7 @@ Implemented:
 2. Shared local deterministic fixtures and artifact validators (`fixtures/`, `tools/evidence_board.py`).
 3. Playwright Node matrix (`.github/workflows/playwright.yml`, `platform-matrix.yml`).
 4. Playwright Python API and CLI matrix (`tools/platform_probe.py`).
-5. Cross-runtime and browser parity guards (`scripts/twin_parity.py`).
+5. Browser parity guards (Node `tests/node-launch` runs observe, act, and scenario through `vendor/py_launch.cjs` in Chromium).
 7. terminal-browser quick CLI/TUI lane (`tools/terminal_browser.py`).
 10. Passive page observe, locate, and a fixed act vocabulary (`scripts/btk.py`). Stagehand is still a separate, unimplemented lane.
 
