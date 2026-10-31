@@ -27,7 +27,7 @@ def test_legacy_modules_remain_distributed():
 
 @pytest.mark.parametrize('runtime', ['python', 'node'])
 def test_legacy_inspection_runs_current_privacy_and_error_contract(tmp_path, runtime):
-    # Node: page_inspect.cjs against btk.py through vendor/py_launch.cjs (preferred direct launcher).
+    # Node: page_inspect.cjs against btk.py through vendor/py_launch.cjs (btk.cjs is gone).
     def command(entry):
         if runtime == 'python':
             return [sys.executable, str(ROOT / 'scripts' / (entry + '.py'))]
