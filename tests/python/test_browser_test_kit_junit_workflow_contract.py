@@ -14,7 +14,7 @@ COLLECTOR = (
 )
 COMMAND = (
     'uv run --locked python -m pytest tests/python -q -m "not browser" '
-    "--junitxml=test-results/junit/python-3.13.xml"
+    "--junitxml=test-results/junit/python-3.15.xml"
 )
 
 
@@ -42,8 +42,8 @@ def _assert_contract(workflow):
     assert " ".join(run["run"].split()) == COMMAND
     assert run["env"]["BTK_FAILURE_EVIDENCE"] == "test-results/controlled-failure"
     for name, path in (
-        ("junit-python-3.13", "test-results/junit/python-3.13.xml"),
-        ("junit-controlled-python-3.13", "test-results/controlled-failure/"),
+        ("junit-python-3.15", "test-results/junit/python-3.15.xml"),
+        ("junit-controlled-python-3.15", "test-results/controlled-failure/"),
     ):
         upload = _upload(producer, name)
         assert producer["steps"].index(run) < producer["steps"].index(upload)
@@ -62,11 +62,11 @@ def _assert_contract(workflow):
     reports = json.loads(collector["with"]["expected-reports"])
     assert isinstance(reports, list) and len(reports) == 5
     assert set(reports) == {
-        "junit-python-3.13/python-3.13.xml",
-        "junit-controlled-python-3.13/junit.xml",
+        "junit-python-3.15/python-3.15.xml",
+        "junit-controlled-python-3.15/junit.xml",
         "junit-node-browserless/browserless-node.xml",
-        "junit-python-browser-3.13/python-browser-3.13.xml",
-        "junit-python-browser-optional-3.13/python-browser-optional-3.13.xml",
+        "junit-python-browser-3.15/python-browser-3.15.xml",
+        "junit-python-browser-optional-3.15/python-browser-optional-3.15.xml",
     }
     browser = _upload(workflow["jobs"]["python-browser"], "python-browser-evidence")
     assert browser["with"]["path"].splitlines() == [
@@ -96,10 +96,10 @@ def test_failure_evidence_contract_rejects_unsafe_mutations():
         ("collector loses dependency", collector_path + ("needs",), []),
         ("collector missing report", collector_path + ("with", "expected-reports"), "[]"),
         ("collector unexpected report", collector_path + ("with", "expected-reports"),
-         json.dumps(["junit-python-3.13/python-3.13.xml",
-                     "junit-controlled-python-3.13/junit.xml", "unexpected/report.xml"])),
+         json.dumps(["junit-python-3.15/python-3.15.xml",
+                     "junit-controlled-python-3.15/junit.xml", "unexpected/report.xml"])),
     ]
-    for name in ("junit-python-3.13", "junit-controlled-python-3.13"):
+    for name in ("junit-python-3.15", "junit-controlled-python-3.15"):
         index = producer["steps"].index(_upload(producer, name))
         path = job_path + ("steps", index)
         mutations.extend([
