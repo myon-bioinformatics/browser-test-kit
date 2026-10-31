@@ -34,14 +34,14 @@ that every browser or environment has been tested.
 
 - Stdlib-only modules and the base package: **Python 3.9+**, with no runtime dependencies.
   Run a source script with `python -S tools/check_png.py --help`, or install the
-  base package with `uv pip install .` and use `python -m btk --help`. Tools under `tools/` are
+  base package with `uv venv && uv pip install .` (an active virtual environment is required) and use `python -m btk --help`. Tools under `tools/` are
   repository tooling; original `scripts/` entries and installed modules remain supported.
 - Image diff (`scripts/image_diff.py` / `python -m image_diff`): **Python 3.11+**, using the vendored stdlib-only `pillow_min.py` backend. Python 3.9/3.10 exit 2 before decoding images. See [image comparison](docs/image-diff.md).
 - Development, tests, browser integrations, and this repository's **uv project
   environment/lockfile: Python 3.11+**. Use
   `uv run --locked --python 3.11 pytest tests/python -q -m "not browser"`. Add `--group browser` for browser
   integration dependencies. The requirements-test files have the same floor.
-  Python 3.9/3.10 consumers should install the base package with pip, not `uv sync`.
+  Python 3.9/3.10 consumers should install the base package with `uv pip` (or pip), not `uv sync`.
 
 The Python support CI checks actual 3.9/3.10 stdlib execution and base wheel
 installation without test dependencies, and the complete browserless test suite at the 3.11 floor. Existing browser CI

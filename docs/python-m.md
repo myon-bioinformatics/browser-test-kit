@@ -7,7 +7,7 @@ Every `scripts/*.py` is stdlib-only at runtime. `pyproject.toml` installs each o
 uv run --no-project --with "git+https://github.com/myon-bioinformatics/browser-test-kit" python -m btk --help
 
 # or install once, then use it anywhere
-uv pip install "git+https://github.com/myon-bioinformatics/browser-test-kit"
+uv venv && uv pip install "git+https://github.com/myon-bioinformatics/browser-test-kit"
 python -m btk --help
 
 # inside a clone, without installing

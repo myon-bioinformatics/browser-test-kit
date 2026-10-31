@@ -9,7 +9,7 @@ python scripts/image_diff.py a.png b.png [--clip X,Y,W,H] [--viewport-width CSS_
 ```
 
 The installed distribution includes the same pinned backend and its Ironmate
-license as wheel data. After `uv pip install .`, run
+license as wheel data. After `uv pip install .` (inside an active virtual environment, e.g. after `uv venv`), run
 `python -m image_diff a.png b.png` from any directory. No Pillow install is needed.
 Built-wheel tests install into isolated `--target` and `--prefix` directories and
 compare real PNGs with site packages disabled, checking the golden stdout and
