@@ -26,6 +26,7 @@ def test_environment_passes_and_records_facts(browser_name, profile):
     assert record["min_ok_width"] is not None and record["min_ok_width"] <= facts["window"]["inner_width"]
     # Reported on every engine: whether Meiryo renders (None when the generic fallbacks measure the same), and the declared stack.
     assert facts["fonts"]["meiryo"] in (True, False, None) and facts["fonts"]["body_family"]
+    assert record["env"]["uno"] in (True, False)  # a host fact, reported on every engine and never gating
     if profile != "desktop":
         assert record["click"]["input"] == "touch" and facts["window"]["inner_width"] < 500
 

@@ -99,6 +99,9 @@ stack the page declares (the body's computed `font-family`), and `fonts.meiryo` 
 Meiryo (`"Meiryo", monospace` and `"Meiryo", serif` measure the same only when Meiryo itself draws the text;
 `null` when the two generic fallbacks cannot be told apart). The summary prints `meiryo=yes|no|unknown`.
 It is reported, never gating: most Linux and macOS machines lack Meiryo, and no font file can be bundled.
+`env.uno` is a host fact, not a browser one: whether the Python that ran `collect` can `import uno`
+(LibreOffice's Python bridge, found on `sys.path` and never imported). The summary prints `uno=yes|no`.
+It is reported, never gating: the OS provides it, so a venv or uv-managed Python usually reports `no`.
 What the generated files ask for is checked offline, by exit code:
 `python -S tools/check_font_family.py out/` fails on a `font-family`, `font:` shorthand or Plotly `family`
 that does not start with Meiryo (or `inherit`, `var(...)`, a monospace stack) and on a Plotly figure with no family. A shadow-isolated measuring probe avoids application CSS contaminating the

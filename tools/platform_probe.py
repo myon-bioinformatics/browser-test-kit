@@ -66,6 +66,15 @@ def os_name() -> str:
     return {"Darwin": "macOS", "Windows": "Windows", "Linux": "Linux"}.get(platform.system(), platform.system())
 
 
+def has_uno() -> bool:
+    """Whether the Python running collect can `import uno` (LibreOffice's bridge): looked up on sys.path, never imported."""
+    import importlib.util
+    try:
+        return importlib.util.find_spec("uno") is not None
+    except (ImportError, ValueError):
+        return False
+
+
 def env_id(env: dict) -> str:
     browser = env.get("channel") or env["browser"]
     return f"{env['os']}-{browser}-{env['profile']}-{'headless' if env['headless'] else 'headed'}"
@@ -253,7 +262,7 @@ def _collect(browser_name: str, profile: str, *, headed: bool, channel: str | No
     record = {
         "schema": FACTS_SCHEMA,
         "env": {"os": os_name(), "os_release": platform.release(), "runner_image": os.environ.get("ImageOS"),
-                "browser": browser_name, "channel": channel, "browser_version": version,
+                "uno": has_uno(), "browser": browser_name, "channel": channel, "browser_version": version,
                 "profile": profile, "device": PROFILES[profile] or "Desktop", "headless": not headed,
                 "device_validation": "emulation" if profile != "desktop" else "desktop-browser"},
         "facts": facts, "layout": layout, "libs": libs_check(facts.get("libs")),
@@ -309,6 +318,11 @@ def _meiryo(record: dict) -> str:
     return {True: 'yes', False: 'no', None: 'unknown'}[fonts['meiryo']] if 'meiryo' in fonts else '-'
 
 
+def _uno(record: dict) -> str:
+    """Whether this machine's Python can drive LibreOffice (`import uno`): reported, never gating (the OS provides it)."""
+    return {True: 'yes', False: 'no'}.get(record['env'].get('uno'), '-')
+
+
 def summary_lines(records: list[dict]) -> list[str]:
     out = []
     for r in records:
@@ -323,7 +337,7 @@ def summary_lines(records: list[dict]) -> list[str]:
         failed = ','.join(failures) or '-'
         out.append(f"{r['verdict']:4} {r['env']['id']:38} v{r['env']['browser_version']} "
                    f"frame={w['frame_width']}x{w['frame_height']} scrollbar={v['scrollbar_width']}/{v.get('scrollbar_classic')} "
-                   f"dpr={v['device_pixel_ratio']} sans={r['facts'].get('fonts', {}).get('sans')} meiryo={_meiryo(r)} "
+                   f"dpr={v['device_pixel_ratio']} sans={r['facts'].get('fonts', {}).get('sans')} meiryo={_meiryo(r)} uno={_uno(r)} "
                    f"min_ok_width={r['min_ok_width']} failed={failed} target={r.get('target', {}).get('adapter', 'fixture')}"
                    + _build_suffix(r))
     return out

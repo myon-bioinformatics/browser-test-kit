@@ -161,3 +161,24 @@ def test_summary_reports_whether_meiryo_renders_but_never_fails_on_it():
         assert r["verdict"] == "pass"
     assert "meiryo=yes" in seen[True] and "meiryo=no" in seen[False]
     assert "meiryo=unknown" in seen[None] and "meiryo=-" in seen["absent"]
+
+
+@pytest.mark.parametrize("finder, expected", [
+    (lambda name: object(), True), (lambda name: None, False),
+    (lambda name: (_ for _ in ()).throw(ValueError("uno.__spec__ is None")), False),
+    (lambda name: (_ for _ in ()).throw(ModuleNotFoundError(name)), False)])
+def test_has_uno_looks_the_module_up_without_importing_it(monkeypatch, finder, expected):
+    monkeypatch.setattr(importlib.util, "find_spec", finder)
+    assert pp.has_uno() is expected
+
+
+def test_summary_reports_whether_uno_imports_but_never_fails_on_it():
+    seen = {}
+    for value in (True, False, "absent"):
+        r = record()
+        if value != "absent":
+            r["env"]["uno"] = value
+        r["verdict"] = pp.verdict(r)
+        seen[value] = pp.summary_lines([r])[0]
+        assert r["verdict"] == "pass"
+    assert "uno=yes" in seen[True] and "uno=no" in seen[False] and "uno=-" in seen["absent"]
