@@ -111,10 +111,10 @@ def server():
 
 
 def run(url, case, browser="chromium", *extra, host="python"):
-    prefix = [sys.executable, "scripts/btk.py"] if host == "python" else [shutil.which("node"), "scripts/btk.cjs"]
+    prefix = [sys.executable, "scripts/btk.py"] if host == "python" else [shutil.which("node"), "vendor/py_launch.cjs", "--env-var", "BTK_PYTHON", "--site", "scripts/btk.py"]
     done = subprocess.run([*prefix, "scenario", url, "--browser", browser, "--case", case, *extra, "--json"],
                           cwd=ROOT, capture_output=True, text=True, timeout=90,
-                          env={**os.environ, "PYTHON": sys.executable})
+                          env={**os.environ, "PYTHON": sys.executable, "BTK_PYTHON": sys.executable})
     assert done.returncode == 0, done.stdout + done.stderr
     assert "PRIVATE" not in done.stdout + done.stderr
     return json.loads(done.stdout)

@@ -1,4 +1,4 @@
-"""Expected URL decisions and preflight side effects, not just twin agreement."""
+"""Expected URL decisions and preflight side effects for the Python and Node route trails."""
 import asyncio
 import importlib.util
 import json
@@ -19,7 +19,39 @@ def load(name):
 
 
 trail = load('route_trail')
-twins = load('twin_parity')
+
+NODE_PROGRAM = r"""
+import {pathToFileURL} from 'node:url';
+const chunks = [];
+for await (const chunk of process.stdin) chunks.push(chunk);
+const {module, name, cases} = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+const fn = (await import(pathToFileURL(module).href))[name];
+const out = [];
+for (const args of cases) {
+  try { out.push({ok: true, value: await fn(...args)}); }
+  catch (error) { out.push({ok: false, error: String(error?.message ?? error)}); }
+}
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+def node_calls(module, name, cases):
+    done = subprocess.run(['node', '--input-type=module', '-e', NODE_PROGRAM],
+                          input=json.dumps({'module': str(module), 'name': name, 'cases': cases}),
+                          capture_output=True, text=True, encoding='utf-8', timeout=60)
+    assert done.returncode == 0, done.stderr
+    return json.loads(done.stdout)
+
+
+def python_calls(fn, cases):
+    out = []
+    for args in cases:
+        try:
+            out.append({'ok': True, 'value': fn(*args)})
+        except Exception as error:
+            out.append({'ok': False, 'error': str(error)})
+    return out
+
 VALID = [
     'http://a:1/', 'http://a:65535/', 'http://a:00001/',
     'https://localhost:443/x?q=1#f', 'HTTP://A/', 'http://example.com./',
@@ -70,7 +102,7 @@ def test_python_expected_url_decisions(url, expected):
 @pytest.mark.skipif(shutil.which('node') is None, reason='node unavailable')
 def test_node_expected_decisions_and_native_parser_agree():
     cases = [[[step(url)]] for url in VALID + INVALID]
-    actual = twins.node_calls(ROOT / 'scripts/route_trail_node.mjs', 'validateSteps', cases)
+    actual = node_calls(ROOT / 'scripts/route_trail_node.mjs', 'validateSteps', cases)
     assert [r['ok'] for r in actual] == [True]*len(VALID) + [False]*len(INVALID)
     # An independent implementation checks the positive oracle is browser-parseable.
     parsed = subprocess.run(['node', '--input-type=module', '-e',
@@ -80,14 +112,14 @@ def test_node_expected_decisions_and_native_parser_agree():
 
 
 @pytest.mark.skipif(shutil.which('node') is None, reason='node unavailable')
-def test_port_boundaries_have_expected_decisions_for_both_twins():
+def test_port_boundaries_have_expected_decisions_in_python_and_node():
     urls = [f'http://{host}:{port}/' for host in ('a', '127.0.0.1', '[::1]')
             for port in (0, 1, 65534, 65535, 65536, 99999)]
     expected = [port in (1, 65534, 65535) for _ in range(3)
                 for port in (0, 1, 65534, 65535, 65536, 99999)]
     cases = [[[step(u)]] for u in urls]
-    for results in (twins.python_calls(trail.validate_steps, cases),
-                    twins.node_calls(ROOT / 'scripts/route_trail_node.mjs', 'validateSteps', cases)):
+    for results in (python_calls(trail.validate_steps, cases),
+                    node_calls(ROOT / 'scripts/route_trail_node.mjs', 'validateSteps', cases)):
         assert [r['ok'] for r in results] == expected
 
 

@@ -195,7 +195,9 @@ Host labels must be 1..63 characters, cannot start/end with a hyphen, and the
 host without its optional trailing dot is at most 253 characters. Unicode
 hosts and `xn--` IDN labels are deliberately unsupported until a shared IDNA
 implementation exists; Python's IDNA2003 and WHATWG do not share a contract.
-This tightens the previously proposed Unicode-host acceptance in twin-parity.
+This tightens the Unicode-host acceptance once proposed in the (since removed)
+`twin_parity.py` design; the contract is now checked by
+`tests/python/test_execution_url_contract.py`.
 Unicode remains supported in paths, queries and fragments. URL length is at
 most 4096 Unicode code points in both runtimes.
 

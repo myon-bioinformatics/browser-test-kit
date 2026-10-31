@@ -27,11 +27,17 @@ def test_legacy_modules_remain_distributed():
 
 @pytest.mark.parametrize('runtime', ['python', 'node'])
 def test_legacy_inspection_runs_current_privacy_and_error_contract(tmp_path, runtime):
-    suffix = '.py' if runtime == 'python' else '.cjs'
-    exe = sys.executable if runtime == 'python' else 'node'
+    # Node: page_inspect.cjs against btk.py through vendor/py_launch.cjs (btk.cjs is gone).
+    def command(entry):
+        if runtime == 'python':
+            return [sys.executable, str(ROOT / 'scripts' / (entry + '.py'))]
+        if entry == 'page_inspect':
+            return ['node', str(ROOT / 'scripts' / 'page_inspect.cjs')]
+        return ['node', str(ROOT / 'vendor' / 'py_launch.cjs'), '--env-var', 'BTK_PYTHON', '--site',
+                str(ROOT / 'scripts' / 'btk.py')]
     def run(entry, args):
-        return subprocess.run([exe, str(ROOT / 'scripts' / (entry + suffix)), *args],
-                              env={**os.environ, 'PYTHON': sys.executable},
+        return subprocess.run([*command(entry), *args],
+                              env={**os.environ, 'PYTHON': sys.executable, 'BTK_PYTHON': sys.executable},
                               capture_output=True, text=True, timeout=60)
     snapshot = {'schema': 'btk-page-observe/1', 'elements': [],
                 'url': 'http://127.0.0.1:8765/a?token=private-value#private-fragment'}

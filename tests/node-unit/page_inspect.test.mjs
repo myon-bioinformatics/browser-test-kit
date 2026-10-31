@@ -1,3 +1,4 @@
+// btk.py の Node 入口（vendor/py_launch.cjs と scripts/page_inspect.cjs）を確かめる。ブラウザは使わない。
 import test from "node:test";
 import assert from "node:assert/strict";
 import {spawnSync} from "node:child_process";
@@ -6,43 +7,28 @@ import {tmpdir} from "node:os";
 import {join} from "node:path";
 
 function pythonBin() {
-  const candidates = [process.env.PYTHON, "python3", "python"].filter(Boolean);
+  const candidates = [process.env.BTK_PYTHON, process.env.PYTHON, "python3", "python"].filter(Boolean);
   for (const bin of candidates) {
     const probe = spawnSync(bin, ["-c", "import sys; print(sys.version)"], {encoding: "utf8"});
     if (probe.status === 0) return bin;
   }
-  throw new Error("python is required for the page-inspect twin");
+  throw new Error("python is required for btk.py");
 }
 
 const python = pythonBin();
+const env = {...process.env, BTK_PYTHON: python};
+const LAUNCH = ["vendor/py_launch.cjs", "--env-var", "BTK_PYTHON", "--site", "scripts/btk.py"];
+const ENTRIES = [["py_launch", LAUNCH], ["page_inspect.cjs", ["scripts/page_inspect.cjs"]]];
 
-test("Node and Python agree on score, loopback, fingerprints, and evidence", () => {
-  const pairs = [
-    ["similarity", "similarity", [["Save", "save draft"], ["", "abc"], ["\u{1F600}", "x\u{1F600}y"]]],
-    ["loopback_target", "loopbackTarget", [
-      ["http://127.0.0.1:9/a"], ["http://[::1]:80/a"], ["http://localhost:9/"], ["http://127.0.0.1/a"],
-    ]],
-    ["storage_fingerprint", "storageFingerprint", [["secret-value"], ["\uD800"], [""]]],
-    ["evidence_relation", "evidenceRelation", [
-      [{coverage: "not_requested"}, {coverage: "not_requested"}],
-      [{coverage: "complete", digest: "abc"}, {coverage: "complete", digest: "abc"}],
-      [{coverage: "complete", digest: "abc"}, {coverage: "complete", digest: "def"}],
-    ]],
-  ];
-  for (const [pythonName, nodeName, cases] of pairs) {
-    const done = spawnSync(python, [
-      "-S", "scripts/twin_parity.py", `scripts/btk.py:${pythonName}`, `scripts/btk.cjs:${nodeName}`,
-    ], {input: JSON.stringify(cases), encoding: "utf8"});
-    assert.equal(done.status, 0, done.stdout + done.stderr);
+test("help goes through btk.py for both Node entries", () => {
+  for (const [label, prefix] of ENTRIES) {
+    const help = spawnSync(process.execPath, [...prefix, "--help"], {encoding: "utf8", env});
+    assert.equal(help.status, 0, `${label}: ${help.stderr}`);
+    assert.match(help.stdout, /observe/);
   }
 });
 
-test("the Node CLI help stays local and live commands use the vendored launcher", () => {
-  const help = spawnSync(process.execPath, ["scripts/btk.cjs", "--help"], {encoding: "utf8"});
-  assert.equal(help.status, 0);
-  assert.match(help.stdout, /observe/);
-  const major = Number(process.versions.node.split(".")[0]);
-  if (major < 24) return;
+test("locate through Node matches python -S scripts/btk.py", () => {
   const directory = mkdtempSync(join(tmpdir(), "page-inspect-"));
   const snapshot = join(directory, "observe.json");
   const body = {
@@ -52,9 +38,28 @@ test("the Node CLI help stays local and live commands use the vendored launcher"
     }],
   };
   writeFileSync(snapshot, `${JSON.stringify(body)}\n`);
-  const node = spawnSync(process.execPath, ["scripts/btk.cjs", "locate", snapshot, "--query", "Save draft", "--unique", "--json"], {encoding: "utf8"});
-  const py = spawnSync(python, ["-S", "scripts/btk.py", "locate", snapshot, "--query", "Save draft", "--unique", "--json"], {encoding: "utf8"});
-  assert.equal(node.status, 0, node.stderr);
+  const args = ["locate", snapshot, "--query", "Save draft", "--unique", "--json"];
+  const py = spawnSync(python, ["-S", "scripts/btk.py", ...args], {encoding: "utf8"});
   assert.equal(py.status, 0, py.stderr);
-  assert.deepEqual(JSON.parse(node.stdout), JSON.parse(py.stdout));
+  for (const [label, prefix] of ENTRIES) {
+    const node = spawnSync(process.execPath, [...prefix, ...args], {encoding: "utf8", env});
+    assert.equal(node.status, 0, `${label}: ${node.stderr}`);
+    assert.deepEqual(JSON.parse(node.stdout), JSON.parse(py.stdout));
+  }
+});
+
+test("BTK_PYTHON is strict: a missing interpreter exits 2 and names the variable", () => {
+  const bad = {...process.env, BTK_PYTHON: join(tmpdir(), "no-such-python-btk")};
+  for (const [label, prefix] of ENTRIES) {
+    const done = spawnSync(process.execPath, [...prefix, "--help"], {encoding: "utf8", env: bad});
+    assert.equal(done.status, 2, label);
+    assert.match(done.stderr, /BTK_PYTHON/, label);
+  }
+});
+
+test("exit codes from btk.py pass through unchanged", () => {
+  for (const [label, prefix] of ENTRIES) {
+    const done = spawnSync(process.execPath, [...prefix, "locate", "/nonexistent/observe.json", "--query", "x", "--json"], {encoding: "utf8", env});
+    assert.equal(done.status, 2, `${label}: ${done.stdout}${done.stderr}`);
+  }
 });

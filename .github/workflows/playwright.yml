@@ -179,6 +179,11 @@ jobs:
           else
             echo 'headless shell libraries are present; skipping apt'
           fi
+      - name: Node launch tests (py_launch --site; observe, act, scenario in Chromium)
+        run: |
+          BTK_PYTHON="$(uv run --locked --group browser python -c 'import sys; print(sys.executable)')"
+          export BTK_PYTHON
+          BTK_REQUIRE_PLAYWRIGHT=1 node --test tests/node-unit/page_inspect.test.mjs tests/node-launch/btk_playwright.test.mjs
       - name: Run Python browser tests with JUnit (Chromium only)
         env:
           BTK_BROWSER_ENGINES: chromium

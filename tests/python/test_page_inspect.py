@@ -191,33 +191,6 @@ def test_loopback_policy_and_evidence_do_not_treat_missing_as_same():
     assert ".evaluate(" not in source
 
 
-def test_twins_agree_on_score_loopback_fingerprint_and_evidence():
-    pairs = [
-        ("similarity", "similarity", [
-            ["Save", "save draft"], ["", "abc"], ["a\U0001f600b", "a\U0001f600b"], ["\U0001f600", "x\U0001f600y"],
-        ]),
-        ("loopback_target", "loopbackTarget", [
-            ["http://127.0.0.1:9/a"], ["http://[::1]:80/a"], ["https://127.0.0.1:443/a"],
-            ["http://localhost:9/"], ["http://127.0.0.1/a"], ["file:///tmp/x"],
-            ["http://user:secret" + chr(64) + "127.0.0.1:9/"],
-        ]),
-        ("storage_fingerprint", "storageFingerprint", [["secret-value"], ["\ud800"], [""]]),
-        ("evidence_relation", "evidenceRelation", [
-            [{"coverage": "not_requested"}, {"coverage": "not_requested"}],
-            [{"coverage": "complete", "digest": "abc"}, {"coverage": "complete", "digest": "abc"}],
-            [{"coverage": "complete", "digest": "abc"}, {"coverage": "complete", "digest": "def"}],
-            [{"coverage": "attach_limited", "digest": "abc"}, {"coverage": "attach_limited", "digest": "abc"}],
-        ]),
-    ]
-    for python_name, node_name, cases in pairs:
-        done = subprocess.run(
-            [sys.executable, "-S", str(ROOT / "scripts" / "twin_parity.py"),
-             f"scripts/btk.py:{python_name}", f"scripts/btk.cjs:{node_name}"],
-            input=json.dumps(cases), text=True, capture_output=True, cwd=ROOT, timeout=30,
-        )
-        assert done.returncode == 0, done.stdout + done.stderr
-
-
 def test_act_rejects_ordinals_before_launch():
     with pytest.raises(btk.InspectError) as raised:
         btk.act_page(

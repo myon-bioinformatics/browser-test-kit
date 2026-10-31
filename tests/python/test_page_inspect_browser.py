@@ -124,13 +124,19 @@ def test_act_requeries_and_records_the_click(loopback, capsys):
     ordinal = run(["act", loopback, "--action", "click", "--locator", "h:0", "--json"])
     assert ordinal.returncode == 2
     assert json.loads(ordinal.stdout)["ok"] is False
-    if "firefox" in os.environ.get("BTK_BROWSER_ENGINES", "chromium,firefox,webkit"):
-        waited = run(["act", loopback, "--browser", "firefox", "--action", "wait_for_timeout", "--timeout-ms", "50", "--json"])
-        assert waited.returncode == 0, waited.stderr
-        body = json.loads(waited.stdout)
-        assert body["limits"]["page_js_called"] is False
-        assert body["sections"]["accessibility"]["coverage"] == "not_requested"
     notice(capsys, "page-act", "click re-queried id:save-draft")
+
+
+# Firefox step split out of the Chromium click test: it used to run inside that test
+# whenever BTK_BROWSER_ENGINES included firefox, so a host without Firefox failed the
+# Chromium test. As a browser_name parameter, conftest's engine selection applies.
+def test_act_wait_does_not_call_page_js(loopback, browser_name, capsys):
+    waited = run(["act", loopback, "--browser", browser_name, "--action", "wait_for_timeout", "--timeout-ms", "50", "--json"])
+    assert waited.returncode == 0, waited.stderr
+    body = json.loads(waited.stdout)
+    assert body["limits"]["page_js_called"] is False
+    assert body["sections"]["accessibility"]["coverage"] == "not_requested"
+    notice(capsys, f"page-act {browser_name}", "wait without page call")
 
 
 test_firefox_and_webkit_observe_do_not_invent_a_page = pytest.mark.browser(
@@ -140,3 +146,6 @@ test_chromium_observe_is_passive_and_fingerprints_storage = pytest.mark.browser(
     test_chromium_observe_is_passive_and_fingerprints_storage
 )
 test_act_requeries_and_records_the_click = pytest.mark.browser(test_act_requeries_and_records_the_click)
+test_act_wait_does_not_call_page_js = pytest.mark.browser(
+    pytest.mark.parametrize("browser_name", ("firefox",))(test_act_wait_does_not_call_page_js)
+)
